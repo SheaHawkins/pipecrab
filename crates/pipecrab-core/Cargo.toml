@@ -1,0 +1,9 @@
+[package]
+name = "pipecrab-core"
+description = "Sans-IO core for pipecrab: frames, processors. No async, no I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
