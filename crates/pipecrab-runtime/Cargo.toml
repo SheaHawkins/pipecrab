@@ -1,0 +1,16 @@
+[package]
+name = "pipecrab-runtime"
+description = "tokio runtime for pipecrab: Inbound, Stage, Pipeline. Async and effecting."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pipecrab-core = { workspace = true }
+tokio		  = { version = "1",   features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }
+tokio-util	  = { version = "0.7", features = ["rt"] }
+async-trait   = "0.1"
+
+[dev-dependencies]
+pipecrab-test-util = { workspace = true }

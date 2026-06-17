@@ -7,3 +7,6 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+
+[dev-dependencies]
+pipecrab-test-util = { workspace = true }

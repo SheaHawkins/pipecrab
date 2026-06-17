@@ -2,36 +2,9 @@
 //! A regression that adds an allocation to a hot path fails the build.
 
 use pipecrab_core::{Direction, Frame, Processor};
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
+use pipecrab_test_util::allocs;
 use std::hint::black_box;
 use std::sync::Arc;
-
-// Per-thread counter, so audits stay correct even when tests run in parallel.
-// const-init TLS is allocation-free, so reading it inside `alloc` can't recurse.
-thread_local! {
-    static ALLOCS: Cell<u64> = const { Cell::new(0) };
-}
-
-struct Counting;
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, l: Layout) -> *mut u8 {
-        ALLOCS.with(|c| c.set(c.get() + 1));
-        System.alloc(l)
-    }
-    unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
-        System.dealloc(p, l)
-    }
-}
-#[global_allocator]
-static GA: Counting = Counting;
-
-/// Allocations that happen on this thread while `f` runs.
-fn allocs(f: impl FnOnce()) -> u64 {
-    let start = ALLOCS.with(Cell::get);
-    f();
-    ALLOCS.with(Cell::get) - start
-}
 
 // --- a tiny processor to exercise the hot path ---
 enum Cmd {

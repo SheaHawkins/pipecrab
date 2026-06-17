@@ -8,6 +8,4 @@ license.workspace = true
 
 [dependencies]
 pipecrab-core = { workspace = true }
-tokio        = { workspace = true, features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }
-tokio-util   = { workspace = true, features = ["rt"] }
-async-trait  = { workspace = true }
+pipecrab-runtime = { workspace = true }

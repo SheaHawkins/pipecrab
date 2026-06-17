@@ -71,14 +71,30 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 name = "pipecrab"
 version = "0.1.0"
 dependencies = [
+ "pipecrab-core",
+ "pipecrab-runtime",
+]
+
+[[package]]
+name = "pipecrab-core"
+version = "0.1.0"
+dependencies = [
+ "pipecrab-test-util",
+]
+
+[[package]]
+name = "pipecrab-runtime"
+version = "0.1.0"
+dependencies = [
  "async-trait",
  "pipecrab-core",
+ "pipecrab-test-util",
  "tokio",
  "tokio-util",
 ]
 
 [[package]]
-name = "pipecrab-core"
+name = "pipecrab-test-util"
 version = "0.1.0"
 
 [[package]]

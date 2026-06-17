@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pipecrab-core", "crates/pipecrab"]
+members = ["crates/pipecrab-core", "crates/pipecrab-runtime", "crates/pipecrab", "crates/test-util"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,7 +9,6 @@ rust-version = "1.75"
 license = "MIT"
 
 [workspace.dependencies]
-pipecrab-core = { path = "crates/pipecrab-core", version = "0.1.0" }
-tokio		  = { version = "1",   default-features = false }
-tokio-util	  = { version = "0.7", default-features = false }
-async-trait   = "0.1"
+pipecrab-core    = { path = "crates/pipecrab-core" }
+pipecrab-runtime = { path = "crates/pipecrab-runtime" }
+pipecrab-test-util = { path = "crates/test-util" }
