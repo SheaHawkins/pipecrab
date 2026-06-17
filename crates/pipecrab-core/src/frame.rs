@@ -28,7 +28,7 @@ pub enum Frame {
     /// User barged in; stages should discard in-flight work and reset.
     Interrupt,
     /// An error string propagated through the pipeline (usually upstream).
-    Error(Arc<str>),
+    Error{ message: Arc<str>, fatal: bool },
     /// A text transcript segment (ASR output or TTS input).
     Transcript(Arc<str>),
     /// A raw audio chunk (PCM bytes, format negotiated out-of-band).
