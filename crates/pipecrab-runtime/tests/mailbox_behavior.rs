@@ -37,10 +37,10 @@ async fn fatal_error_propagates_upstream_ahead_of_data() {
     for i in 0..8 {
         data_tx.send((Direction::Down, Frame::Transcript(i.to_string().into()))).await.unwrap();
     }
-    sys_tx.send((Direction::Up, Frame::Error("inference exploded".into()))).await.unwrap();
+    sys_tx.send((Direction::Up, Frame::Error { message: "inference exploded".into(), fatal: true })).await.unwrap();
 
     match inb.recv().await.unwrap() {
-        (Direction::Up, Frame::Error(msg)) => assert_eq!(msg, "inference exploded".into()),
+        (Direction::Up, Frame::Error { message, .. } ) => assert_eq!(message, "inference exploded".into()),
         other => panic!("expected (Up, Error), got {other:?}"),
     }
 }
