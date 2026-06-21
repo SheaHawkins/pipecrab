@@ -19,7 +19,7 @@ impl Wake for NoopWaker {
 #[test]
 fn dispatching_a_buffered_system_frame_is_allocation_free() {
     let (sys_tx, sys) = mpsc::channel(16);
-    let (_data_tx, data) = mpsc::channel(16);
+    let (_data_tx, data) = mpsc::channel::<pipecrab_core::Frame>(16);
     let mut inb = Inbound { sys, data };
 
     sys_tx.try_send((Direction::Down, Frame::Interrupt)).unwrap();
