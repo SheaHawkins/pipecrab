@@ -6,7 +6,7 @@ use std::pin::pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
 
-use pipecrab_core::{Direction, Frame};
+use pipecrab_core::{DataFrame, Direction, SystemFrame};
 use pipecrab_runtime::Inbound;
 use pipecrab_test_util::allocs;
 use tokio::sync::mpsc;
@@ -19,10 +19,10 @@ impl Wake for NoopWaker {
 #[test]
 fn dispatching_a_buffered_system_frame_is_allocation_free() {
     let (sys_tx, sys) = mpsc::channel(16);
-    let (_data_tx, data) = mpsc::channel::<pipecrab_core::Frame>(16);
+    let (_data_tx, data) = mpsc::channel::<DataFrame>(16);
     let mut inb = Inbound { sys, data };
 
-    sys_tx.try_send((Direction::Down, Frame::Interrupt)).unwrap();
+    sys_tx.try_send((Direction::Down, SystemFrame::Interrupt)).unwrap();
 
     let waker = Waker::from(Arc::new(NoopWaker));
     let mut cx = Context::from_waker(&waker);
@@ -31,7 +31,7 @@ fn dispatching_a_buffered_system_frame_is_allocation_free() {
         let fut = inb.recv();
         let mut fut = pin!(fut);
         match fut.as_mut().poll(&mut cx) {
-            Poll::Ready(Some((_, f))) => { black_box(f); }
+            Poll::Ready(Some(r)) => { black_box(r); }
             Poll::Ready(None) => panic!("unexpected end of stream"),
             Poll::Pending => panic!("buffered frame should poll Ready"),
         }

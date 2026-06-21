@@ -3,4 +3,4 @@
 #![warn(missing_docs)]
 
 pub mod inbound;
-pub use inbound::Inbound;
+pub use inbound::{Inbound, Received};
