@@ -3,8 +3,9 @@ use std::sync::Arc;
 
 /// Extension point for application-defined frame payloads.
 ///
-/// Implement this on your own types and wrap them in [`Frame::Custom`] to pass
-/// domain-specific data through a pipeline without forking the core frame enum.
+/// Implement this on your own types and wrap them in [`DataFrame::Custom`] to
+/// pass domain-specific data through a pipeline without forking the core frame
+/// enum.
 pub trait CustomFrame: Any + Send + Sync + std::fmt::Debug {
     /// A static string identifying the concrete frame type (used for logging/dispatch).
     fn kind(&self) -> &'static str;
@@ -12,36 +13,49 @@ pub trait CustomFrame: Any + Send + Sync + std::fmt::Debug {
     fn as_any(&self) -> &dyn Any;
 }
 
-/// The unit of data flowing through a pipeline stage.
+/// Travel direction for system frames.
 ///
-/// Frames travel in either direction (see [`Direction`]). System frames
-/// (`Start`, `Stop`, `Interrupt`, `Error`) are handled by every stage;
-/// `Audio`, `Transcript`, and `Custom` carry the actual pipeline payload.
-/// Immutable: don't try to make mutable frames because it's a sign you're doing something wrong.
-/// Instead: Build up a new frame by aggregating other frames and produce it when you're ready.
+/// Down = source → sink; Up = sink → source (errors, acks).
+/// [`DataFrame`] carries no direction — media is always downstream.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Direction {
+    /// Source → sink (lifecycle, interrupts flowing forward through the pipeline).
+    Down,
+    /// Sink → source (errors, acknowledgements flowing back upstream).
+    Up,
+}
+
+/// System frames: lifecycle, control, and errors.
+///
+/// These are bidirectional: `Interrupt` and `Start`/`Stop` travel downstream;
+/// `Error` typically travels upstream. Immutable once constructed.
 #[derive(Clone, Debug)]
-pub enum Frame {
+pub enum SystemFrame {
     /// Pipeline is starting; stages should initialise any runtime state.
     Start,
     /// Graceful shutdown; stages should flush and clean up.
     Stop,
     /// User barged in; stages should discard in-flight work and reset.
     Interrupt,
-    /// An error string propagated through the pipeline (usually upstream).
-    Error{ message: Arc<str>, fatal: bool },
+    /// An error propagated through the pipeline.
+    Error {
+        /// Human-readable description of the error.
+        message: Arc<str>,
+        /// Whether the error is unrecoverable and the pipeline should shut down.
+        fatal: bool,
+    },
+}
+
+/// Data frames: media payload flowing downstream (source → sink).
+///
+/// Immutable: don't try to make mutable frames. Instead, aggregate frames and
+/// produce a new one when you're ready.
+#[derive(Clone, Debug)]
+pub enum DataFrame {
     /// A text transcript segment (ASR output or TTS input).
     Transcript(Arc<str>),
     /// A raw audio chunk (PCM bytes, format negotiated out-of-band).
     Audio(Arc<[u8]>),
     /// Application-defined payload; see [`CustomFrame`].
     Custom(Arc<dyn CustomFrame>),
-}
-
-/// Travel direction. Down = source -> sink; Up = sink -> source (errors, acks).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Direction {
-    /// Source → sink (audio/transcript flowing forward through the pipeline).
-    Down,
-    /// Sink → source (errors, acknowledgements flowing back upstream).
-    Up,
 }
