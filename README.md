@@ -1,5 +1,6 @@
 # PipeCrab
 🦀 
+Pipecrab is a thoughtful grounds-up rewrite of `pipecat` but in Rust. It aims to be for edge devices what pipecat isn't: A voice agent pipeline for low-latency local inference.
 
 ## Writing a stage
 
