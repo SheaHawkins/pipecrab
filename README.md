@@ -26,3 +26,6 @@ fn decide_data(&mut self, frame: &DataFrame) -> Decision<Self::Effect> {
     }
 }
 ```
+
+## Contributing
+See [CONTRIBUTING.md](./CONTRIBUTING.md)
