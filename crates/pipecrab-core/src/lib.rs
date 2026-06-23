@@ -8,4 +8,4 @@ pub mod frame;
 pub mod processor;
 
 pub use frame::{CustomFrame, DataFrame, Direction, SystemFrame};
-pub use processor::Processor;
+pub use processor::{Decision, Disposition, Processor};
