@@ -1,6 +1,6 @@
 [package]
 name = "pipecrab"
-description = "Sans-IO voice-agent pipelines with a tokio runtime bundled in."
+description = "Sans-IO voice-agent pipelines with a runtime-agnostic async layer bundled in."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -5,8 +5,9 @@
 //! Keeping the lanes typed prevents misrouting a media frame onto the system
 //! lane and removes the per-frame is-system check from the hot path.
 
+use futures::channel::mpsc::Receiver;
+use futures::stream::StreamExt;
 use pipecrab_core::{DataFrame, Direction, SystemFrame};
-use tokio::sync::mpsc::Receiver;
 
 /// A frame received from [`Inbound::recv`]: either a system frame (with its
 /// travel direction) or a data frame (always downstream).
@@ -37,8 +38,32 @@ impl Inbound {
     /// Returns [`Received::Sys`] or [`Received::Data`], or `None` once *both*
     /// lanes are closed — the run-loop's shutdown signal.
     ///
-    /// The `biased` keyword polls `sys` first so a system frame preempts any
-    /// data backlog deterministically.
+    /// [`futures::select_biased`] polls `sys` first, so a system frame preempts
+    /// any data backlog deterministically. When a lane closes, its receiver
+    /// (a [`FusedStream`]) yields `None`; the `loop` swallows that first `None`
+    /// so the next iteration just skips the dead lane instead of treating it as
+    /// shutdown. This is so the sys lane can keep draining even after the data
+    /// lane shuts down — `None` is returned only once *both* lanes have closed.
+    ///
+    /// [`FusedStream`]: futures::stream::FusedStream
+    pub async fn recv(&mut self) -> Option<Received> {
+        loop {
+            futures::select_biased! {
+                sys = self.sys.next() => {
+                    if let Some((dir, f)) = sys {
+                        return Some(Received::Sys(dir, f));
+                    }
+                }
+                data = self.data.next() => {
+                    if let Some(f) = data {
+                        return Some(Received::Data(f));
+                    }
+                }
+                complete => return None,
+            }
+        }
+    }
+
     /// Drain everything currently queued on the data lane. Frames where
     /// `survives_flush()` is false are dropped; survivors are returned in the
     /// order they arrived, for the caller to re-process. Does not block and does
@@ -51,14 +76,5 @@ impl Inbound {
             }
         }
         kept
-    }
-
-    pub async fn recv(&mut self) -> Option<Received> {
-        tokio::select! {
-            biased;
-            Some((dir, f)) = self.sys.recv()  => Some(Received::Sys(dir, f)),
-            Some(f)        = self.data.recv() => Some(Received::Data(f)),
-            else => None,
-        }
     }
 }

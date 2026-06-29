@@ -11,5 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
+      # The runtime must stay executor-agnostic and build for the browser.
+      - run: cargo check -p pipecrab-runtime --target wasm32-unknown-unknown
