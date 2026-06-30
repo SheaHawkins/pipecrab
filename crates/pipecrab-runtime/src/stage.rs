@@ -13,6 +13,7 @@
 //! [`Pipeline`](crate::Pipeline)) overrides it to drive its children — which is
 //! why a pipeline is itself a `Stage` and can nest.
 
+use std::collections::VecDeque;
 use std::fmt;
 use std::sync::Arc;
 
@@ -20,7 +21,7 @@ use async_trait::async_trait;
 use futures::future::FutureExt;
 use futures::pin_mut;
 use futures::stream::StreamExt;
-use pipecrab_core::{Direction, Disposition, Processor, SystemFrame};
+use pipecrab_core::{DataFrame, Direction, Disposition, Processor, SystemFrame};
 
 use crate::{Inbound, Outbound, Received};
 
@@ -122,15 +123,37 @@ pub trait Stage: Processor {
     /// `decide_system` while `perform` borrows `&self`, so the stash defers it
     /// until that borrow ends.
     ///
+    /// After an `Interrupt` is handled, the queued data backlog is flushed via
+    /// [`Inbound::flush_data`]: droppable frames are discarded, but
+    /// transport-audio survivors are kept and re-processed ahead of the next
+    /// inbound read, so a barge-in utterance is not clipped.
+    ///
     /// A composite stage overrides this; the default body is never invoked for
     /// one (see [`Pipeline`](crate::Pipeline)).
     async fn run(self: Box<Self>, inbound: Inbound, out: Outbound) {
         let mut stage = self;
         let mut inbound = inbound;
-        while let Some(received) = inbound.recv().await {
+        // Survivors of an interrupt flush, re-processed ahead of the next read.
+        let mut pending: VecDeque<DataFrame> = VecDeque::new();
+        loop {
+            let received = match pending.pop_front() {
+                Some(frame) => Received::Data(frame),
+                None => match inbound.recv().await {
+                    Some(received) => received,
+                    None => break,
+                },
+            };
             match received {
                 Received::Sys(dir, frame) => {
-                    if handle_system(&mut *stage, dir, frame, &out).await {
+                    let interrupted = matches!(frame, SystemFrame::Interrupt);
+                    let stop = handle_system(&mut *stage, dir, frame, &out).await;
+                    if interrupted {
+                        // Barge-in: discard the queued data backlog, but keep
+                        // transport-audio survivors and re-process them so the
+                        // new utterance is not clipped.
+                        pending.extend(inbound.flush_data());
+                    }
+                    if stop {
                         break;
                     }
                 }
@@ -183,6 +206,8 @@ pub trait Stage: Processor {
                     }
                     if let Some((d, f)) = interrupt {
                         should_stop |= handle_system(&mut *stage, d, f, &out).await;
+                        // Same barge-in flush as the outer Sys branch.
+                        pending.extend(inbound.flush_data());
                     }
                     if should_stop {
                         break;

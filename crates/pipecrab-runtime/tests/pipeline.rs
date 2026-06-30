@@ -11,6 +11,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::channel::{mpsc, oneshot};
@@ -89,11 +90,11 @@ fn interrupt_abandons_perform_and_runs_decide_system() {
 
 // --- Test 2: a system frame preempts a backed-up data lane.
 
-/// Counts data frames in `decide_data`; on Interrupt, records how many had been
-/// processed at that moment.
+/// Counts data frames in `decide_data`; on a `Start` frame, records how many had
+/// been processed at that moment.
 struct CountingStage {
     data_count: Rc<Cell<usize>>,
-    data_at_interrupt: Rc<Cell<Option<usize>>>,
+    data_at_preempt: Rc<Cell<Option<usize>>>,
 }
 
 impl Processor for CountingStage {
@@ -103,8 +104,10 @@ impl Processor for CountingStage {
         Decision::drop() // no effect -> perform is never called
     }
     fn decide_system(&mut self, _dir: Direction, frame: &SystemFrame) -> Decision<()> {
-        if matches!(frame, SystemFrame::Interrupt) {
-            self.data_at_interrupt.set(Some(self.data_count.get()));
+        // Record on `Start`, a frame that preempts but does *not* flush — this
+        // isolates lane preemption from the interrupt data-flush (tested below).
+        if matches!(frame, SystemFrame::Start) {
+            self.data_at_preempt.set(Some(self.data_count.get()));
         }
         Decision::drop()
     }
@@ -121,28 +124,28 @@ impl Stage for CountingStage {
 fn sys_preempts_backed_up_data() {
     block_on(async {
         let data_count = Rc::new(Cell::new(0usize));
-        let data_at_interrupt = Rc::new(Cell::new(None));
+        let data_at_preempt = Rc::new(Cell::new(None));
         let stage = CountingStage {
             data_count: data_count.clone(),
-            data_at_interrupt: data_at_interrupt.clone(),
+            data_at_preempt: data_at_preempt.clone(),
         };
         let (ends, driver) = PipelineBuilder::new().stage(stage).build().start();
         let input = ends.input;
         let _output = ends.output;
 
-        // Back up the data lane, then enqueue an Interrupt behind it.
+        // Back up the data lane, then enqueue a (non-flushing) Start behind it.
         for i in 0..8 {
             input.send_data(DataFrame::Transcript(i.to_string().into())).await.unwrap();
         }
-        input.send_system(Direction::Down, SystemFrame::Interrupt).await.unwrap();
+        input.send_system(Direction::Down, SystemFrame::Start).await.unwrap();
         drop(input);
 
         driver.await;
 
         assert_eq!(
-            data_at_interrupt.get(),
+            data_at_preempt.get(),
             Some(0),
-            "the Interrupt must jump the 8-frame data backlog",
+            "the Start frame must jump the 8-frame data backlog",
         );
         assert_eq!(data_count.get(), 8, "all backed-up data is still processed afterward");
     });
@@ -185,7 +188,46 @@ fn pass_through_forwards_data() {
     });
 }
 
-// --- Test 4: a pipeline is a stage, so pipelines nest.
+// --- Test 4: an Interrupt flushes the data backlog, keeping transport-audio.
+
+fn input_audio(id: u8) -> DataFrame {
+    DataFrame::InputAudio { bytes: Arc::from(&[id][..]), sample_rate: 16_000, num_channels: 1 }
+}
+
+#[test]
+fn interrupt_flushes_data_keeping_survivors_in_order() {
+    block_on(async {
+        // PassThrough forwards everything, so without the flush all four data
+        // frames would reach `output`; with it, only the two InputAudio survive.
+        let (ends, driver) = PipelineBuilder::new().stage(PassThrough).build().start();
+        let input = ends.input;
+        let mut output = ends.output;
+
+        // Back up the data lane with survivors interleaved with droppable frames,
+        // then an Interrupt behind it — sys-biased recv handles it first, while
+        // the whole backlog is still queued.
+        input.send_data(input_audio(1)).await.unwrap();
+        input.send_data(DataFrame::Transcript("drop me".into())).await.unwrap();
+        input.send_data(input_audio(2)).await.unwrap();
+        input.send_data(DataFrame::Audio(Arc::from(&[0u8, 0][..]))).await.unwrap();
+        input.send_system(Direction::Down, SystemFrame::Interrupt).await.unwrap();
+        drop(input);
+
+        driver.await;
+
+        // Drain the data lane: only the two InputAudio frames, in arrival order.
+        let mut ids = Vec::new();
+        while let Ok(frame) = output.data.try_recv() {
+            match frame {
+                DataFrame::InputAudio { bytes, .. } => ids.push(bytes[0]),
+                other => panic!("a non-survivor leaked past the flush: {other:?}"),
+            }
+        }
+        assert_eq!(ids, vec![1, 2], "survivors kept in order; droppable frames flushed");
+    });
+}
+
+// --- Test 5: a pipeline is a stage, so pipelines nest.
 
 #[test]
 fn nested_pipeline_forwards_through_both_levels() {
