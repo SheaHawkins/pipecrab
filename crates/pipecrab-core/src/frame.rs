@@ -13,6 +13,46 @@ pub trait CustomFrame: Any + Send + Sync + std::fmt::Debug {
     fn as_any(&self) -> &dyn Any;
 }
 
+/// The wire format of an [`AudioChunk`]: its sample rate and channel count.
+///
+/// Samples are always `f32`; only the rate and channel count vary along the
+/// pipeline (capture ~48 kHz → STT 16 kHz → TTS 24 kHz → playback ~48 kHz),
+/// which is why every chunk carries its own format instead of assuming one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct AudioFormat {
+    /// Samples per second, per channel (e.g. 48 000 for 48 kHz).
+    pub sample_rate: u32,
+    /// Number of channels (1 = mono, 2 = stereo). Samples are interleaved.
+    pub channels: u16,
+}
+
+impl AudioFormat {
+    /// Construct a format from a `sample_rate` and `channels` count.
+    pub fn new(sample_rate: u32, channels: u16) -> Self {
+        Self { sample_rate, channels }
+    }
+}
+
+/// A chunk of `f32` PCM audio tagged with its own [`AudioFormat`].
+///
+/// Immutable like every [`DataFrame`]: aggregate chunks and produce a new one
+/// rather than mutating in place. `samples` are interleaved by channel; for the
+/// common mono case that is just a flat sample buffer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AudioChunk {
+    /// Interleaved `f32` PCM samples.
+    pub samples: Arc<[f32]>,
+    /// The rate and channel count these `samples` are in.
+    pub format: AudioFormat,
+}
+
+impl AudioChunk {
+    /// Bundle `samples` with the `format` they are in.
+    pub fn new(samples: Arc<[f32]>, format: AudioFormat) -> Self {
+        Self { samples, format }
+    }
+}
+
 /// Travel direction for system frames.
 ///
 /// Down = source → sink; Up = sink → source (errors, acks).
@@ -64,8 +104,8 @@ pub enum DataFrame {
     },
     /// A text transcript segment (ASR output or TTS input).
     Transcript(Arc<str>),
-    /// A raw audio chunk (PCM bytes, format negotiated out-of-band).
-    Audio(Arc<[u8]>),
+    /// A chunk of `f32` PCM audio carrying its own [`AudioFormat`].
+    Audio(AudioChunk),
     /// Application-defined payload; see [`CustomFrame`].
     Custom(Arc<dyn CustomFrame>),
 }
@@ -77,7 +117,7 @@ impl DataFrame {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use pipecrab_core::DataFrame;
+    /// use pipecrab_core::{AudioChunk, AudioFormat, DataFrame};
     ///
     /// let input = DataFrame::InputAudio {
     ///     bytes: Arc::from(&[0u8; 4][..]),
@@ -87,7 +127,9 @@ impl DataFrame {
     /// assert!(input.survives_flush());
     ///
     /// assert!(!DataFrame::Transcript("hi".into()).survives_flush());
-    /// assert!(!DataFrame::Audio(Arc::from(&[][..])).survives_flush());
+    ///
+    /// let audio = AudioChunk::new(Arc::from(&[0.0f32][..]), AudioFormat::new(48_000, 1));
+    /// assert!(!DataFrame::Audio(audio).survives_flush());
     /// ```
     pub fn survives_flush(&self) -> bool {
         matches!(self, DataFrame::InputAudio { .. })

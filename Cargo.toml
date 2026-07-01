@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pipecrab-core", "crates/pipecrab-runtime", "crates/pipecrab", "crates/test-util"]
+members = ["crates/pipecrab-core", "crates/pipecrab-runtime", "crates/pipecrab", "crates/pipecrab-audio", "crates/test-util"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,4 +11,5 @@ license = "MIT"
 [workspace.dependencies]
 pipecrab-core    = { path = "crates/pipecrab-core" }
 pipecrab-runtime = { path = "crates/pipecrab-runtime" }
+pipecrab-audio   = { path = "crates/pipecrab-audio" }
 pipecrab-test-util = { path = "crates/test-util" }

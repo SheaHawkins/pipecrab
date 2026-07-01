@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use futures::channel::mpsc;
-use pipecrab_core::{DataFrame, Direction, SystemFrame};
+use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Direction, SystemFrame};
 use pipecrab_runtime::Inbound;
 
 fn lanes() -> (mpsc::Sender<(Direction, SystemFrame)>, mpsc::Sender<DataFrame>, Inbound) {
@@ -16,12 +16,16 @@ fn input_audio() -> DataFrame {
     DataFrame::InputAudio { bytes: Arc::from(&[0u8; 4][..]), sample_rate: 16_000, num_channels: 1 }
 }
 
+fn audio() -> DataFrame {
+    DataFrame::Audio(AudioChunk::new(Arc::from(&[0.0f32][..]), AudioFormat::new(48_000, 1)))
+}
+
 #[test]
 fn flush_selective_drops_unmarked_keeps_input_audio_in_order() {
     let (_, mut data_tx, mut inb) = lanes();
     data_tx.try_send(DataFrame::Transcript("A".into())).unwrap();
     data_tx.try_send(input_audio()).unwrap(); // IN1
-    data_tx.try_send(DataFrame::Audio(Arc::from(&[][..]))).unwrap(); // B
+    data_tx.try_send(audio()).unwrap(); // B
     data_tx.try_send(input_audio()).unwrap(); // IN2
 
     let kept = inb.flush_data();

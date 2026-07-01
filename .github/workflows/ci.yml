@@ -17,3 +17,5 @@ jobs:
       - run: cargo test --workspace
       # The runtime must stay executor-agnostic and build for the browser.
       - run: cargo check -p pipecrab-runtime --target wasm32-unknown-unknown
+      # The audio I/O interface is platform-neutral and must build for the browser too.
+      - run: cargo check -p pipecrab-audio --target wasm32-unknown-unknown

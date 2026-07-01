@@ -122,6 +122,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pipecrab-audio"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "pipecrab-core",
+ "pipecrab-runtime",
+]
+
+[[package]]
 name = "pipecrab-core"
 version = "0.1.0"
 dependencies = [

@@ -7,5 +7,5 @@ pub mod frame;
 /// The [`Processor`] trait: synchronous, sans-IO stage logic.
 pub mod processor;
 
-pub use frame::{CustomFrame, DataFrame, Direction, SystemFrame};
+pub use frame::{AudioChunk, AudioFormat, CustomFrame, DataFrame, Direction, SystemFrame};
 pub use processor::{Decision, Disposition, Processor};

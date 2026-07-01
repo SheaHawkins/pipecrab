@@ -19,7 +19,7 @@ use futures::executor::block_on;
 use futures::future::join;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
-use pipecrab_core::{DataFrame, Decision, Direction, Processor, SystemFrame};
+use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Decision, Direction, Processor, SystemFrame};
 use pipecrab_runtime::{Outbound, PipelineBuilder, Received, Stage, StageError};
 
 // --- Test 1: an Interrupt abandons an in-flight perform and runs decide_system.
@@ -209,7 +209,8 @@ fn interrupt_flushes_data_keeping_survivors_in_order() {
         input.send_data(input_audio(1)).await.unwrap();
         input.send_data(DataFrame::Transcript("drop me".into())).await.unwrap();
         input.send_data(input_audio(2)).await.unwrap();
-        input.send_data(DataFrame::Audio(Arc::from(&[0u8, 0][..]))).await.unwrap();
+        let audio = AudioChunk::new(Arc::from(&[0.0f32, 0.0][..]), AudioFormat::new(48_000, 1));
+        input.send_data(DataFrame::Audio(audio)).await.unwrap();
         input.send_system(Direction::Down, SystemFrame::Interrupt).await.unwrap();
         drop(input);
 

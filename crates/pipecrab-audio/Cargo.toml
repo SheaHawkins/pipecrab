@@ -1,0 +1,15 @@
+[package]
+name = "pipecrab-audio"
+description = "Platform-neutral audio I/O interface for pipecrab: AudioSource / AudioSink traits plus hardware-free mocks."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pipecrab-core = { workspace = true }
+async-trait   = "0.1"
+
+[dev-dependencies]
+pipecrab-runtime = { workspace = true }
+futures          = "0.3"
