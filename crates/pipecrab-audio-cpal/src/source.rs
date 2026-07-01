@@ -5,17 +5,17 @@
 //! pops a chunk once one is buffered, or parks until the callback signals more
 //! (or the stream fails).
 
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, SampleFormat, SizedSample};
+use cpal::{FromSample, Sample, SampleFormat, SizedSample};
 use rtrb::{Producer, RingBuffer};
 
 use pipecrab_audio::{AudioChunk, AudioError, AudioFormat, AudioSource};
 
-use crate::bridge::{capture_write, CaptureRing, Signal};
+use crate::bridge::{CaptureRing, Signal};
 use crate::config::{CpalConfig, DeviceSelection};
 
 /// Captures mono `f32` audio from an input device.
@@ -152,4 +152,43 @@ where
         },
         None,
     )
+}
+
+/// The input callback's per-buffer work: downmix each interleaved frame of the
+/// device's native sample type `T` to mono `f32`, push it into the ring, and
+/// count samples dropped when the ring is full (an overrun the async side
+/// observes via [`CpalSource::overruns`]). This is the one cpal-coupled piece of
+/// the capture path; the ring itself ([`crate::bridge`]) is backend-agnostic.
+fn capture_write<T>(data: &[T], channels: usize, producer: &mut Producer<f32>, overruns: &AtomicUsize)
+where
+    T: Sample,
+    f32: FromSample<T>,
+{
+    for frame in data.chunks(channels) {
+        let mut acc = 0.0f32;
+        for &s in frame {
+            acc += f32::from_sample(s);
+        }
+        let mono = acc / channels as f32;
+        if producer.push(mono).is_err() {
+            overruns.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The input callback counts the samples it drops when the ring is full.
+    #[test]
+    fn capture_write_counts_overruns_when_full() {
+        let (mut producer, _consumer) = RingBuffer::<f32>::new(4); // holds 4 samples.
+        let overruns = AtomicUsize::new(0);
+
+        // 10 mono frames (channels = 1); only 4 fit, so 6 must overrun.
+        capture_write(&[0.0f32; 10], 1, &mut producer, &overruns);
+
+        assert_eq!(overruns.load(Ordering::Relaxed), 6, "6 dropped on a 4-slot ring");
+    }
 }

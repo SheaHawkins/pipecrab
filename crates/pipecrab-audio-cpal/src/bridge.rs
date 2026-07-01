@@ -1,16 +1,19 @@
-//! The lock-free real-time ↔ async boundary, deliberately independent of cpal's
-//! `Stream`/`Device` so it can be unit-tested without any audio hardware.
+//! A backend-agnostic, lock-free real-time ↔ async bridge over an [`rtrb`] ring
+//! of `f32` samples.
 //!
-//! An [`rtrb`] ring carries `f32` samples one way; a [`Signal`] carries wakeups
-//! and a "the stream died" flag the other way. The cpal callback owns the RT end
-//! of both; [`CaptureRing`] / [`PlaybackRing`] own the async end and the stream
-//! shell ([`crate::desktop`]) wires them to a real device.
+//! The ring carries `f32` samples one way; a [`Signal`] carries wakeups and a
+//! "the stream died" flag the other way. A real-time audio callback owns the RT
+//! end — the ring's *producer* for capture, its *consumer* for playback — and
+//! only ever pushes/pops samples and calls [`Signal::wake`]/[`Signal::fail`],
+//! never blocking or allocating. [`CaptureRing`] / [`PlaybackRing`] own the
+//! async end. Nothing here touches cpal (only `rtrb` + `futures`), so it is a
+//! reusable building block for any callback-driven backend, and unit-testable
+//! without audio hardware.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
-use cpal::{FromSample, Sample};
 use futures::future::poll_fn;
 use futures::task::AtomicWaker;
 use rtrb::{Consumer, Producer};
@@ -189,30 +192,6 @@ fn push_available(producer: &mut Producer<f32>, samples: &[f32], offset: &mut us
     }
 }
 
-/// The input callback's per-buffer work: downmix each interleaved frame to mono
-/// `f32`, push it into the ring, and count samples dropped when the ring is full
-/// (an overrun the async side can observe via [`CaptureRing::overruns`]).
-pub(crate) fn capture_write<T>(
-    data: &[T],
-    channels: usize,
-    producer: &mut Producer<f32>,
-    overruns: &AtomicUsize,
-) where
-    T: Sample,
-    f32: FromSample<T>,
-{
-    for frame in data.chunks(channels) {
-        let mut acc = 0.0f32;
-        for &s in frame {
-            acc += f32::from_sample(s);
-        }
-        let mono = acc / channels as f32;
-        if producer.push(mono).is_err() {
-            overruns.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,18 +288,5 @@ mod tests {
         // Matching format is accepted (fits comfortably in the ring).
         let right = AudioChunk::new(Arc::from(&[0.1f32; 4][..]), FMT);
         assert_eq!(block_on(ring.play(right)), Ok(()));
-    }
-
-    // #3: the input callback counts samples it drops when the ring is full.
-    #[test]
-    fn capture_write_counts_overruns_when_full() {
-        let (mut producer, _consumer) = RingBuffer::<f32>::new(4); // holds 4 samples.
-        let overruns = Arc::new(AtomicUsize::new(0));
-
-        // 10 mono frames (channels = 1); only 4 fit, so 6 must overrun.
-        let data = [0.0f32; 10];
-        capture_write(&data, 1, &mut producer, &overruns);
-
-        assert_eq!(overruns.load(Ordering::Relaxed), 6, "6 dropped samples on a 4-slot ring");
     }
 }
