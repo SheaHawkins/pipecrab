@@ -19,11 +19,7 @@ use async_trait::async_trait;
 pub use pipecrab_core::{AudioChunk, AudioFormat};
 
 /// Why an [`AudioSink::play`] (or an underlying backend I/O) failed.
-///
-/// `#[non_exhaustive]`: backends may surface further failure modes over time, so
-/// downstream `match`es should keep a wildcard arm.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum AudioError {
     /// The sink starved — no audio was ready when the device needed it.
     Underrun,
