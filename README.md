@@ -39,10 +39,14 @@ with no downcast. The crate also ships `mock::MockSource` / `mock::MockSink` for
 hardware-free tests.
 
 Concrete backends live behind those traits in their own crates.
-[`pipecrab-audio-cpal`](./crates/pipecrab-audio-cpal) is the desktop one
-(macOS/Windows/Linux): `CpalSource` / `CpalSink` bridge cpal's real-time device
-callbacks to the async pipeline over a lock-free `rtrb` ring buffer, so the
-audio thread never blocks, allocates, or locks.
+[`pipecrab-audio-cpal`](./crates/pipecrab-audio-cpal) is the cpal one — it runs
+wherever cpal does (macOS, Windows, Linux, iOS, Android, and the browser via
+WebAudio). `CpalSource` / `CpalSink` bridge cpal's real-time device callbacks to
+the async pipeline over a lock-free `rtrb` ring buffer, so the audio thread does
+no locking or allocation on the hot path — it only hands samples across the ring
+and wakes the async side (that wake is a documented pragmatic exception). Both
+open from a shared `CpalConfig` (which device per side, plus chunk/buffer
+sizing), defaulting to the system default devices.
 
 ## Running the echo example
 

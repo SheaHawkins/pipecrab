@@ -50,10 +50,7 @@ mod desktop {
         StageError, SystemFrame,
     };
     use pipecrab_audio::{AudioChunk, AudioSink, AudioSource};
-    use pipecrab_audio_cpal::{CpalSink, CpalSource};
-
-    /// Chunk duration the backend uses; `--delay-ms` is quantised to it.
-    const CHUNK_MS: u64 = 20;
+    use pipecrab_audio_cpal::{CpalConfig, CpalSink, CpalSource};
 
     /// Forwards `DataFrame::Audio` downstream, optionally delayed by a fixed
     /// backlog of chunks so playback is an audible echo instead of a live
@@ -110,21 +107,39 @@ mod desktop {
     }
 
     pub fn run() -> Result<(), Box<dyn Error>> {
-        let delay_ms = parse_u64_flag("--delay-ms").unwrap_or(0);
-        let max_seconds = parse_u64_flag("--seconds");
+        let Args { delay_ms, seconds: max_seconds } = parse_args()?;
 
-        let source = CpalSource::new()?;
-        let sink = CpalSink::new()?;
+        // One config, shared by both ends; defaults to the system default
+        // input/output devices with ~20 ms chunks.
+        let config = CpalConfig::default();
+        let source = CpalSource::new(&config)?;
+        let sink = CpalSink::new(&config)?;
+
+        // No resampling: capture and playback must agree on rate/channels. On a
+        // shared-clock same-device setup they do; refuse the mismatch outright
+        // rather than silently pitch-shifting the audio.
+        if source.format() != sink.format() {
+            return Err(format!(
+                "device format mismatch: input is {} Hz/{} ch but output is {} Hz/{} ch; \
+                 resampling is not supported — use matching devices",
+                source.format().sample_rate,
+                source.format().channels,
+                sink.format().sample_rate,
+                sink.format().channels,
+            )
+            .into());
+        }
 
         let rate = source.format().sample_rate;
         let chunk_frames = source.chunk_frames();
-        let delay_chunks = (delay_ms / CHUNK_MS) as usize;
-        // ~20 ms per chunk, so this many chunks ≈ the requested run length.
-        let max_chunks = max_seconds.map(|s| (s * 1000 / CHUNK_MS) as usize);
+        let chunk_ms = u64::from(config.chunk_ms);
+        let delay_chunks = (delay_ms / chunk_ms) as usize;
+        // ~chunk_ms per chunk, so this many chunks ≈ the requested run length.
+        let max_chunks = max_seconds.map(|s| (s * 1000 / chunk_ms) as usize);
 
         println!("echo: in  = {} @ {} Hz mono", source.device_name(), rate);
         println!("echo: out = {} @ {} Hz mono", sink.device_name(), sink.format().sample_rate);
-        println!("echo: {chunk_frames} frames/chunk (~{CHUNK_MS} ms), delay {delay_ms} ms ({delay_chunks} chunks)");
+        println!("echo: {chunk_frames} frames/chunk (~{chunk_ms} ms), delay {delay_ms} ms ({delay_chunks} chunks)");
         match max_chunks {
             Some(_) => println!("echo: running for {} s", max_seconds.unwrap()),
             None => println!("echo: running until Ctrl-C — use headphones!"),
@@ -141,13 +156,22 @@ mod desktop {
             let mut source = source;
             let _ = input.send_system(Direction::Down, SystemFrame::Start).await;
             let mut sent = 0usize;
-            while let Some(chunk) = source.next_chunk().await {
-                if input.send_data(DataFrame::Audio(chunk)).await.is_err() {
-                    break; // downstream gone.
-                }
-                sent += 1;
-                if max_chunks.is_some_and(|max| sent >= max) {
-                    break; // bounded run elapsed; drop `input` to shut down.
+            loop {
+                match source.next_chunk().await {
+                    Ok(Some(chunk)) => {
+                        if input.send_data(DataFrame::Audio(chunk)).await.is_err() {
+                            break; // downstream gone.
+                        }
+                        sent += 1;
+                        if max_chunks.is_some_and(|max| sent >= max) {
+                            break; // bounded run elapsed; drop `input` to shut down.
+                        }
+                    }
+                    Ok(None) => break, // source exhausted (a live mic never does).
+                    Err(e) => {
+                        eprintln!("echo: capture stopped: {e}");
+                        break;
+                    }
                 }
             }
         };
@@ -178,14 +202,32 @@ mod desktop {
         Ok(())
     }
 
-    /// Read `--flag <u64>` from the process arguments, if present and valid.
-    fn parse_u64_flag(flag: &str) -> Option<u64> {
-        let mut args = std::env::args();
+    /// Parsed command-line options.
+    struct Args {
+        delay_ms: u64,
+        seconds: Option<u64>,
+    }
+
+    /// Parse the process arguments, erroring on an unknown flag or a
+    /// missing/invalid value rather than silently ignoring it.
+    fn parse_args() -> Result<Args, String> {
+        let mut delay_ms = 0;
+        let mut seconds = None;
+        let mut args = std::env::args().skip(1); // skip argv[0].
         while let Some(arg) = args.next() {
-            if arg == flag {
-                return args.next()?.parse().ok();
+            match arg.as_str() {
+                "--delay-ms" => delay_ms = parse_value(&mut args, "--delay-ms")?,
+                "--seconds" => seconds = Some(parse_value(&mut args, "--seconds")?),
+                other => return Err(format!("unknown argument {other:?} (expected --delay-ms or --seconds)")),
             }
         }
-        None
+        Ok(Args { delay_ms, seconds })
+    }
+
+    /// Take the next argument as a `u64`, erroring if it is missing or not a
+    /// non-negative integer.
+    fn parse_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<u64, String> {
+        let raw = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
+        raw.parse().map_err(|_| format!("{flag} expects a non-negative integer, got {raw:?}"))
     }
 }
