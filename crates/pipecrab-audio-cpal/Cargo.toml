@@ -1,0 +1,14 @@
+[package]
+name = "pipecrab-audio-cpal"
+description = "Desktop (cpal + rtrb) audio backend for pipecrab: CpalSource / CpalSink over the pipecrab-audio traits."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pipecrab-audio = { workspace = true }
+cpal           = "0.15"
+rtrb           = "0.3"
+futures        = "0.3"
+async-trait    = "0.1"

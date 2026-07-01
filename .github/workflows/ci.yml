@@ -14,6 +14,8 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      # cpal's Linux (ALSA) backend needs the libasound headers to build.
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - run: cargo test --workspace
       # The runtime must stay executor-agnostic and build for the browser.
       - run: cargo check -p pipecrab-runtime --target wasm32-unknown-unknown

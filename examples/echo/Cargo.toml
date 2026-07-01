@@ -1,0 +1,15 @@
+[package]
+name = "echo"
+description = "Live audio echo: capture your voice and play it straight back through a pipecrab pipeline."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+pipecrab           = { workspace = true }
+pipecrab-audio     = { workspace = true }
+pipecrab-audio-cpal = { workspace = true }
+futures            = "0.3"
+async-trait        = "0.1"
