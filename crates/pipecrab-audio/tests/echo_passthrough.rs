@@ -49,7 +49,7 @@ fn echo_passthrough_preserves_ramp() {
     let pump_in = async move {
         let mut source = source;
         input.send_system(Direction::Down, SystemFrame::Start).await.unwrap();
-        while let Some(chunk) = source.next_chunk().await {
+        while let Ok(Some(chunk)) = source.next_chunk().await {
             input.send_data(DataFrame::Audio(chunk)).await.unwrap();
         }
     };

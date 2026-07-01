@@ -48,8 +48,9 @@ impl AudioSource for MockSource {
         self.format
     }
 
-    async fn next_chunk(&mut self) -> Option<AudioChunk> {
-        self.queue.pop_front()
+    async fn next_chunk(&mut self) -> Result<Option<AudioChunk>, AudioError> {
+        // A mock never fails: an empty queue is a graceful end of stream.
+        Ok(self.queue.pop_front())
     }
 }
 

@@ -28,5 +28,41 @@ fn decide_data(&mut self, frame: &DataFrame) -> Decision<Self::Effect> {
 }
 ```
 
+## Audio I/O
+
+Audio enters and leaves a pipeline through two platform-neutral traits in
+[`pipecrab-audio`](./crates/pipecrab-audio): an `AudioSource` (capture) and an
+`AudioSink` (playback), both trading in `AudioChunk`s — `f32` PCM samples tagged
+with their own `AudioFormat` (sample rate + channels). Chunks ride the pipeline
+as the first-party `DataFrame::Audio` variant, so stages match them exhaustively
+with no downcast. The crate also ships `mock::MockSource` / `mock::MockSink` for
+hardware-free tests.
+
+Concrete backends live behind those traits in their own crates.
+[`pipecrab-audio-cpal`](./crates/pipecrab-audio-cpal) is the cpal one — it runs
+wherever cpal does (macOS, Windows, Linux, iOS, Android, and the browser via
+WebAudio). `CpalSource` / `CpalSink` bridge cpal's real-time device callbacks to
+the async pipeline over a lock-free `rtrb` ring buffer, so the audio thread does
+no locking or allocation on the hot path — it only hands samples across the ring
+and wakes the async side (that wake is a documented pragmatic exception). Both
+open from a shared `CpalConfig` (which device per side, plus chunk/buffer
+sizing), defaulting to the system default devices.
+
+## Running the echo example
+
+[`examples/echo`](./examples/echo) captures your voice and plays it straight
+back through a one-stage pipeline — the shortest end-to-end path through the
+audio traits, the runtime, and the cpal backend.
+
+```console
+$ cargo run -p echo                     # live monitor: hear yourself immediately
+$ cargo run -p echo -- --delay-ms 400   # 400 ms delay: an audible echo
+$ cargo run -p echo -- --seconds 5      # run for 5 s, then shut down cleanly
+```
+
+Use **headphones** — over speakers the mic re-captures the playback and howls.
+On macOS the first run triggers a microphone-permission prompt. Without
+`--seconds` it runs until Ctrl-C.
+
 ## Contributing
 See [CONTRIBUTING.md](./CONTRIBUTING.md)

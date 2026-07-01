@@ -1,6 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["crates/pipecrab-core", "crates/pipecrab-runtime", "crates/pipecrab", "crates/pipecrab-audio", "crates/test-util"]
+members = [
+    "crates/pipecrab-core",
+    "crates/pipecrab-runtime",
+    "crates/pipecrab",
+    "crates/pipecrab-audio",
+    "crates/pipecrab-audio-cpal",
+    "crates/test-util",
+    "examples/echo",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,7 +17,9 @@ rust-version = "1.75"
 license = "MIT"
 
 [workspace.dependencies]
-pipecrab-core    = { path = "crates/pipecrab-core" }
-pipecrab-runtime = { path = "crates/pipecrab-runtime" }
-pipecrab-audio   = { path = "crates/pipecrab-audio" }
+pipecrab           = { path = "crates/pipecrab" }
+pipecrab-core      = { path = "crates/pipecrab-core" }
+pipecrab-runtime   = { path = "crates/pipecrab-runtime" }
+pipecrab-audio     = { path = "crates/pipecrab-audio" }
+pipecrab-audio-cpal = { path = "crates/pipecrab-audio-cpal" }
 pipecrab-test-util = { path = "crates/test-util" }

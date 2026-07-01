@@ -19,13 +19,21 @@ pub mod mock;
 
 pub use pipecrab_core::{AudioChunk, AudioFormat};
 
-/// Why an [`AudioSink::play`] (or an underlying backend I/O) failed.
+/// Why an [`AudioSource`]/[`AudioSink`] (or an underlying backend I/O) failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AudioError {
     /// The sink starved — no audio was ready when the device needed it.
     Underrun,
     /// The device or stream is closed; no more audio can flow.
     Closed,
+    /// A chunk's format did not match the sink's format. The sink does not
+    /// resample: the caller must feed it chunks in the sink's own format.
+    FormatMismatch {
+        /// The format the sink accepts (its own [`AudioSink::format`]).
+        expected: AudioFormat,
+        /// The format of the rejected chunk.
+        got: AudioFormat,
+    },
     /// A device- or backend-level failure, with a human-readable description.
     Device(String),
 }
@@ -35,6 +43,11 @@ impl std::fmt::Display for AudioError {
         match self {
             AudioError::Underrun => write!(f, "audio underrun"),
             AudioError::Closed => write!(f, "audio device closed"),
+            AudioError::FormatMismatch { expected, got } => write!(
+                f,
+                "audio format mismatch: sink expects {} Hz/{} ch, got {} Hz/{} ch",
+                expected.sample_rate, expected.channels, got.sample_rate, got.channels,
+            ),
             AudioError::Device(msg) => write!(f, "audio device error: {msg}"),
         }
     }
@@ -52,8 +65,15 @@ pub trait AudioSource {
     /// The format of the chunks this source yields. Fixed for the source's life.
     fn format(&self) -> AudioFormat;
 
-    /// Await the next chunk, or `None` once the source is exhausted or closed.
-    async fn next_chunk(&mut self) -> Option<AudioChunk>;
+    /// Await the next chunk.
+    ///
+    /// Three outcomes, kept distinct so a live device can report failure without
+    /// being mistaken for a clean end of stream:
+    /// - `Ok(Some(chunk))` — a chunk of audio.
+    /// - `Ok(None)` — the source is *gracefully* exhausted (e.g. a file or mock
+    ///   ran out); there will be no more chunks.
+    /// - `Err(_)` — the source *failed* (e.g. the capture device dropped out).
+    async fn next_chunk(&mut self) -> Result<Option<AudioChunk>, AudioError>;
 }
 
 /// A sink of audio flowing *out of* a pipeline (device playback, file, network,
