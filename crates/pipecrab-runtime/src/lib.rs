@@ -8,6 +8,9 @@
 #![warn(missing_docs)]
 
 pub mod inbound;
+/// The [`offload`](offload::offload) helper for running blocking work off the
+/// orchestrator thread.
+pub mod offload;
 /// Typed send surface for a stage's output channels.
 pub mod outbound;
 /// The [`Pipeline`] builder and the per-stage preemptible run loop.
@@ -15,6 +18,7 @@ pub mod pipeline;
 /// The [`Stage`] trait and its [`StageError`].
 pub mod stage;
 pub use inbound::{Inbound, Received};
+pub use offload::offload;
 pub use outbound::Outbound;
 pub use pipeline::{link, Pipeline, PipelineBuilder, PipelineEnds};
 pub use stage::{Stage, StageError};

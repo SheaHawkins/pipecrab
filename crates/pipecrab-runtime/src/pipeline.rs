@@ -17,7 +17,8 @@
 //!
 //! Upstream routing of `Up`-travelling system frames *through* the stages is
 //! not yet wired: a [`Stage::perform`] error surfaces on the tail's output,
-//! tagged [`Direction::Up`]. That is a deliberate v1 limitation.
+//! tagged [`Direction::Up`](pipecrab_core::Direction::Up). That is a deliberate
+//! v1 limitation.
 //!
 //! # Driving it
 //!
