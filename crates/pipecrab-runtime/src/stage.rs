@@ -1,7 +1,8 @@
 //! The [`Stage`] trait: the async, effecting half of a pipeline stage, and the
 //! preemptible run loop ([`Stage::run`]) that drives one.
 //!
-//! A stage is a [`Processor`] — synchronous, state-owning `decide_*` — plus an
+//! A stage is a [`Processor`](pipecrab_core::Processor) — synchronous,
+//! state-owning `decide_*` — plus an
 //! async [`Stage::perform`] that interprets the effects `decide_*` emitted and
 //! does the actual I/O. The split is the core invariant: `decide_*` takes
 //! `&mut self` and is the *only* place state changes; `perform` takes `&self`
@@ -93,8 +94,8 @@ impl From<&str> for StageError {
 /// unchanged both on a tokio current-thread runtime and in the browser
 /// (`wasm32`), where `Send` bounds are impossible to satisfy. CPU-bound or
 /// blocking work must not run inline on the orchestrator thread — push it
-/// off-thread with the `offload` helper and `await` the result, so an interrupt
-/// can still preempt `perform` promptly.
+/// off-thread with [`offload`](fn@crate::offload) and `await` the result, so an
+/// interrupt can still preempt `perform` promptly.
 ///
 /// The trait is dyn-compatible (via `async_trait`), so a pipeline can hold its
 /// stages as `Box<dyn Stage<Effect = _>>`.
@@ -107,8 +108,10 @@ pub trait Stage: Processor {
     /// this future against the system lane, so a barge-in `Interrupt` can drop
     /// it mid-flight; because only `decide_*` ever mutated state, dropping the
     /// future leaves the stage intact. Barge-in is only as responsive as
-    /// `perform` yields, so never block the thread inline — offload heavy work
-    /// and `await` it.
+    /// `perform` yields, so never block the thread inline — [`offload`] heavy
+    /// work and `await` it.
+    ///
+    /// [`offload`]: fn@crate::offload
     async fn perform(&self, effect: Self::Effect, out: &Outbound) -> Result<(), StageError>;
 
     /// Drive this stage to completion: consume frames from `inbound`, emit
