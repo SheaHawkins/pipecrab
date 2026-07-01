@@ -1,0 +1,15 @@
+[package]
+name = "pipecrab-stt"
+description = "The speech-to-text seam for pipecrab: the Transcriber trait plus a generic SttStage adapter."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pipecrab-core    = { workspace = true }
+pipecrab-runtime = { workspace = true }
+async-trait      = "0.1"
+
+[dev-dependencies]
+futures = "0.3"
