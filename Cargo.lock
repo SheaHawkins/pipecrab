@@ -632,6 +632,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pipecrab-stt"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "pipecrab-core",
+ "pipecrab-runtime",
+]
+
+[[package]]
 name = "pipecrab-test-util"
 version = "0.1.0"
 
