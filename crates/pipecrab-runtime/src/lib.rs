@@ -8,6 +8,8 @@
 #![warn(missing_docs)]
 
 pub mod inbound;
+/// Target-conditional `Send`/`Sync` bounds (`Send` native, vacuous on wasm).
+pub mod maybe;
 /// The [`offload`](offload::offload) helper for running blocking work off the
 /// orchestrator thread.
 pub mod offload;
@@ -18,6 +20,7 @@ pub mod pipeline;
 /// The [`Stage`] trait and its [`StageError`].
 pub mod stage;
 pub use inbound::{Inbound, Received};
+pub use maybe::{MaybeSend, MaybeSendSync};
 pub use offload::offload;
 pub use outbound::Outbound;
 pub use pipeline::{link, Pipeline, PipelineBuilder, PipelineEnds};

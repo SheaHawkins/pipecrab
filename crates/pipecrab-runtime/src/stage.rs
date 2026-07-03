@@ -24,7 +24,7 @@ use futures::pin_mut;
 use futures::stream::StreamExt;
 use pipecrab_core::{DataFrame, Direction, Disposition, Processor, SystemFrame};
 
-use crate::{Inbound, Outbound, Received};
+use crate::{Inbound, MaybeSend, MaybeSendSync, Outbound, Received};
 
 /// Why a [`Stage::perform`] call failed.
 ///
@@ -99,8 +99,12 @@ impl From<&str> for StageError {
 ///
 /// The trait is dyn-compatible (via `async_trait`), so a pipeline can hold its
 /// stages as `Box<dyn Stage<Effect = _>>`.
-#[async_trait(?Send)]
-pub trait Stage: Processor {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait Stage: Processor + MaybeSendSync
+where
+    Self::Effect: MaybeSend,
+{
     /// Interpret one effect emitted by `decide_*` and carry out its I/O, sending
     /// any resulting frames through `out`.
     ///
@@ -229,7 +233,10 @@ async fn handle_system<S: Stage + ?Sized>(
     dir: Direction,
     frame: SystemFrame,
     out: &Outbound,
-) -> bool {
+) -> bool
+where
+    S::Effect: MaybeSend,
+{
     let mut should_stop = matches!(frame, SystemFrame::Stop);
     let decision = stage.decide_system(dir, &frame);
     if decision.disposition == Disposition::Forward {
@@ -250,7 +257,10 @@ async fn run_effects<S: Stage + ?Sized>(
     stage: &S,
     effects: Vec<S::Effect>,
     out: &Outbound,
-) -> Result<(), StageError> {
+) -> Result<(), StageError>
+where
+    S::Effect: MaybeSend,
+{
     for effect in effects {
         stage.perform(effect, out).await?;
     }

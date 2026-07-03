@@ -28,11 +28,21 @@
 
 use async_trait::async_trait;
 use futures::channel::mpsc;
-use futures::future::LocalBoxFuture;
+
 use futures::stream::{FuturesUnordered, StreamExt};
 use pipecrab_core::{DataFrame, Decision, Direction, Processor, SystemFrame};
 
-use crate::{Inbound, Outbound, Stage, StageError};
+use crate::{Inbound, MaybeSend, Outbound, Stage, StageError};
+
+/// The boxed pipeline driver future returned by [`Pipeline::start`].
+///
+/// `Send` on native targets, so the driver can be handed to a multi-threaded
+/// executor (`tokio::spawn`); `!Send` on `wasm32`, where it is `spawn_local`-ed.
+#[cfg(not(target_arch = "wasm32"))]
+pub type DriverFuture = futures::future::BoxFuture<'static, ()>;
+/// The boxed pipeline driver future returned by [`Pipeline::start`].
+#[cfg(target_arch = "wasm32")]
+pub type DriverFuture = futures::future::LocalBoxFuture<'static, ()>;
 
 /// Default buffer depth for each lane channel: how many frames may queue on a
 /// lane before a send awaits (backpressure). Arbitrary-but-reasonable, not a
@@ -68,7 +78,7 @@ pub struct PipelineBuilder<E> {
     capacity: usize,
 }
 
-impl<E: 'static> PipelineBuilder<E> {
+impl<E: MaybeSend + 'static> PipelineBuilder<E> {
     /// A new, empty builder with the default lane capacity.
     pub fn new() -> Self {
         Self { stages: Vec::new(), capacity: DEFAULT_CAPACITY }
@@ -105,7 +115,7 @@ impl<E: 'static> PipelineBuilder<E> {
     }
 }
 
-impl<E: 'static> Default for PipelineBuilder<E> {
+impl<E: MaybeSend + 'static> Default for PipelineBuilder<E> {
     fn default() -> Self {
         Self::new()
     }
@@ -120,11 +130,11 @@ pub struct Pipeline<E> {
     capacity: usize,
 }
 
-impl<E: 'static> Pipeline<E> {
+impl<E: MaybeSend + 'static> Pipeline<E> {
     /// Wire fresh external [`PipelineEnds`] and return them with the driving
     /// future. The caller drives the future (e.g. `block_on`) and uses the ends
     /// to feed the head and read the tail.
-    pub fn start(self) -> (PipelineEnds, LocalBoxFuture<'static, ()>) {
+    pub fn start(self) -> (PipelineEnds, DriverFuture) {
         let capacity = self.capacity;
         let (input, head_in) = link(capacity);
         let (tail_out, output) = link(capacity);
@@ -149,8 +159,9 @@ impl<E> Processor for Pipeline<E> {
     }
 }
 
-#[async_trait(?Send)]
-impl<E: 'static> Stage for Pipeline<E> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<E: MaybeSend + 'static> Stage for Pipeline<E> {
     async fn perform(&self, _effect: E, _out: &Outbound) -> Result<(), StageError> {
         unreachable!("a Pipeline is driven by Stage::run, not perform")
     }

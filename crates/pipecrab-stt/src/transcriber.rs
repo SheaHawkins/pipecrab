@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use pipecrab_core::AudioFormat;
+use pipecrab_runtime::MaybeSendSync;
 
 /// The swappable speech-to-text capability: `f32` samples in, a transcript out.
 ///
@@ -15,8 +16,9 @@ use pipecrab_core::AudioFormat;
 /// `?Send` matches pipecrab's single-threaded execution model, so one
 /// implementation runs unchanged on a current-thread executor and on `wasm32`,
 /// where `Send` bounds cannot be satisfied.
-#[async_trait(?Send)]
-pub trait Transcriber {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait Transcriber: MaybeSendSync {
     /// Transcribe `samples` (interleaved `f32` PCM in `format`) to text.
     ///
     /// Takes `&self`: like every

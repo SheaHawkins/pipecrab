@@ -20,7 +20,8 @@ struct MockTranscriber {
     format: AudioFormat,
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl Transcriber for MockTranscriber {
     async fn transcribe(&self, samples: &[f32], format: AudioFormat) -> Result<String, SttError> {
         if format != self.format {
