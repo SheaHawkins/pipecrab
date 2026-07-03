@@ -9,8 +9,10 @@
 //! [`output_device_names`] enumerate the choices for
 //! [`DeviceSelection::Name`].
 //!
-//! Available wherever cpal is — macOS, Windows, Linux, iOS, Android, and the
-//! browser (wasm) — so there is no platform gate.
+//! A native backend (macOS, Windows, Linux, iOS, Android). The browser/wasm
+//! audio path is a separate future crate, not cpal: cpal's wasm backend runs on
+//! the main thread and isn't the intended web path, so this crate is not built
+//! for `wasm32`.
 //!
 //! # The real-time boundary
 //!
@@ -22,12 +24,10 @@
 //! buffer sizes; a strict wait-free bridge is deferred.
 //!
 //! The [`AudioSource`](pipecrab_audio::AudioSource) /
-//! [`AudioSink`](pipecrab_audio::AudioSink) seam is `Send` on native, but a
-//! `cpal::Stream` is `!Send`. So on native the stream is built and parked on a
-//! dedicated owning thread (see `stream`), and [`CpalSource`] / [`CpalSink`]
-//! hold only the `Send` ring end — a server can spawn one pump per session. On
-//! `wasm32` the seam bound is vacuous and cpal runs on the single main thread,
-//! so the stream is held inline.
+//! [`AudioSink`](pipecrab_audio::AudioSink) seam is `Send`, but a `cpal::Stream`
+//! is `!Send`. So the stream is built and parked on a dedicated owning thread
+//! (see `stream`), and [`CpalSource`] / [`CpalSink`] hold only the `Send` ring
+//! end — a server can spawn one pump per session.
 //!
 //! # Format & timing
 //!
@@ -43,7 +43,6 @@ mod bridge;
 mod config;
 mod sink;
 mod source;
-#[cfg(not(target_arch = "wasm32"))]
 mod stream;
 
 pub use config::{CpalConfig, DeviceSelection};

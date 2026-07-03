@@ -21,13 +21,10 @@ use crate::config::{CpalConfig, DeviceSelection};
 pub struct CpalSink {
     name: String,
     ring: PlaybackRing,
-    /// Keeps the playback stream alive. Native: parked on its own thread (the
-    /// seam is `Send`, `cpal::Stream` is not), only this `Send` handle held.
-    /// wasm: the `!Send` stream held directly under the vacuous bound.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Keeps the playback stream alive. The audio seam is `Send` but a
+    /// `cpal::Stream` is not, so the stream is parked on its own thread and only
+    /// this `Send` handle is held here.
     _thread: crate::stream::StreamThread,
-    #[cfg(target_arch = "wasm32")]
-    _stream: cpal::Stream,
 }
 
 impl CpalSink {
@@ -40,22 +37,12 @@ impl CpalSink {
     /// be read, its sample format is unsupported, or the stream fails to build
     /// or start.
     pub fn new(config: &CpalConfig) -> Result<Self, AudioError> {
-        // Native: the seam is `Send` but a `cpal::Stream` is not, so build and
-        // park the stream on its own thread, keeping only the `Send` ring end.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let config = config.clone();
-            let ((ring, name), thread) =
-                crate::stream::spawn_stream(move || build_playback(&config).map(|(s, r, n)| (s, (r, n))))?;
-            Ok(Self { name, ring, _thread: thread })
-        }
-        // wasm: the seam bound is vacuous and cpal lives on the single main
-        // thread, so hold the `!Send` stream inline.
-        #[cfg(target_arch = "wasm32")]
-        {
-            let (stream, ring, name) = build_playback(config)?;
-            Ok(Self { name, ring, _stream: stream })
-        }
+        // The seam is `Send` but a `cpal::Stream` is not, so build and park the
+        // stream on its own thread, keeping only the `Send` ring end here.
+        let config = config.clone();
+        let ((ring, name), thread) =
+            crate::stream::spawn_stream(move || build_playback(&config).map(|(s, r, n)| (s, (r, n))))?;
+        Ok(Self { name, ring, _thread: thread })
     }
 
     /// The name of the output device audio is being played to.
@@ -64,8 +51,7 @@ impl CpalSink {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[async_trait]
 impl AudioSink for CpalSink {
     fn format(&self) -> AudioFormat {
         self.ring.format()
@@ -78,9 +64,8 @@ impl AudioSink for CpalSink {
 
 /// Open the output device named by `config`, build and start its playback
 /// stream, and return the (`!Send`) stream alongside the `Send` async end (a
-/// [`PlaybackRing`]) and the device name. Splitting this out lets the native
-/// path run it on a stream-owning thread and the wasm path run it inline (see
-/// [`CpalSink::new`]).
+/// [`PlaybackRing`]) and the device name. Split out so it can run on the
+/// stream-owning thread (see [`CpalSink::new`] and [`crate::stream`]).
 fn build_playback(config: &CpalConfig) -> Result<(cpal::Stream, PlaybackRing, String), AudioError> {
     let host = cpal::default_host();
     let device = find_output_device(&host, &config.sink_device)?;

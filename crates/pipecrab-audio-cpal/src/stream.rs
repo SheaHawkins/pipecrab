@@ -1,16 +1,12 @@
-//! Keeping a `!Send` cpal `Stream` alive on its own thread (native only).
+//! Keeping a `!Send` cpal `Stream` alive on its own thread.
 //!
-//! The audio seam is `MaybeSend`, so on native a [`CpalSource`](crate::CpalSource)
-//! / [`CpalSink`](crate::CpalSink) must be `Send` — that is what lets a server
+//! The audio seam is `MaybeSend`, so a [`CpalSource`](crate::CpalSource) /
+//! [`CpalSink`](crate::CpalSink) must be `Send` — that is what lets a server
 //! spawn one capture/playback pump per session. But `cpal::Stream` is `!Send`,
 //! so it cannot be a field. Instead a dedicated thread builds the stream, starts
 //! it, and parks holding it alive; the constructor keeps only the ring end
 //! (which *is* `Send`) plus a [`StreamThread`] handle. Dropping the handle tells
 //! the thread to drop the stream and joins it.
-//!
-//! On `wasm32` the seam bound is vacuous and cpal already runs on the single
-//! main thread, so the backend holds its `Stream` inline and this module is not
-//! compiled.
 
 use std::sync::mpsc;
 use std::thread;

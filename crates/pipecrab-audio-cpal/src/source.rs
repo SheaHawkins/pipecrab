@@ -22,14 +22,10 @@ use crate::config::{CpalConfig, DeviceSelection};
 pub struct CpalSource {
     name: String,
     ring: CaptureRing,
-    /// Keeps the capture stream alive. On native the seam is `Send` but a
+    /// Keeps the capture stream alive. The audio seam is `Send` but a
     /// `cpal::Stream` is not, so the stream is parked on its own thread and only
-    /// this `Send` handle is held; on `wasm32` (vacuous bound, single thread) the
-    /// `!Send` stream is held directly.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// this `Send` handle is held here.
     _thread: crate::stream::StreamThread,
-    #[cfg(target_arch = "wasm32")]
-    _stream: cpal::Stream,
 }
 
 impl CpalSource {
@@ -42,22 +38,12 @@ impl CpalSource {
     /// be read, its sample format is unsupported, or the stream fails to build
     /// or start.
     pub fn new(config: &CpalConfig) -> Result<Self, AudioError> {
-        // Native: the seam is `Send` but a `cpal::Stream` is not, so build and
-        // park the stream on its own thread, keeping only the `Send` ring end.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let config = config.clone();
-            let ((ring, name), thread) =
-                crate::stream::spawn_stream(move || build_capture(&config).map(|(s, r, n)| (s, (r, n))))?;
-            Ok(Self { name, ring, _thread: thread })
-        }
-        // wasm: the seam bound is vacuous and cpal lives on the single main
-        // thread, so hold the `!Send` stream inline.
-        #[cfg(target_arch = "wasm32")]
-        {
-            let (stream, ring, name) = build_capture(config)?;
-            Ok(Self { name, ring, _stream: stream })
-        }
+        // The seam is `Send` but a `cpal::Stream` is not, so build and park the
+        // stream on its own thread, keeping only the `Send` ring end here.
+        let config = config.clone();
+        let ((ring, name), thread) =
+            crate::stream::spawn_stream(move || build_capture(&config).map(|(s, r, n)| (s, (r, n))))?;
+        Ok(Self { name, ring, _thread: thread })
     }
 
     /// The name of the input device audio is being captured from.
@@ -77,8 +63,7 @@ impl CpalSource {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[async_trait]
 impl AudioSource for CpalSource {
     fn format(&self) -> AudioFormat {
         self.ring.format()
@@ -91,9 +76,8 @@ impl AudioSource for CpalSource {
 
 /// Open the input device named by `config`, build and start its capture stream,
 /// and return the (`!Send`) stream alongside the `Send` async end (a
-/// [`CaptureRing`]) and the device name. Splitting this out lets the native path
-/// run it on a stream-owning thread and the wasm path run it inline (see
-/// [`CpalSource::new`]).
+/// [`CaptureRing`]) and the device name. Split out so it can run on the
+/// stream-owning thread (see [`CpalSource::new`] and [`crate::stream`]).
 fn build_capture(config: &CpalConfig) -> Result<(cpal::Stream, CaptureRing, String), AudioError> {
     let host = cpal::default_host();
     let device = find_input_device(&host, &config.source_device)?;
