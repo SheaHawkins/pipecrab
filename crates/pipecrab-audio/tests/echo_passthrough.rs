@@ -7,12 +7,11 @@
 //! Tokio-free: driven by `futures::executor::block_on`, consistent with the
 //! runtime.
 
-use async_trait::async_trait;
 use futures::executor::block_on;
 use pipecrab_audio::mock::{MockSink, MockSource};
 use pipecrab_audio::{AudioFormat, AudioSink, AudioSource};
 use pipecrab_core::{DataFrame, Direction, Processor, SystemFrame};
-use pipecrab_runtime::{Outbound, PipelineBuilder, Received, Stage, StageError};
+use pipecrab_runtime::{maybe_async_trait, Outbound, PipelineBuilder, Received, Stage, StageError};
 
 /// Forwards every frame unchanged: an all-default [`Processor`] is already a
 /// transparent passthrough, so `decide_*` are left at their defaults (which
@@ -23,11 +22,11 @@ impl Processor for EchoStage {
     type Effect = ();
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl Stage for EchoStage {
-    async fn perform(&self, _effect: (), _out: &Outbound) -> Result<(), StageError> {
-        Ok(())
+maybe_async_trait! {
+    impl Stage for EchoStage {
+        async fn perform(&self, _effect: (), _out: &Outbound) -> Result<(), StageError> {
+            Ok(())
+        }
     }
 }
 

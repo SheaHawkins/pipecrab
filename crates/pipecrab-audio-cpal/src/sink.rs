@@ -21,7 +21,10 @@ use crate::config::{CpalConfig, DeviceSelection};
 pub struct CpalSink {
     name: String,
     ring: PlaybackRing,
-    _stream: cpal::Stream,
+    /// Keeps the playback stream alive. The audio seam is `Send` but a
+    /// `cpal::Stream` is not, so the stream is parked on its own thread and only
+    /// this `Send` handle is held here.
+    _thread: crate::stream::StreamThread,
 }
 
 impl CpalSink {
@@ -34,40 +37,12 @@ impl CpalSink {
     /// be read, its sample format is unsupported, or the stream fails to build
     /// or start.
     pub fn new(config: &CpalConfig) -> Result<Self, AudioError> {
-        let host = cpal::default_host();
-        let device = find_output_device(&host, &config.sink_device)?;
-        let name = device.name().unwrap_or_else(|_| "<unknown output>".into());
-        let supported = device
-            .default_output_config()
-            .map_err(|e| AudioError::Device(format!("default output config: {e}")))?;
-        let sample_format = supported.sample_format();
-        let stream_config: cpal::StreamConfig = supported.into();
-        let sample_rate = stream_config.sample_rate.0;
-        let channels = stream_config.channels as usize;
-
-        let (producer, consumer) = RingBuffer::<f32>::new(config.ring_capacity(sample_rate));
-        let signal = Signal::new();
-
-        // Only one match arm runs, so moving `consumer`/`signal` into each is fine.
-        let stream = match sample_format {
-            SampleFormat::F32 => build_playback_stream::<f32>(
-                &device, &stream_config, consumer, signal.clone(), channels,
-            ),
-            SampleFormat::I16 => build_playback_stream::<i16>(
-                &device, &stream_config, consumer, signal.clone(), channels,
-            ),
-            SampleFormat::U16 => build_playback_stream::<u16>(
-                &device, &stream_config, consumer, signal.clone(), channels,
-            ),
-            other => {
-                return Err(AudioError::Device(format!("unsupported output sample format: {other:?}")))
-            }
-        }
-        .map_err(|e| AudioError::Device(format!("build output stream: {e}")))?;
-        stream.play().map_err(|e| AudioError::Device(format!("start output stream: {e}")))?;
-
-        let ring = PlaybackRing::new(producer, signal, AudioFormat::new(sample_rate, 1));
-        Ok(Self { name, ring, _stream: stream })
+        // The seam is `Send` but a `cpal::Stream` is not, so build and park the
+        // stream on its own thread, keeping only the `Send` ring end here.
+        let config = config.clone();
+        let ((ring, name), thread) =
+            crate::stream::spawn_stream(move || build_playback(&config).map(|(s, r, n)| (s, (r, n))))?;
+        Ok(Self { name, ring, _thread: thread })
     }
 
     /// The name of the output device audio is being played to.
@@ -76,7 +51,7 @@ impl CpalSink {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl AudioSink for CpalSink {
     fn format(&self) -> AudioFormat {
         self.ring.format()
@@ -85,6 +60,47 @@ impl AudioSink for CpalSink {
     async fn play(&mut self, chunk: AudioChunk) -> Result<(), AudioError> {
         self.ring.play(chunk).await
     }
+}
+
+/// Open the output device named by `config`, build and start its playback
+/// stream, and return the (`!Send`) stream alongside the `Send` async end (a
+/// [`PlaybackRing`]) and the device name. Split out so it can run on the
+/// stream-owning thread (see [`CpalSink::new`] and [`crate::stream`]).
+fn build_playback(config: &CpalConfig) -> Result<(cpal::Stream, PlaybackRing, String), AudioError> {
+    let host = cpal::default_host();
+    let device = find_output_device(&host, &config.sink_device)?;
+    let name = device.name().unwrap_or_else(|_| "<unknown output>".into());
+    let supported = device
+        .default_output_config()
+        .map_err(|e| AudioError::Device(format!("default output config: {e}")))?;
+    let sample_format = supported.sample_format();
+    let stream_config: cpal::StreamConfig = supported.into();
+    let sample_rate = stream_config.sample_rate.0;
+    let channels = stream_config.channels as usize;
+
+    let (producer, consumer) = RingBuffer::<f32>::new(config.ring_capacity(sample_rate));
+    let signal = Signal::new();
+
+    // Only one match arm runs, so moving `consumer`/`signal` into each is fine.
+    let stream = match sample_format {
+        SampleFormat::F32 => build_playback_stream::<f32>(
+            &device, &stream_config, consumer, signal.clone(), channels,
+        ),
+        SampleFormat::I16 => build_playback_stream::<i16>(
+            &device, &stream_config, consumer, signal.clone(), channels,
+        ),
+        SampleFormat::U16 => build_playback_stream::<u16>(
+            &device, &stream_config, consumer, signal.clone(), channels,
+        ),
+        other => {
+            return Err(AudioError::Device(format!("unsupported output sample format: {other:?}")))
+        }
+    }
+    .map_err(|e| AudioError::Device(format!("build output stream: {e}")))?;
+    stream.play().map_err(|e| AudioError::Device(format!("start output stream: {e}")))?;
+
+    let ring = PlaybackRing::new(producer, signal, AudioFormat::new(sample_rate, 1));
+    Ok((stream, ring, name))
 }
 
 /// Names of the available output (playback) devices, for building a

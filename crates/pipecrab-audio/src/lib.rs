@@ -13,7 +13,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-use async_trait::async_trait;
+use pipecrab_runtime::{maybe_async_trait, MaybeSend};
 
 pub mod mock;
 
@@ -55,37 +55,52 @@ impl std::fmt::Display for AudioError {
 
 impl std::error::Error for AudioError {}
 
-/// A source of audio flowing *into* a pipeline (device capture, file, network,
-/// or a [`mock`]).
-///
-/// `?Send` matches pipecrab's single-threaded execution model, so one
-/// implementation runs unchanged on a current-thread executor and on `wasm32`.
-#[async_trait(?Send)]
-pub trait AudioSource {
-    /// The format of the chunks this source yields. Fixed for the source's life.
-    fn format(&self) -> AudioFormat;
-
-    /// Await the next chunk.
+// Doc comments live *inside* `maybe_async_trait!` so they attach to the trait
+// (an outer attribute placed before the macro call would document the call, not
+// the item, and be dropped).
+maybe_async_trait! {
+    /// A source of audio flowing *into* a pipeline (device capture, file,
+    /// network, or a [`mock`]).
     ///
-    /// Three outcomes, kept distinct so a live device can report failure without
-    /// being mistaken for a clean end of stream:
-    /// - `Ok(Some(chunk))` — a chunk of audio.
-    /// - `Ok(None)` — the source is *gracefully* exhausted (e.g. a file or mock
-    ///   ran out); there will be no more chunks.
-    /// - `Err(_)` — the source *failed* (e.g. the capture device dropped out).
-    async fn next_chunk(&mut self) -> Result<Option<AudioChunk>, AudioError>;
+    /// Carries [`MaybeSend`] like every capability seam: `Send` on native so a
+    /// per-session pump task is spawnable on a multi-threaded executor (a WebRTC
+    /// server runs one source per call), vacuous on `wasm32` where `Send` cannot
+    /// be satisfied. It is `MaybeSend`, not `MaybeSendSync`: [`next_chunk`] takes
+    /// `&mut self`, so the future needs to *move* `self`, never share it. A
+    /// backend whose native handle is `!Send` (cpal's `Stream`) keeps that handle
+    /// off the struct — behind a stream-owning thread — rather than leaking
+    /// `?Send` here.
+    ///
+    /// [`next_chunk`]: AudioSource::next_chunk
+    pub trait AudioSource: MaybeSend {
+        /// The format of the chunks this source yields. Fixed for the source's life.
+        fn format(&self) -> AudioFormat;
+
+        /// Await the next chunk.
+        ///
+        /// Three outcomes, kept distinct so a live device can report failure
+        /// without being mistaken for a clean end of stream:
+        /// - `Ok(Some(chunk))` — a chunk of audio.
+        /// - `Ok(None)` — the source is *gracefully* exhausted (e.g. a file or
+        ///   mock ran out); there will be no more chunks.
+        /// - `Err(_)` — the source *failed* (e.g. the capture device dropped out).
+        async fn next_chunk(&mut self) -> Result<Option<AudioChunk>, AudioError>;
+    }
 }
 
-/// A sink of audio flowing *out of* a pipeline (device playback, file, network,
-/// or a [`mock`]).
-///
-/// `?Send` for the same reason as [`AudioSource`].
-#[async_trait(?Send)]
-pub trait AudioSink {
-    /// The format this sink expects incoming chunks to be in.
-    fn format(&self) -> AudioFormat;
+maybe_async_trait! {
+    /// A sink of audio flowing *out of* a pipeline (device playback, file,
+    /// network, or a [`mock`]).
+    ///
+    /// [`MaybeSend`] for the same reason as [`AudioSource`]: `play` takes
+    /// `&mut self`, so `Send` (native) / vacuous (`wasm32`) is the exact bound.
+    pub trait AudioSink: MaybeSend {
+        /// The format this sink expects incoming chunks to be in.
+        fn format(&self) -> AudioFormat;
 
-    /// Play (or enqueue) one chunk. May `.await` to apply backpressure when the
-    /// sink is full; returns an [`AudioError`] if the chunk cannot be accepted.
-    async fn play(&mut self, chunk: AudioChunk) -> Result<(), AudioError>;
+        /// Play (or enqueue) one chunk. May `.await` to apply backpressure when
+        /// the sink is full; returns an [`AudioError`] if the chunk cannot be
+        /// accepted.
+        async fn play(&mut self, chunk: AudioChunk) -> Result<(), AudioError>;
+    }
 }

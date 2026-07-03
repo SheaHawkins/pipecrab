@@ -19,9 +19,9 @@ jobs:
       - run: cargo test --workspace
       # Portability gate. The sans-IO core, the runtime-agnostic async layer, and
       # every platform-neutral trait crate must compile for the browser — no
-      # host-only dependency may creep in. Only concrete/native backends are
-      # allowed to be host-specific (and cpal happens to ship a wasm backend, so
-      # even it is checked here).
+      # host-only dependency may creep in. Concrete backends are exempt: they are
+      # allowed to be host-specific (pipecrab-audio-cpal is native-only, so it is
+      # not checked here; the browser audio path will be a separate crate).
       #
       # The sans-IO core is pure logic — no async, no I/O — so it must build everywhere.
       - run: cargo check -p pipecrab-core --target wasm32-unknown-unknown
@@ -32,6 +32,3 @@ jobs:
       # The STT seam is only the Transcriber trait plus its adapter — no engine — so
       # it must build for the browser, where the engine is Transformers.js in a Worker.
       - run: cargo check -p pipecrab-stt --target wasm32-unknown-unknown
-      # The cpal backend is universal (cpal ships a WebAudio/wasm backend), so it
-      # must build for wasm as well — no platform gate.
-      - run: cargo check -p pipecrab-audio-cpal --target wasm32-unknown-unknown

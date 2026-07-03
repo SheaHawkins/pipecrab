@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use async_trait::async_trait;
+use pipecrab_runtime::maybe_async_trait;
 
 use crate::{AudioChunk, AudioError, AudioFormat, AudioSink, AudioSource};
 
@@ -42,15 +42,16 @@ impl MockSource {
     }
 }
 
-#[async_trait(?Send)]
-impl AudioSource for MockSource {
-    fn format(&self) -> AudioFormat {
-        self.format
-    }
+maybe_async_trait! {
+    impl AudioSource for MockSource {
+        fn format(&self) -> AudioFormat {
+            self.format
+        }
 
-    async fn next_chunk(&mut self) -> Result<Option<AudioChunk>, AudioError> {
-        // A mock never fails: an empty queue is a graceful end of stream.
-        Ok(self.queue.pop_front())
+        async fn next_chunk(&mut self) -> Result<Option<AudioChunk>, AudioError> {
+            // A mock never fails: an empty queue is a graceful end of stream.
+            Ok(self.queue.pop_front())
+        }
     }
 }
 
@@ -77,14 +78,15 @@ impl MockSink {
     }
 }
 
-#[async_trait(?Send)]
-impl AudioSink for MockSink {
-    fn format(&self) -> AudioFormat {
-        self.format
-    }
+maybe_async_trait! {
+    impl AudioSink for MockSink {
+        fn format(&self) -> AudioFormat {
+            self.format
+        }
 
-    async fn play(&mut self, chunk: AudioChunk) -> Result<(), AudioError> {
-        self.received.push(chunk);
-        Ok(())
+        async fn play(&mut self, chunk: AudioChunk) -> Result<(), AudioError> {
+            self.received.push(chunk);
+            Ok(())
+        }
     }
 }

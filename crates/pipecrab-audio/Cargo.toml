@@ -7,9 +7,8 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-pipecrab-core = { workspace = true }
-async-trait   = "0.1"
+pipecrab-core    = { workspace = true }
+pipecrab-runtime = { workspace = true }
 
 [dev-dependencies]
-pipecrab-runtime = { workspace = true }
-futures          = "0.3"
+futures = "0.3"
