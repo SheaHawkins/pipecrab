@@ -9,8 +9,8 @@
 //! test hanging would itself be the failure signal; the assertions confirm the
 //! mechanism (the receiver was dropped, and `decide_system(Interrupt)` ran).
 
-use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -27,9 +27,9 @@ use pipecrab_runtime::{Outbound, PipelineBuilder, Received, Stage, StageError};
 /// `perform` signals that it started, then parks forever on a `oneshot` the
 /// test never fires. `decide_system(Interrupt)` flips the shared flag.
 struct BlockingStage {
-    block_rx: RefCell<Option<oneshot::Receiver<()>>>,
+    block_rx: Mutex<Option<oneshot::Receiver<()>>>,
     started: mpsc::Sender<()>,
-    interrupted: Rc<Cell<bool>>,
+    interrupted: Arc<AtomicBool>,
 }
 
 impl Processor for BlockingStage {
@@ -39,17 +39,18 @@ impl Processor for BlockingStage {
     }
     fn decide_system(&mut self, _dir: Direction, frame: &SystemFrame) -> Decision<()> {
         if matches!(frame, SystemFrame::Interrupt) {
-            self.interrupted.set(true);
+            self.interrupted.store(true, Ordering::SeqCst);
         }
         Decision::drop()
     }
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl Stage for BlockingStage {
     async fn perform(&self, _effect: (), _out: &Outbound) -> Result<(), StageError> {
         let _ = self.started.clone().send(()).await;
-        let rx = self.block_rx.borrow_mut().take().expect("perform runs once");
+        let rx = self.block_rx.lock().unwrap().take().expect("perform runs once");
         let _ = rx.await; // never fires; the receiver drops when perform is abandoned
         Ok(())
     }
@@ -58,12 +59,12 @@ impl Stage for BlockingStage {
 #[test]
 fn interrupt_abandons_perform_and_runs_decide_system() {
     block_on(async {
-        let interrupted = Rc::new(Cell::new(false));
+        let interrupted = Arc::new(AtomicBool::new(false));
         let (started_tx, mut started_rx) = mpsc::channel::<()>(1);
         let (block_tx, block_rx) = oneshot::channel::<()>();
 
         let stage = BlockingStage {
-            block_rx: RefCell::new(Some(block_rx)),
+            block_rx: Mutex::new(Some(block_rx)),
             started: started_tx,
             interrupted: interrupted.clone(),
         };
@@ -80,7 +81,7 @@ fn interrupt_abandons_perform_and_runs_decide_system() {
 
         join(feeder, driver).await;
 
-        assert!(interrupted.get(), "decide_system(Interrupt) must have run");
+        assert!(interrupted.load(Ordering::SeqCst), "decide_system(Interrupt) must have run");
         assert!(
             block_tx.is_canceled(),
             "the in-flight perform must have been dropped (its receiver gone)",
@@ -93,27 +94,28 @@ fn interrupt_abandons_perform_and_runs_decide_system() {
 /// Counts data frames in `decide_data`; on a `Start` frame, records how many had
 /// been processed at that moment.
 struct CountingStage {
-    data_count: Rc<Cell<usize>>,
-    data_at_preempt: Rc<Cell<Option<usize>>>,
+    data_count: Arc<AtomicUsize>,
+    data_at_preempt: Arc<Mutex<Option<usize>>>,
 }
 
 impl Processor for CountingStage {
     type Effect = ();
     fn decide_data(&mut self, _frame: &DataFrame) -> Decision<()> {
-        self.data_count.set(self.data_count.get() + 1);
+        self.data_count.fetch_add(1, Ordering::SeqCst);
         Decision::drop() // no effect -> perform is never called
     }
     fn decide_system(&mut self, _dir: Direction, frame: &SystemFrame) -> Decision<()> {
         // Record on `Start`, a frame that preempts but does *not* flush — this
         // isolates lane preemption from the interrupt data-flush (tested below).
         if matches!(frame, SystemFrame::Start) {
-            self.data_at_preempt.set(Some(self.data_count.get()));
+            *self.data_at_preempt.lock().unwrap() = Some(self.data_count.load(Ordering::SeqCst));
         }
         Decision::drop()
     }
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl Stage for CountingStage {
     async fn perform(&self, _effect: (), _out: &Outbound) -> Result<(), StageError> {
         Ok(())
@@ -123,8 +125,8 @@ impl Stage for CountingStage {
 #[test]
 fn sys_preempts_backed_up_data() {
     block_on(async {
-        let data_count = Rc::new(Cell::new(0usize));
-        let data_at_preempt = Rc::new(Cell::new(None));
+        let data_count = Arc::new(AtomicUsize::new(0));
+        let data_at_preempt = Arc::new(Mutex::new(None));
         let stage = CountingStage {
             data_count: data_count.clone(),
             data_at_preempt: data_at_preempt.clone(),
@@ -143,11 +145,11 @@ fn sys_preempts_backed_up_data() {
         driver.await;
 
         assert_eq!(
-            data_at_preempt.get(),
+            data_at_preempt.lock().unwrap().clone(),
             Some(0),
             "the Start frame must jump the 8-frame data backlog",
         );
-        assert_eq!(data_count.get(), 8, "all backed-up data is still processed afterward");
+        assert_eq!(data_count.load(Ordering::SeqCst), 8, "all backed-up data is still processed afterward");
     });
 }
 
@@ -160,7 +162,8 @@ impl Processor for PassThrough {
     type Effect = ();
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl Stage for PassThrough {
     async fn perform(&self, _effect: (), _out: &Outbound) -> Result<(), StageError> {
         Ok(())
@@ -252,4 +255,27 @@ fn nested_pipeline_forwards_through_both_levels() {
             other => panic!("expected forwarded Transcript(deep), got {other:?}"),
         }
     });
+}
+
+/// On native targets the pipeline driver must be `Send`, so it can be handed to
+/// a multi-threaded executor (`tokio::spawn`). On wasm32 it is `!Send` and is
+/// driven by `spawn_local`; this assertion is native-only by construction.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn driver_is_send_on_native() {
+    fn assert_send<T: Send>(_: &T) {}
+    struct Noop;
+    impl Processor for Noop {
+        type Effect = ();
+    }
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    impl Stage for Noop {
+        async fn perform(&self, _e: (), _out: &Outbound) -> Result<(), StageError> {
+            Ok(())
+        }
+    }
+    let pipeline = PipelineBuilder::new().stage(Noop).build();
+    let (_ends, driver) = pipeline.start();
+    assert_send(&driver);
 }

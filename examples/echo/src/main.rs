@@ -96,7 +96,8 @@ mod desktop {
         }
     }
 
-    #[async_trait(?Send)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     impl Stage for EchoStage {
         async fn perform(&self, Play(chunk): Play, out: &Outbound) -> Result<(), StageError> {
             // Ignore the send error: it only happens once the sink has gone away

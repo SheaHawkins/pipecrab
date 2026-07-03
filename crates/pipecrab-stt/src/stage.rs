@@ -52,7 +52,8 @@ impl<T: Transcriber> Processor for SttStage<T> {
     }
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl<T: Transcriber> Stage for SttStage<T> {
     async fn perform(&self, Transcribe(chunk): Transcribe, out: &Outbound) -> Result<(), StageError> {
         let text = self.transcriber.transcribe(&chunk.samples, chunk.format).await?;
