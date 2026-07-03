@@ -33,5 +33,7 @@ jobs:
       # it must build for the browser, where the engine is Transformers.js in a Worker.
       - run: cargo check -p pipecrab-stt --target wasm32-unknown-unknown
       # The cpal backend is universal (cpal ships a WebAudio/wasm backend), so it
-      # must build for wasm as well — no platform gate.
+      # must build for wasm as well. It cfg-selects only an internal detail — how
+      # the !Send stream is held (an owning thread on native, inline on wasm) —
+      # never its public API, so this gate stays meaningful.
       - run: cargo check -p pipecrab-audio-cpal --target wasm32-unknown-unknown

@@ -7,6 +7,13 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+// Re-exported so [`maybe_async_trait!`] can reach `async_trait` through this
+// crate (`$crate::async_trait::…`); users of the macro need no direct
+// `async-trait` dependency. Hidden: an implementation detail of the macro, not
+// public API.
+#[doc(hidden)]
+pub use async_trait;
+
 pub mod inbound;
 /// Target-conditional `Send`/`Sync` bounds (`Send` native, vacuous on wasm).
 pub mod maybe;

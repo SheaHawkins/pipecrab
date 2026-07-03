@@ -21,6 +21,14 @@
 //! the callback is a pragmatic simplification — glitch-free at these ~20 ms
 //! buffer sizes; a strict wait-free bridge is deferred.
 //!
+//! The [`AudioSource`](pipecrab_audio::AudioSource) /
+//! [`AudioSink`](pipecrab_audio::AudioSink) seam is `Send` on native, but a
+//! `cpal::Stream` is `!Send`. So on native the stream is built and parked on a
+//! dedicated owning thread (see `stream`), and [`CpalSource`] / [`CpalSink`]
+//! hold only the `Send` ring end — a server can spawn one pump per session. On
+//! `wasm32` the seam bound is vacuous and cpal runs on the single main thread,
+//! so the stream is held inline.
+//!
 //! # Format & timing
 //!
 //! Capture and playback run at their device's default sample rate (no
@@ -35,6 +43,8 @@ mod bridge;
 mod config;
 mod sink;
 mod source;
+#[cfg(not(target_arch = "wasm32"))]
+mod stream;
 
 pub use config::{CpalConfig, DeviceSelection};
 pub use sink::{output_device_names, CpalSink};

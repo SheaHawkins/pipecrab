@@ -30,3 +30,42 @@ impl<T: ?Sized + Send + Sync> MaybeSendSync for T {}
 pub trait MaybeSendSync {}
 #[cfg(target_arch = "wasm32")]
 impl<T: ?Sized> MaybeSendSync for T {}
+
+/// Apply [`async_trait`](https://docs.rs/async-trait) with the target-correct
+/// `Send`-ness, in one line instead of the two-attribute `cfg_attr` dance.
+///
+/// Every async trait definition and impl in pipecrab needs the same pair —
+/// plain `#[async_trait]` on native (its boxed futures are `Send`, matching the
+/// [`MaybeSend`]/[`MaybeSendSync`] bounds), and `#[async_trait(?Send)]` on
+/// `wasm32` (where they can't be). Writing both by hand is easy to get subtly
+/// wrong (swap the two `cfg`s and native silently loses `Send`). Wrap the item
+/// instead — the trait definition *or* the impl block:
+///
+/// ```
+/// use pipecrab_runtime::{maybe_async_trait, MaybeSend};
+///
+/// maybe_async_trait! {
+///     pub trait Widget: MaybeSend {
+///         async fn poll(&mut self) -> u32;
+///     }
+/// }
+///
+/// struct Zero;
+/// maybe_async_trait! {
+///     impl Widget for Zero {
+///         async fn poll(&mut self) -> u32 { 0 }
+///     }
+/// }
+/// ```
+///
+/// The macro pulls in `async_trait` through this crate, so a stage or seam crate
+/// that uses it needs only a `pipecrab-runtime` dependency, not a direct one on
+/// `async-trait`.
+#[macro_export]
+macro_rules! maybe_async_trait {
+    ($item:item) => {
+        #[cfg_attr(target_arch = "wasm32", $crate::async_trait::async_trait(?Send))]
+        #[cfg_attr(not(target_arch = "wasm32"), $crate::async_trait::async_trait)]
+        $item
+    };
+}

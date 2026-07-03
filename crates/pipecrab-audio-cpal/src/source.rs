@@ -22,6 +22,13 @@ use crate::config::{CpalConfig, DeviceSelection};
 pub struct CpalSource {
     name: String,
     ring: CaptureRing,
+    /// Keeps the capture stream alive. On native the seam is `Send` but a
+    /// `cpal::Stream` is not, so the stream is parked on its own thread and only
+    /// this `Send` handle is held; on `wasm32` (vacuous bound, single thread) the
+    /// `!Send` stream is held directly.
+    #[cfg(not(target_arch = "wasm32"))]
+    _thread: crate::stream::StreamThread,
+    #[cfg(target_arch = "wasm32")]
     _stream: cpal::Stream,
 }
 
@@ -35,43 +42,22 @@ impl CpalSource {
     /// be read, its sample format is unsupported, or the stream fails to build
     /// or start.
     pub fn new(config: &CpalConfig) -> Result<Self, AudioError> {
-        let host = cpal::default_host();
-        let device = find_input_device(&host, &config.source_device)?;
-        let name = device.name().unwrap_or_else(|_| "<unknown input>".into());
-        let supported = device
-            .default_input_config()
-            .map_err(|e| AudioError::Device(format!("default input config: {e}")))?;
-        let sample_format = supported.sample_format();
-        let stream_config: cpal::StreamConfig = supported.into();
-        let sample_rate = stream_config.sample_rate.0;
-        let channels = stream_config.channels as usize;
-        let chunk_frames = config.chunk_frames(sample_rate);
-
-        let (producer, consumer) = RingBuffer::<f32>::new(config.ring_capacity(sample_rate));
-        let signal = Signal::new();
-        let overruns = Arc::new(AtomicUsize::new(0));
-
-        // Only one match arm runs, so moving `producer`/the Arcs into each is fine.
-        let stream = match sample_format {
-            SampleFormat::F32 => build_capture_stream::<f32>(
-                &device, &stream_config, producer, signal.clone(), overruns.clone(), channels,
-            ),
-            SampleFormat::I16 => build_capture_stream::<i16>(
-                &device, &stream_config, producer, signal.clone(), overruns.clone(), channels,
-            ),
-            SampleFormat::U16 => build_capture_stream::<u16>(
-                &device, &stream_config, producer, signal.clone(), overruns.clone(), channels,
-            ),
-            other => {
-                return Err(AudioError::Device(format!("unsupported input sample format: {other:?}")))
-            }
+        // Native: the seam is `Send` but a `cpal::Stream` is not, so build and
+        // park the stream on its own thread, keeping only the `Send` ring end.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let config = config.clone();
+            let ((ring, name), thread) =
+                crate::stream::spawn_stream(move || build_capture(&config).map(|(s, r, n)| (s, (r, n))))?;
+            Ok(Self { name, ring, _thread: thread })
         }
-        .map_err(|e| AudioError::Device(format!("build input stream: {e}")))?;
-        stream.play().map_err(|e| AudioError::Device(format!("start input stream: {e}")))?;
-
-        let ring =
-            CaptureRing::new(consumer, signal, overruns, chunk_frames, AudioFormat::new(sample_rate, 1));
-        Ok(Self { name, ring, _stream: stream })
+        // wasm: the seam bound is vacuous and cpal lives on the single main
+        // thread, so hold the `!Send` stream inline.
+        #[cfg(target_arch = "wasm32")]
+        {
+            let (stream, ring, name) = build_capture(config)?;
+            Ok(Self { name, ring, _stream: stream })
+        }
     }
 
     /// The name of the input device audio is being captured from.
@@ -91,7 +77,8 @@ impl CpalSource {
     }
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl AudioSource for CpalSource {
     fn format(&self) -> AudioFormat {
         self.ring.format()
@@ -100,6 +87,51 @@ impl AudioSource for CpalSource {
     async fn next_chunk(&mut self) -> Result<Option<AudioChunk>, AudioError> {
         self.ring.next_chunk().await
     }
+}
+
+/// Open the input device named by `config`, build and start its capture stream,
+/// and return the (`!Send`) stream alongside the `Send` async end (a
+/// [`CaptureRing`]) and the device name. Splitting this out lets the native path
+/// run it on a stream-owning thread and the wasm path run it inline (see
+/// [`CpalSource::new`]).
+fn build_capture(config: &CpalConfig) -> Result<(cpal::Stream, CaptureRing, String), AudioError> {
+    let host = cpal::default_host();
+    let device = find_input_device(&host, &config.source_device)?;
+    let name = device.name().unwrap_or_else(|_| "<unknown input>".into());
+    let supported = device
+        .default_input_config()
+        .map_err(|e| AudioError::Device(format!("default input config: {e}")))?;
+    let sample_format = supported.sample_format();
+    let stream_config: cpal::StreamConfig = supported.into();
+    let sample_rate = stream_config.sample_rate.0;
+    let channels = stream_config.channels as usize;
+    let chunk_frames = config.chunk_frames(sample_rate);
+
+    let (producer, consumer) = RingBuffer::<f32>::new(config.ring_capacity(sample_rate));
+    let signal = Signal::new();
+    let overruns = Arc::new(AtomicUsize::new(0));
+
+    // Only one match arm runs, so moving `producer`/the Arcs into each is fine.
+    let stream = match sample_format {
+        SampleFormat::F32 => build_capture_stream::<f32>(
+            &device, &stream_config, producer, signal.clone(), overruns.clone(), channels,
+        ),
+        SampleFormat::I16 => build_capture_stream::<i16>(
+            &device, &stream_config, producer, signal.clone(), overruns.clone(), channels,
+        ),
+        SampleFormat::U16 => build_capture_stream::<u16>(
+            &device, &stream_config, producer, signal.clone(), overruns.clone(), channels,
+        ),
+        other => {
+            return Err(AudioError::Device(format!("unsupported input sample format: {other:?}")))
+        }
+    }
+    .map_err(|e| AudioError::Device(format!("build input stream: {e}")))?;
+    stream.play().map_err(|e| AudioError::Device(format!("start input stream: {e}")))?;
+
+    let ring =
+        CaptureRing::new(consumer, signal, overruns, chunk_frames, AudioFormat::new(sample_rate, 1));
+    Ok((stream, ring, name))
 }
 
 /// Names of the available input (capture) devices, for building a
