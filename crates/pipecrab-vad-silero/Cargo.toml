@@ -1,0 +1,19 @@
+[package]
+name = "pipecrab-vad-silero"
+description = "Silero voice-activity detection behind the pipecrab-vad seam, running on ONNX Runtime (native) or in the browser."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pipecrab-vad = { workspace = true }
+
+# The engine is chosen by target: native ONNX Runtime on the host, a WebAssembly
+# worker in the browser. Each lives behind the same VoiceActivityDetector seam.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+silero-ort = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+silero-web = { workspace = true }

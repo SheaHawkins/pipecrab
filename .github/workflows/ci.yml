@@ -35,3 +35,11 @@ jobs:
       # The cpal backend is universal (cpal ships a WebAudio/wasm backend), so it
       # must build for wasm as well — no platform gate.
       - run: cargo check -p pipecrab-audio-cpal --target wasm32-unknown-unknown
+      # The VAD seam is only the VoiceActivityDetector trait — no engine — so it
+      # must build for the browser too, mirroring the STT seam.
+      - run: cargo check -p pipecrab-vad --target wasm32-unknown-unknown
+      # The model crates select their engine by target: on wasm they pull in the
+      # browser (`-web`) backend, so checking them here guards that wiring stays
+      # wasm-clean.
+      - run: cargo check -p pipecrab-stt-moonshine --target wasm32-unknown-unknown
+      - run: cargo check -p pipecrab-vad-silero --target wasm32-unknown-unknown

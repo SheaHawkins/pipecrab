@@ -17,6 +17,11 @@ Dependencies point downward only — backend → trait crate → core.
 - `pipecrab-audio` — `AudioSource`/`AudioSink` traits + hardware-free mocks.
 - `pipecrab-audio-cpal` — cpal backend behind those traits.
 - `pipecrab-stt` — `Transcriber` trait + `SttStage` adapter.
+- `pipecrab-stt-moonshine` — Moonshine behind the `Transcriber` seam; selects `moonshine-ort` (native) or `moonshine-web` (browser) by target.
+- `moonshine-ort` / `moonshine-web` — the native (ONNX Runtime) and browser inference engines for the Moonshine STT model.
+- `pipecrab-vad` — `VoiceActivityDetector` trait: the swappable VAD seam.
+- `pipecrab-vad-silero` — Silero behind the `VoiceActivityDetector` seam; selects `silero-ort` (native) or `silero-web` (browser) by target.
+- `silero-ort` / `silero-web` — the native (ONNX Runtime) and browser inference engines for the Silero VAD model.
 
 ## Off-thread work
 

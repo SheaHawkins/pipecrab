@@ -1,0 +1,43 @@
+name: Publish
+
+# Publishes every publishable workspace crate to crates.io.
+#
+# "Publishable" means every member except those marked `publish = false`
+# (pipecrab-test-util and the echo example). `cargo publish --workspace`
+# computes the dependency order itself and verifies each crate against its
+# local siblings, so no hand-maintained crate list can drift out of order.
+#
+# Publishing is triggered by pushing a version tag (e.g. `v0.1.0`). The
+# workflow can also be run manually — with a dry-run toggle — to rehearse a
+# release without uploading anything.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Verify packaging without uploading to crates.io"
+        type: boolean
+        default: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # cpal's Linux (ALSA) backend needs the libasound headers to build, and
+      # `cargo publish` verifies each crate by compiling it.
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: Publish workspace to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ "${{ inputs.dry-run }}" = "true" ]; then
+            cargo publish --workspace --dry-run
+          else
+            cargo publish --workspace
+          fi

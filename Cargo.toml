@@ -7,6 +7,13 @@ members = [
     "crates/pipecrab-audio",
     "crates/pipecrab-audio-cpal",
     "crates/pipecrab-stt",
+    "crates/pipecrab-stt-moonshine",
+    "crates/moonshine-ort",
+    "crates/moonshine-web",
+    "crates/pipecrab-vad",
+    "crates/pipecrab-vad-silero",
+    "crates/silero-ort",
+    "crates/silero-web",
     "crates/test-util",
     "examples/echo",
 ]
@@ -16,12 +23,20 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT"
+repository = "https://github.com/PATYai/pipecrab"
 
 [workspace.dependencies]
-pipecrab           = { path = "crates/pipecrab" }
-pipecrab-core      = { path = "crates/pipecrab-core" }
-pipecrab-runtime   = { path = "crates/pipecrab-runtime" }
-pipecrab-audio     = { path = "crates/pipecrab-audio" }
-pipecrab-audio-cpal = { path = "crates/pipecrab-audio-cpal" }
-pipecrab-stt       = { path = "crates/pipecrab-stt" }
+pipecrab           = { path = "crates/pipecrab", version = "0.1.0" }
+pipecrab-core      = { path = "crates/pipecrab-core", version = "0.1.0" }
+pipecrab-runtime   = { path = "crates/pipecrab-runtime", version = "0.1.0" }
+pipecrab-audio     = { path = "crates/pipecrab-audio", version = "0.1.0" }
+pipecrab-audio-cpal = { path = "crates/pipecrab-audio-cpal", version = "0.1.0" }
+pipecrab-stt       = { path = "crates/pipecrab-stt", version = "0.1.0" }
+pipecrab-stt-moonshine = { path = "crates/pipecrab-stt-moonshine", version = "0.1.0" }
+moonshine-ort      = { path = "crates/moonshine-ort", version = "0.1.0" }
+moonshine-web      = { path = "crates/moonshine-web", version = "0.1.0" }
+pipecrab-vad       = { path = "crates/pipecrab-vad", version = "0.1.0" }
+pipecrab-vad-silero = { path = "crates/pipecrab-vad-silero", version = "0.1.0" }
+silero-ort         = { path = "crates/silero-ort", version = "0.1.0" }
+silero-web         = { path = "crates/silero-web", version = "0.1.0" }
 pipecrab-test-util = { path = "crates/test-util" }

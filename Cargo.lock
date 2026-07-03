@@ -470,6 +470,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
+name = "moonshine-ort"
+version = "0.1.0"
+
+[[package]]
+name = "moonshine-web"
+version = "0.1.0"
+
+[[package]]
 name = "ndk"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -642,8 +650,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "pipecrab-stt-moonshine"
+version = "0.1.0"
+dependencies = [
+ "moonshine-ort",
+ "moonshine-web",
+ "pipecrab-stt",
+]
+
+[[package]]
 name = "pipecrab-test-util"
 version = "0.1.0"
+
+[[package]]
+name = "pipecrab-vad"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pipecrab-core",
+ "pipecrab-runtime",
+]
+
+[[package]]
+name = "pipecrab-vad-silero"
+version = "0.1.0"
+dependencies = [
+ "pipecrab-vad",
+ "silero-ort",
+ "silero-web",
+]
 
 [[package]]
 name = "pkg-config"
@@ -771,6 +806,14 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "silero-ort"
+version = "0.1.0"
+
+[[package]]
+name = "silero-web"
+version = "0.1.0"
 
 [[package]]
 name = "slab"
