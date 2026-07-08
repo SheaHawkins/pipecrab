@@ -7,6 +7,7 @@ members = [
     "crates/pipecrab-audio",
     "crates/pipecrab-audio-cpal",
     "crates/pipecrab-stt",
+    "crates/pipecrab-vad",
     "crates/test-util",
     "examples/echo",
 ]
@@ -24,4 +25,5 @@ pipecrab-runtime   = { path = "crates/pipecrab-runtime" }
 pipecrab-audio     = { path = "crates/pipecrab-audio" }
 pipecrab-audio-cpal = { path = "crates/pipecrab-audio-cpal" }
 pipecrab-stt       = { path = "crates/pipecrab-stt" }
+pipecrab-vad       = { path = "crates/pipecrab-vad" }
 pipecrab-test-util = { path = "crates/test-util" }

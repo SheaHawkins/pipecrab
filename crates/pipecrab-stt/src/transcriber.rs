@@ -1,4 +1,4 @@
-//! The [`Transcriber`] seam and its [`SttError`].
+//! The [`Transcriber`] trait and its [`SttError`].
 
 use async_trait::async_trait;
 use pipecrab_core::AudioFormat;
@@ -6,7 +6,7 @@ use pipecrab_runtime::MaybeSendSync;
 
 /// The swappable speech-to-text capability: `f32` samples in, a transcript out.
 ///
-/// This is the durable seam. A native engine (`ort`) and a browser engine
+/// This is the durable interface. A native engine (`ort`) and a browser engine
 /// (Transformers.js in a Web Worker) both implement this one trait, so
 /// [`SttStage`](crate::SttStage) — and the pipeline above it — never names a
 /// concrete model. The offload decision lives in the *impl* (native offloads to

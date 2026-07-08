@@ -14,7 +14,7 @@ use pipecrab_runtime::{PipelineBuilder, Received};
 use pipecrab_stt::{SttError, SttStage, Transcriber};
 
 /// A hardware-free transcriber: it reports the sample count it was handed and
-/// accepts only its configured format — enough to prove the seam and its format
+/// accepts only its configured format — enough to prove the interface and its format
 /// contract without loading a model.
 struct MockTranscriber {
     format: AudioFormat,

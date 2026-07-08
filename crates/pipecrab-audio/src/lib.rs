@@ -62,7 +62,7 @@ maybe_async_trait! {
     /// A source of audio flowing *into* a pipeline (device capture, file,
     /// network, or a [`mock`]).
     ///
-    /// Carries [`MaybeSend`] like every capability seam: `Send` on native so a
+    /// Carries [`MaybeSend`] like every capability interface: `Send` on native so a
     /// per-session pump task is spawnable on a multi-threaded executor (a WebRTC
     /// server runs one source per call), vacuous on `wasm32` where `Send` cannot
     /// be satisfied. It is `MaybeSend`, not `MaybeSendSync`: [`next_chunk`] takes

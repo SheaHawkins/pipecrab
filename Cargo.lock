@@ -645,6 +645,16 @@ name = "pipecrab-test-util"
 version = "0.1.0"
 
 [[package]]
+name = "pipecrab-vad"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "pipecrab-core",
+ "pipecrab-runtime",
+]
+
+[[package]]
 name = "pkg-config"
 version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"

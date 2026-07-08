@@ -1,6 +1,6 @@
 //! Keeping a `!Send` cpal `Stream` alive on its own thread.
 //!
-//! The audio seam is `MaybeSend`, so a [`CpalSource`](crate::CpalSource) /
+//! The audio interface is `MaybeSend`, so a [`CpalSource`](crate::CpalSource) /
 //! [`CpalSink`](crate::CpalSink) must be `Send` — that is what lets a server
 //! spawn one capture/playback pump per session. But `cpal::Stream` is `!Send`,
 //! so it cannot be a field. Instead a dedicated thread builds the stream, starts
