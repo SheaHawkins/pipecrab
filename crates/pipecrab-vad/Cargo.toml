@@ -1,6 +1,6 @@
 [package]
-name = "pipecrab-stt"
-description = "The speech-to-text interface for pipecrab: the Transcriber trait plus a generic SttStage adapter."
+name = "pipecrab-vad"
+description = "The voice-activity-detection interface for pipecrab: the VoiceActivityDetector trait that gates a pipeline on speech."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,3 @@ license.workspace = true
 pipecrab-core    = { workspace = true }
 pipecrab-runtime = { workspace = true }
 async-trait      = "0.1"
-
-[dev-dependencies]
-futures = "0.3"

@@ -58,7 +58,7 @@ impl<T: ?Sized> MaybeSendSync for T {}
 /// }
 /// ```
 ///
-/// The macro pulls in `async_trait` through this crate, so a stage or seam crate
+/// The macro pulls in `async_trait` through this crate, so a stage or interface crate
 /// that uses it needs only a `pipecrab-runtime` dependency, not a direct one on
 /// `async-trait`.
 #[macro_export]

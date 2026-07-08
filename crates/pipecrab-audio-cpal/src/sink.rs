@@ -21,7 +21,7 @@ use crate::config::{CpalConfig, DeviceSelection};
 pub struct CpalSink {
     name: String,
     ring: PlaybackRing,
-    /// Keeps the playback stream alive. The audio seam is `Send` but a
+    /// Keeps the playback stream alive. The audio interface is `Send` but a
     /// `cpal::Stream` is not, so the stream is parked on its own thread and only
     /// this `Send` handle is held here.
     _thread: crate::stream::StreamThread,
@@ -37,7 +37,7 @@ impl CpalSink {
     /// be read, its sample format is unsupported, or the stream fails to build
     /// or start.
     pub fn new(config: &CpalConfig) -> Result<Self, AudioError> {
-        // The seam is `Send` but a `cpal::Stream` is not, so build and park the
+        // The interface is `Send` but a `cpal::Stream` is not, so build and park the
         // stream on its own thread, keeping only the `Send` ring end here.
         let config = config.clone();
         let ((ring, name), thread) =
