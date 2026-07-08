@@ -24,7 +24,7 @@
 //! buffer sizes; a strict wait-free bridge is deferred.
 //!
 //! The [`AudioSource`](pipecrab_audio::AudioSource) /
-//! [`AudioSink`](pipecrab_audio::AudioSink) seam is `Send`, but a `cpal::Stream`
+//! [`AudioSink`](pipecrab_audio::AudioSink) trait is `Send`, but a `cpal::Stream`
 //! is `!Send`. So the stream is built and parked on a dedicated owning thread
 //! (see `stream`), and [`CpalSource`] / [`CpalSink`] hold only the `Send` ring
 //! end — a server can spawn one pump per session.

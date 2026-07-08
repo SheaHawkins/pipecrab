@@ -1,6 +1,6 @@
 [package]
 name = "moonshine-ort"
-description = "Native onnxruntime (ort) engine for the Moonshine speech-to-text model, for pipecrab's STT seam."
+description = "Native onnxruntime (ort) engine for the Moonshine speech-to-text model, for pipecrab's STT interface."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

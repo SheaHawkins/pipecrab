@@ -1,4 +1,4 @@
-//! pipecrab-stt: the speech-to-text seam.
+//! pipecrab-stt: the speech-to-text interface.
 //!
 //! One trait — [`Transcriber`] — is the swappable STT capability: `f32` samples
 //! in, text out. [`SttStage`] adapts any `Transcriber` into a pipeline
@@ -9,7 +9,7 @@
 //!
 //! Platform-neutral and `wasm32`-checkable: the concrete engines live elsewhere
 //! (native `ort`, browser Transformers.js in a Web Worker), each behind this one
-//! trait, so the seam itself carries no backend dependency and compiles for both
+//! trait, so the interface itself carries no backend dependency and compiles for both
 //! the host and `wasm32-unknown-unknown`.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

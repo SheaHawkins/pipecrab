@@ -1,14 +1,14 @@
 //! pipecrab-vad-silero: the Silero VAD, wired into pipecrab's
-//! [`VoiceActivityDetector`] seam.
+//! [`VoiceActivityDetector`] trait.
 //!
 //! Silero is a small, fast voice-activity model. This crate implements
 //! [`pipecrab_vad::VoiceActivityDetector`] on top of a Silero engine, picking
 //! the backend by target: the native `ort`-hosted engine ([`silero-ort`]) on
 //! the host, and the browser onnxruntime-web engine ([`silero-web`]) on
-//! `wasm32`. The pipeline above depends only on the seam, never on this crate.
+//! `wasm32`. The pipeline above depends only on the interface, never on this crate.
 //!
 //! Scaffold: the crate and its place in the workspace and release graph are set
-//! up, and the seam types are re-exported for convenience; the concrete
+//! up, and the interface types are re-exported for convenience; the concrete
 //! `VoiceActivityDetector` impl lands with the engine crates.
 //!
 //! [`silero-ort`]: https://docs.rs/silero-ort

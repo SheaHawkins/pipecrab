@@ -1,17 +1,17 @@
-//! pipecrab-vad: the voice-activity-detection seam.
+//! pipecrab-vad: the voice-activity-detection interface.
 //!
 //! One trait — [`VoiceActivityDetector`] — is the swappable VAD capability:
 //! `f32` samples in, a [`VadVerdict`] (is this window speech, and how sure?)
 //! out. It mirrors [`pipecrab-stt`](https://docs.rs/pipecrab-stt)'s
-//! `Transcriber` seam: the concrete engines — native `ort`-hosted Silero, the
+//! `Transcriber` trait: the concrete engines — native `ort`-hosted Silero, the
 //! browser onnxruntime-web build — live in their own crates behind this one
-//! trait, so the pipeline above never names a model and the seam itself carries
+//! trait, so the pipeline above never names a model and the interface itself carries
 //! no backend dependency. It compiles for the host and for
 //! `wasm32-unknown-unknown`.
 //!
 //! Segmentation — turning a stream of per-window verdicts into utterance
 //! boundaries — is a separate concern that will layer on top of this trait; the
-//! seam only answers "speech or not, right now."
+//! interface only answers "speech or not, right now."
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
@@ -22,10 +22,10 @@ use pipecrab_runtime::MaybeSendSync;
 /// The swappable voice-activity-detection capability: `f32` samples in, a
 /// [`VadVerdict`] out.
 ///
-/// This is the durable seam. A native engine (`ort`-hosted Silero) and a
+/// This is the durable interface. A native engine (`ort`-hosted Silero) and a
 /// browser engine (onnxruntime-web in a Web Worker) both implement this one
 /// trait, so the stage above never names a concrete model. Like every other
-/// pipecrab seam it takes `&self`, so an in-flight call can be dropped on a
+/// pipecrab interface it takes `&self`, so an in-flight call can be dropped on a
 /// barge-in interrupt without tearing state.
 ///
 /// `?Send` on `wasm32` matches pipecrab's single-threaded execution model, so

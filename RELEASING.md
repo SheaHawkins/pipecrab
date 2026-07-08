@@ -36,11 +36,11 @@ Core:
 - `pipecrab-audio`, `pipecrab-audio-cpal`
 - `pipecrab-stt`
 
-Seams and adapters:
+Interfaces and adapters:
 
-- `pipecrab-vad` — voice-activity-detection seam
-- `pipecrab-vad-silero` — Silero adapter for the VAD seam
-- `pipecrab-stt-moonshine` — Moonshine adapter for the STT seam
+- `pipecrab-vad` — voice-activity-detection interface
+- `pipecrab-vad-silero` — Silero adapter for the VAD interface
+- `pipecrab-stt-moonshine` — Moonshine adapter for the STT interface
 
 Engines (`{model}-{web|ort}`):
 
@@ -50,13 +50,13 @@ Engines (`{model}-{web|ort}`):
 - `piper-web`, `piper-ort` (TTS)
 
 > The adapter and engine crates are scaffolds today: real types are re-exported
-> from the seams, but the concrete `Transcriber` / `VoiceActivityDetector` impls
+> from the interfaces, but the concrete `Transcriber` / `VoiceActivityDetector` impls
 > and inference code land in follow-up work. They are wired into the workspace
 > and release graph now so the crate names are reserved and publishing is ready.
 
 ### Not yet included
 
-The TTS seam and its adapters — `pipecrab-tts`, `pipecrab-tts-kokoro`,
+The TTS interface and its adapters — `pipecrab-tts`, `pipecrab-tts-kokoro`,
 `pipecrab-tts-piper` — are intentionally deferred. The `kokoro-*` / `piper-*`
 engine crates above are their eventual backends.
 

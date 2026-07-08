@@ -1,6 +1,6 @@
 [package]
 name = "pipecrab-vad"
-description = "The voice-activity-detection seam for pipecrab: the VoiceActivityDetector trait that gates a pipeline on speech."
+description = "The voice-activity-detection interface for pipecrab: the VoiceActivityDetector trait that gates a pipeline on speech."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
