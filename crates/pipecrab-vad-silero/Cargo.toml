@@ -1,0 +1,11 @@
+[package]
+name = "pipecrab-vad-silero"
+description = "Silero VAD wired into pipecrab's VoiceActivityDetector trait (engine backends live in the silero-web / silero-ort crates)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pipecrab-vad = { workspace = true }

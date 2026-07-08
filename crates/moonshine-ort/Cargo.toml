@@ -1,0 +1,10 @@
+[package]
+name = "moonshine-ort"
+description = "Native onnxruntime (ort) engine for the Moonshine speech-to-text model — the host backend behind pipecrab-stt-moonshine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

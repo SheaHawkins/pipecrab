@@ -1,0 +1,10 @@
+[package]
+name = "silero-web"
+description = "Browser (onnxruntime-web / WASM, Web Worker) engine for the Silero voice-activity-detection model — the wasm backend behind pipecrab-vad-silero."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

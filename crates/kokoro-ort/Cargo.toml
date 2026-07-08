@@ -1,0 +1,10 @@
+[package]
+name = "kokoro-ort"
+description = "Native onnxruntime (ort) engine for the Kokoro text-to-speech model — the host backend for a future pipecrab TTS model crate."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
