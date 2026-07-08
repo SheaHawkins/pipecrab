@@ -9,11 +9,17 @@
 //! no backend dependency. It compiles for the host and for
 //! `wasm32-unknown-unknown`.
 //!
-//! Segmentation — turning a stream of per-window verdicts into utterance
-//! boundaries — is a separate concern that will layer on top of this trait; the
-//! interface only answers "speech or not, right now."
+//! The trait only answers "speech or not, right now." [`VadStage`] layers the
+//! segmentation on top: it runs the detector per window and collapses the
+//! verdict stream into just the two *edges* of speech
+//! ([`SpeechStarted`](pipecrab_core::SystemFrame::SpeechStarted) /
+//! [`SpeechStopped`](pipecrab_core::SystemFrame::SpeechStopped)), so the
+//! pipeline sees a handful of control frames, not a per-window flood.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+
+mod stage;
+pub use stage::{Detect, VadConfig, VadStage};
 
 use async_trait::async_trait;
 use pipecrab_core::AudioFormat;

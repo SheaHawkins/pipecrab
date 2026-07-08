@@ -67,7 +67,8 @@ pub enum Direction {
 
 /// System frames: lifecycle, control, and errors.
 ///
-/// These are bidirectional: `Interrupt` and `Start`/`Stop` travel downstream;
+/// These are bidirectional: `Interrupt`, `Start`/`Stop`, and the
+/// `SpeechStarted`/`SpeechStopped` voice-activity edges travel downstream;
 /// `Error` typically travels upstream. Immutable once constructed.
 #[derive(Clone, Debug)]
 pub enum SystemFrame {
@@ -77,6 +78,14 @@ pub enum SystemFrame {
     Stop,
     /// User barged in; stages should discard in-flight work and reset.
     Interrupt,
+    /// Voice-activity detection observed the user *start* speaking. Travels
+    /// downstream so stages can open an utterance and prepare to transcribe.
+    /// Emitted by a VAD stage on the silence→speech edge, not per audio window.
+    SpeechStarted,
+    /// Voice-activity detection observed the user *stop* speaking. Travels
+    /// downstream so stages can close the utterance and flush it for
+    /// transcription. Emitted on the speech→silence edge.
+    SpeechStopped,
     /// An error propagated through the pipeline.
     Error {
         /// Human-readable description of the error.
