@@ -1,0 +1,64 @@
+name: Release
+
+# Publishing is driven by release-plz (https://release-plz.dev). On every push to
+# `main` it opens/updates a "release PR" that bumps the workspace version and
+# updates changelogs; merging that PR publishes every publishable crate to
+# crates.io in dependency order and pushes the git tags + GitHub releases.
+#
+# Crates with `publish = false` (pipecrab-test-util, the echo example) are skipped
+# automatically. Requires a `CARGO_REGISTRY_TOKEN` secret with publish rights on
+# crates.io; see RELEASING.md.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  # Publishes crates + creates tags/releases once a release PR merges (or any
+  # unreleased version lands on main).
+  release:
+    name: release-plz release
+    runs-on: ubuntu-latest
+    if: github.repository == 'SheaHawkins/pipecrab'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      # cpal's Linux (ALSA) backend needs the libasound headers to build during
+      # the pre-publish verification of pipecrab-audio-cpal.
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Opens/updates the release PR (version bumps + changelogs). Serialized so two
+  # pushes can't race on the same PR branch.
+  release-pr:
+    name: release-plz release-pr
+    runs-on: ubuntu-latest
+    if: github.repository == 'SheaHawkins/pipecrab'
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
