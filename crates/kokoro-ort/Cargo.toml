@@ -1,0 +1,10 @@
+[package]
+name = "kokoro-ort"
+description = "Native onnxruntime (ort) engine for the Kokoro text-to-speech model."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

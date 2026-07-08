@@ -1,6 +1,6 @@
 [package]
-name = "pipecrab-audio"
-description = "Platform-neutral audio I/O interface for pipecrab: AudioSource / AudioSink traits plus hardware-free mocks."
+name = "pipecrab-vad"
+description = "The voice-activity-detection seam for pipecrab: the VoiceActivityDetector trait that gates a pipeline on speech."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,4 @@ repository.workspace = true
 [dependencies]
 pipecrab-core    = { workspace = true }
 pipecrab-runtime = { workspace = true }
-
-[dev-dependencies]
-futures = "0.3"
+async-trait      = "0.1"

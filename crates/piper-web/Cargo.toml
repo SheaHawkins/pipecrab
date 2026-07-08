@@ -1,0 +1,10 @@
+[package]
+name = "piper-web"
+description = "Browser (onnxruntime-web / WASM) engine for the Piper text-to-speech model."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

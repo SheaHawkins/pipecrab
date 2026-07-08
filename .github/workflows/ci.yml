@@ -32,3 +32,6 @@ jobs:
       # The STT seam is only the Transcriber trait plus its adapter — no engine — so
       # it must build for the browser, where the engine is Transformers.js in a Worker.
       - run: cargo check -p pipecrab-stt --target wasm32-unknown-unknown
+      # The VAD seam is likewise engine-free — just the VoiceActivityDetector trait —
+      # so it must build for the browser, where the engine is onnxruntime-web.
+      - run: cargo check -p pipecrab-vad --target wasm32-unknown-unknown
