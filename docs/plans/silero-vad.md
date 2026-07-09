@@ -18,6 +18,7 @@ in this repo, or an external source with an exact version.
 | Web inference | transformers.js (`@huggingface/transformers` 3.8.1) via a JS shim — the universal web substrate shared with `moonshine-web`/`kokoro-web` |
 | Model delivery (native) | Bundled via `include_bytes!` behind a default feature + BYO escape hatches |
 | Model delivery (web) | Fetched from HF Hub by default (`onnx-community/silero-vad`), self-hostable |
+| Frame delivery | `VadStage` aggregates to exact 512-sample frames in `decide`; engines are strict about frame length |
 | Correctness bar | Frame-level numerical parity with the reference Python package, fixture-tested |
 
 ## 2. What problems these crates solve (vs. each prior art)
@@ -234,7 +235,8 @@ pub fn get_speech_timestamps<M: SileroModel>(
 ```
 
 Plus a small `FrameBuffer` (push arbitrary-length sample slices, pop exact
-frames) so callers with hardware-sized chunks don't hand-roll windowing.
+frames) so *standalone* callers with hardware-sized chunks don't hand-roll
+windowing. Inside pipecrab it is not used: `VadStage` owns framing (§4.5).
 
 The Python parameter vocabulary is kept **verbatim** — that's the API
 compatibility that matters (users' tuning knowledge transfers); symbol-level
@@ -335,7 +337,7 @@ pub struct SileroDetectorOptions {
     pub sample_rate: u32,      // 16_000; expected AudioFormat is (rate, mono)
 }
 
-pub struct SileroDetector { /* Mutex<engine + FrameBuffer + last prob>, opts */ }
+pub struct SileroDetector { /* Mutex<engine>, opts */ }
 
 // native
 impl SileroDetector {
@@ -361,10 +363,12 @@ Locked `detect` semantics:
 
 - Reject `format != AudioFormat::new(16_000, 1)` with
   `VadError::UnsupportedFormat` (no resampling — trait contract).
-- Buffer arbitrary-length chunks in the `FrameBuffer`; run every completed
-  512-sample frame; `speech_probability` = **max** probability across frames
-  completed in this call, carrying the last known probability when a small
-  chunk completes none.
+- **Strict frame length**: exactly `frame_len()` samples (512 @ 16 kHz) per
+  call, one frame in → one verdict out. Buffering is the temporal analog of
+  resampling, which this trait already refuses; inside pipecrab, `VadStage`
+  supplies exact frames (§4.5), so a wrong length reaching the detector is a
+  wiring bug, rejected with `VadError::InvalidFrameLen { expected, got }`
+  (new variant, §4.5).
 - Threshold only — no hysteresis here: `VadStage` already owns edge debouncing
   (`start_windows`/`stop_windows`); layering the core `Segmenter` on top would
   double-debounce.
@@ -385,6 +389,56 @@ silero-vad-ort = { workspace = true }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 silero-vad-web = { workspace = true }
 ```
+
+### 4.5 `pipecrab-vad` additions: frame aggregation in `VadStage`
+
+Engines with a fixed model window need exact frames; nothing else in the
+pipeline does (Moonshine consumes utterance-scale audio gated by the
+speech edges; TTS consumes text; sinks are size-agnostic — and the size is
+rate-dependent even within Silero, 512 vs 256). So framing is VAD-private and
+lives in `VadStage`, **not** in a separate rechunk stage: `VadStage` is a tap
+that forwards audio unchanged, and a stream-level rechunker would rewrite the
+public stream for every downstream consumer to serve a stage that only taps it.
+
+References: `crates/pipecrab-core/src/processor.rs` (`decide_data` takes
+`&mut self` — "all state mutation happens here"; `Decision.effects` is a
+`Vec<E>` with chainable `emit`, so one decide already emits multiple effects);
+`crates/pipecrab-vad/src/stage.rs` (`Detect` effect, `VadState::observe`).
+
+```rust
+// trait addition (default keeps every existing detector working):
+pub trait VoiceActivityDetector: MaybeSendSync {
+    /// The exact samples-per-call this engine requires, if fixed.
+    /// `Some(n)` ⇒ VadStage aggregates audio and feeds exact n-sample frames.
+    /// `None` (default) ⇒ chunks pass through as they arrive (current behavior).
+    fn frame_len(&self) -> Option<NonZeroUsize> { None }
+    // async fn detect(…) unchanged
+}
+
+pub enum VadError {
+    // existing: Engine(String), UnsupportedFormat { expected, got }
+    /// The detector requires fixed-size frames and got another length.
+    InvalidFrameLen { expected: usize, got: usize },
+}
+```
+
+`VadStage` behavior when `frame_len()` is `Some(n)`:
+
+- `decide_data` (sync, `&mut self`, uninterruptible — the sanctioned home for
+  state) forwards the audio chunk unchanged (tap preserved) while appending its
+  samples to an internal buffer, then emits one `Detect` effect per completed
+  `n`-sample frame — zero effects for a small chunk, several for a large one.
+- The buffer is format-tagged; a format change clears it (the next `detect`
+  call would reject the mismatch anyway).
+- `perform` is unchanged: one `detect` per exact frame, one
+  `VadState::observe` per verdict — so `start_windows`/`stop_windows` now
+  count fixed 32 ms frames on every machine, instead of driver-sized chunks
+  (`stop_windows: 8` = 256 ms everywhere).
+- The partial-frame remainder simply waits for more samples (the reference
+  never pads), and survives interrupts like any other `decide` state.
+
+This is a semver-minor trait addition (defaulted method) plus one `VadError`
+variant, shipped as its own compartmental PR before `pipecrab-vad-silero`.
 
 ## 5. ort / ONNX Runtime bundling strategy (explicit)
 
@@ -471,18 +525,16 @@ runtimes, defeating the universality that motivated this choice.
 
 ## 8. Open questions (not blocking review)
 
-1. **Rechunking upstream?** `detect`-side buffering makes `VadStage`'s
-   `start_windows`/`stop_windows` counts chunk-relative rather than
-   frame-relative when capture chunks aren't 512 samples. A future
-   rechunk-to-512 stage in `pipecrab-audio` would make debounce timing exact;
-   adapter-side buffering is the pragmatic v1.
-2. **Web CI depth**: the wasm gate proves compilation; actual browser inference
+1. **Web CI depth**: the wasm gate proves compilation; actual browser inference
    tests (wasm-pack + headless) are a follow-up.
-3. **8 kHz**: the core supports it (it's nearly free); backends and the adapter
+2. **8 kHz**: the core supports it (it's nearly free); backends and the adapter
    default to 16 kHz mono. Any reason to surface 8 kHz in pipecrab?
-4. **Rename mechanics**: exact yank/deprecation choreography for the published
+3. **Rename mechanics**: exact yank/deprecation choreography for the published
    `silero-ort`/`silero-web` 0.1.0 scaffolds alongside the release-plz config
    update.
+
+(Resolved during review: frame aggregation belongs in `VadStage`'s `decide`,
+not in a separate rechunk stage or the detector — §4.5.)
 
 ## 9. References
 
