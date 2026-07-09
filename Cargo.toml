@@ -12,8 +12,9 @@ members = [
     "crates/pipecrab-vad-silero",
     "crates/moonshine-web",
     "crates/moonshine-ort",
-    "crates/silero-web",
-    "crates/silero-ort",
+    "crates/silero-vad",
+    "crates/silero-vad-web",
+    "crates/silero-vad-ort",
     "crates/kokoro-web",
     "crates/kokoro-ort",
     "crates/test-util",
@@ -40,8 +41,9 @@ pipecrab-stt        = { path = "crates/pipecrab-stt", version = "0.1.0" }
 pipecrab-vad        = { path = "crates/pipecrab-vad", version = "0.1.0" }
 moonshine-web       = { path = "crates/moonshine-web", version = "0.1.0" }
 moonshine-ort       = { path = "crates/moonshine-ort", version = "0.1.0" }
-silero-web          = { path = "crates/silero-web", version = "0.1.0" }
-silero-ort          = { path = "crates/silero-ort", version = "0.1.0" }
+silero-vad          = { path = "crates/silero-vad", version = "0.1.0" }
+silero-vad-web      = { path = "crates/silero-vad-web", version = "0.1.0" }
+silero-vad-ort      = { path = "crates/silero-vad-ort", version = "0.1.0" }
 kokoro-web          = { path = "crates/kokoro-web", version = "0.1.0" }
 kokoro-ort          = { path = "crates/kokoro-ort", version = "0.1.0" }
 # Dev-only; `publish = false`, so it never needs a version.

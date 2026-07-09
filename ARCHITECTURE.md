@@ -19,7 +19,8 @@ Dependencies point downward only — backend → trait crate → core.
 - `pipecrab-stt` — `Transcriber` trait + `SttStage` adapter.
 - `pipecrab-vad` — `VoiceActivityDetector` trait + `VadStage` adapter.
 - `pipecrab-stt-moonshine`, `pipecrab-vad-silero` — model crates: adapt one engine to a trait crate.
-- `moonshine-{ort,web}`, `silero-{ort,web}`, `kokoro-{ort,web}` — pipecrab-free, cfg-selected engines.
+- `moonshine-{ort,web}`, `kokoro-{ort,web}` — pipecrab-free, cfg-selected engines.
+- `silero-vad` — pipecrab-free, backend-free model core; `silero-vad-{ort,web}` — its cfg-selected engines.
 
 ## Crating strategy
 
@@ -35,8 +36,8 @@ you depend on ──────────────────────
   └── pipecrab-audio-cpal            audio edge for your platform
 
 pulled in for you ──────────────────────────────────────────────────────
-  moonshine-ort/-web · silero-ort/-web   engines: pipecrab-free, cfg-selected
-      ▲ wrapped by model crates
+  moonshine-ort/-web · silero-vad-ort/-web   engines: pipecrab-free, cfg-selected
+      ▲ wrapped by model crates          (silero-vad-* share the silero-vad core)
   pipecrab-stt · pipecrab-vad · pipecrab-audio   trait crates: capability
       ▲ implemented by model crates               trait + Stage adapter
   pipecrab-runtime   Stage, two lanes, run loop; Timer/Offload definitions

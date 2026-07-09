@@ -1,6 +1,6 @@
 [package]
 name = "pipecrab-vad-silero"
-description = "Silero VAD wired into pipecrab's VoiceActivityDetector trait (engine backends live in the silero-web / silero-ort crates)."
+description = "Silero VAD wired into pipecrab's VoiceActivityDetector trait (engine backends live in the silero-vad-ort / silero-vad-web crates, over the shared silero-vad model core)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
