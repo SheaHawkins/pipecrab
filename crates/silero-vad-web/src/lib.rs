@@ -5,9 +5,10 @@
 //! [`pipecrab-vad-silero`](https://docs.rs/pipecrab-vad-silero)'s
 //! `VoiceActivityDetector` impl; the native counterpart is
 //! [`silero-vad-ort`](https://docs.rs/silero-vad-ort). It supplies the async
-//! inference call for the shared [`silero-vad`](https://docs.rs/silero-vad)
-//! core; the model logic — context prefix, state lifecycle, segmentation —
-//! lives in the core, so web and native are numerically identical.
+//! inference call for the shared
+//! [`silero-vad-core`](https://docs.rs/silero-vad-core) crate; the model logic
+//! — context prefix, state lifecycle, segmentation — lives in the core, so web
+//! and native are numerically identical.
 //!
 //! # Design (locked in `docs/plans/silero-vad.md`, §4.3 and §5)
 //!
@@ -36,8 +37,8 @@
 //!   `from_local(base_url)` (self-hosted / offline via transformers.js
 //!   `env.localModelPath`) constructors, plus an async
 //!   `infer(input, state, sr) -> f32`.
-//! - `SileroVadWeb` — the async engine mirroring `silero_vad::SileroVad`, built
-//!   on `SileroSession`.
+//! - `SileroVadWeb` — the async engine mirroring `silero_vad_core::SileroVad`,
+//!   built on `SileroSession`.
 //!
 //! ## Locked notes
 //!

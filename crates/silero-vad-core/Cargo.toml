@@ -1,5 +1,5 @@
 [package]
-name = "silero-vad"
+name = "silero-vad-core"
 description = "Sans-IO core for Silero VAD: model logic (context prefix, recurrent state, segmentation) with no inference backend, shared by silero-vad-ort and silero-vad-web."
 version.workspace = true
 edition.workspace = true
