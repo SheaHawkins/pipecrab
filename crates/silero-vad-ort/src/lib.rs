@@ -4,10 +4,10 @@
 //! [`pipecrab-vad-silero`](https://docs.rs/pipecrab-vad-silero)'s
 //! `VoiceActivityDetector` impl; the browser counterpart is
 //! [`silero-vad-web`](https://docs.rs/silero-vad-web). It supplies the inference
-//! call for the shared [`silero-vad`](https://docs.rs/silero-vad) core
-//! (implementing that crate's `SileroModel` trait); all of the Silero model
-//! logic — context prefix, state lifecycle, segmentation — lives in the core,
-//! not here.
+//! call for the shared [`silero-vad-core`](https://docs.rs/silero-vad-core)
+//! crate (implementing its `SileroModel` trait); all of the Silero model logic
+//! — context prefix, state lifecycle, segmentation — lives in the core, not
+//! here.
 //!
 //! # Design (locked in `docs/plans/silero-vad.md`, §4.2 and §5)
 //!
@@ -19,9 +19,10 @@
 //! - `OrtModel` wrapping an `ort::Session`, with `from_session` (BYO — the app
 //!   fully controls ort setup), `from_bytes`, `from_file`, and `bundled()`
 //!   (behind `bundled-model`) constructors, implementing
-//!   `silero_vad::SileroModel` via zero-copy `TensorRef` inputs.
-//! - `type SileroVadOrt = silero_vad::SileroVad<OrtModel>`, plus `pub use ort;`
-//!   and `pub use silero_vad;` so apps configure linking / execution providers
+//!   `silero_vad_core::SileroModel` via zero-copy `TensorRef` inputs.
+//! - `type SileroVadOrt = silero_vad_core::SileroVad<OrtModel>`, plus
+//!   `pub use ort;` and `pub use silero_vad_core;` so apps configure linking /
+//!   execution providers
 //!   against *our* ort version and standalone users get one import.
 //! - Session defaults: CPU only (GPU transfer overhead exceeds compute for a
 //!   ~1 ms/frame model), `with_intra_threads(1)`.
@@ -34,7 +35,7 @@
 //!
 //! [features]
 //! default = ["bundled-model"]
-//! bundled-model = ["silero-vad/bundled-model"]
+//! bundled-model = ["silero-vad-core/bundled-model"]
 //! # passthroughs so apps can opt in through us if convenient:
 //! download-binaries = ["ort/download-binaries", "ort/tls-native"]
 //! load-dynamic = ["ort/load-dynamic"]

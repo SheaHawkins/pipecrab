@@ -12,7 +12,7 @@ members = [
     "crates/pipecrab-vad-silero",
     "crates/moonshine-web",
     "crates/moonshine-ort",
-    "crates/silero-vad",
+    "crates/silero-vad-core",
     "crates/silero-vad-web",
     "crates/silero-vad-ort",
     "crates/kokoro-web",
@@ -41,7 +41,7 @@ pipecrab-stt        = { path = "crates/pipecrab-stt", version = "0.1.0" }
 pipecrab-vad        = { path = "crates/pipecrab-vad", version = "0.1.0" }
 moonshine-web       = { path = "crates/moonshine-web", version = "0.1.0" }
 moonshine-ort       = { path = "crates/moonshine-ort", version = "0.1.0" }
-silero-vad          = { path = "crates/silero-vad", version = "0.1.0" }
+silero-vad-core     = { path = "crates/silero-vad-core", version = "0.1.0" }
 silero-vad-web      = { path = "crates/silero-vad-web", version = "0.1.0" }
 silero-vad-ort      = { path = "crates/silero-vad-ort", version = "0.1.0" }
 kokoro-web          = { path = "crates/kokoro-web", version = "0.1.0" }

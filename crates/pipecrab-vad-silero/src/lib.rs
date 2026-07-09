@@ -5,7 +5,7 @@
 //! [`pipecrab_vad::VoiceActivityDetector`] on top of a Silero engine, picking
 //! the backend by target: the native `ort`-hosted engine ([`silero-vad-ort`])
 //! on the host, and the browser transformers.js engine ([`silero-vad-web`]) on
-//! `wasm32` — both built on the shared, backend-free [`silero-vad`] model core.
+//! `wasm32` — both built on the shared, backend-free [`silero-vad-core`] crate.
 //! The pipeline above depends only on the interface, never on this crate — so
 //! swapping Silero for another detector touches nothing upstream.
 //!
@@ -31,7 +31,7 @@
 //!   (`silero-vad-ort` on native, `silero-vad-web` on `wasm32`); it lands with
 //!   the impl.
 //!
-//! [`silero-vad`]: https://docs.rs/silero-vad
+//! [`silero-vad-core`]: https://docs.rs/silero-vad-core
 //! [`silero-vad-ort`]: https://docs.rs/silero-vad-ort
 //! [`silero-vad-web`]: https://docs.rs/silero-vad-web
 #![forbid(unsafe_code)]

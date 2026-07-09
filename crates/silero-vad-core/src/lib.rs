@@ -1,6 +1,10 @@
-//! silero-vad: the sans-IO core of pipecrab's Silero voice-activity-detection
-//! stack — all of the Silero *model logic*, with no inference backend, no
-//! async, and no pipecrab dependency.
+//! silero-vad-core: the sans-IO core of pipecrab's Silero voice-activity-
+//! detection stack — all of the Silero *model logic*, with no inference
+//! backend, no async, and no pipecrab dependency.
+//!
+//! (Published as `silero-vad-core`: the bare `silero-vad` name is blocked on
+//! crates.io by the existing `silero_vad` crate — `-` and `_` are equivalent
+//! there — so the family shares the `silero-vad-` prefix without owning it.)
 //!
 //! Silero VAD is a small recurrent speech/non-speech classifier. The subtle,
 //! correctness-critical parts live here so the native ([`silero-vad-ort`]) and
