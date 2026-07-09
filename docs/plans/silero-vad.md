@@ -437,21 +437,34 @@ pub enum VadError {
 - The partial-frame remainder simply waits for more samples (the reference
   never pads), and survives interrupts like any other `decide` state.
 
-**Why `pipecrab-vad` and not `pipecrab-vad-silero`?** The trait crate stays a
-lightweight interface: the *interface* addition is one defaulted method, and
-the buffer is ~30 dependency-free lines inside `VadStage` — the stage adapter
-this crate already ships (ARCHITECTURE.md:20: "trait + Stage adapter"). The
-decisive coupling is the invariant: framing exists so that
-`start_windows`/`stop_windows` count fixed frames, and that counter
-(`VadState::observe`) lives in `VadStage`. If the model crate buffered inside
-`detect` instead, one call could complete zero or several frames without the
-stage knowing — window counts revert to chunk-relative, and fixing *that*
-would drag debounce into the model crate, gutting the stage adapter. The
-mechanism is also not model-specific: nothing Silero-flavored beyond the
-number itself, which the engine advertises via `frame_len()` — any
-fixed-window engine (e.g. WebRTC-VAD-style detectors want 10/20/30 ms frames)
-reuses it. What *is* model-specific — which length per sample rate, the
-context prefix, the state tensor — stays in the engine crates.
+**Why `pipecrab-vad` and not `pipecrab-vad-silero`?** The trait crate's scope
+is crisp: *everything about VAD that isn't the model* — the capability
+contract, the edge policy, and the mock. The model crate's scope is equally
+crisp: adapt Silero to that contract. Three concrete reasons the division
+earns its keep (none of them hypothetical future engines):
+
+- **The state discipline doesn't come from `pipecrab-vad`.** A collapsed
+  "SileroVadStage" would still face pipecrab-core's `Processor` contract —
+  sync `&mut` `decide`, async `&self` `perform` — so the recurrent state
+  would still sit behind interior mutability and framing would still live in
+  `decide`. Collapsing deletes the trait, not the constraint.
+- **The trait's second implementor already exists: `ScriptedVad`**
+  (`crates/pipecrab-vad/tests/vad_stage.rs`). The seam is what lets
+  edge/debounce policy be tested deterministically without ONNX, and lets
+  applications test their pipelines in CI with scripted verdicts instead of a
+  2 MB model plus inference. Without it, the same seam reappears privately or
+  debounce gets tested through real inference.
+- **The framing/debounce coupling.** Framing exists so that
+  `start_windows`/`stop_windows` count fixed frames, and that counter
+  (`VadState::observe`) is `VadStage`'s. If the model crate buffered inside
+  `detect`, one call could complete zero or several frames without the stage
+  knowing — window counts revert to chunk-relative, and fixing *that* drags
+  debounce into the model crate, gutting the stage adapter. `observe` itself
+  consumes booleans: it is app-tuned pipeline policy, not model logic.
+
+What *is* model-specific — which length per sample rate, the context prefix,
+the state tensor — stays in the engine crates; the `frame_len()` addition is
+one defaulted method and the buffer is ~30 dependency-free lines.
 
 This is a semver-minor trait addition (defaulted method) plus one `VadError`
 variant, shipped as its own compartmental PR before `pipecrab-vad-silero`.
