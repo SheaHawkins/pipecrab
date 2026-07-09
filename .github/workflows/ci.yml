@@ -42,5 +42,5 @@ jobs:
       # The -web engines are the browser backends by definition, so they must build for
       # wasm. Their -ort siblings are native-only (like pipecrab-audio-cpal) and exempt.
       - run: cargo check -p moonshine-web --target wasm32-unknown-unknown
-      - run: cargo check -p silero-web --target wasm32-unknown-unknown
+      - run: cargo check -p silero-vad-web --target wasm32-unknown-unknown
       - run: cargo check -p kokoro-web --target wasm32-unknown-unknown

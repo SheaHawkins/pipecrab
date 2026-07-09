@@ -1,0 +1,10 @@
+[package]
+name = "silero-vad"
+description = "Sans-IO core for Silero VAD: model logic (context prefix, recurrent state, segmentation) with no inference backend, shared by silero-vad-ort and silero-vad-web."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
