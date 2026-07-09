@@ -15,7 +15,7 @@ in this repo, or an external source with an exact version.
 | Crate names | `silero-vad` (core), `silero-vad-ort` (native), `silero-vad-web` (browser); rename the published `silero-ort`/`silero-web` scaffolds |
 | Model version | Silero VAD v6.2.x, v5+ ONNX contract |
 | Native inference | `ort` 2.0.0-rc.12 (caret, never `=`); app owns linking |
-| Web inference | transformers.js (`@huggingface/transformers` 3.8.1) via a JS shim — the universal web substrate shared with `moonshine-web`/`kokoro-web` |
+| Web inference | transformers.js (`@huggingface/transformers` 4.2.0) via an inference-only JS shim — one substrate and one version shared with `moonshine-web`/`kokoro-web`; the pipeline is Rust end-to-end up to that boundary |
 | Model delivery (native) | Bundled via `include_bytes!` behind a default feature + BYO escape hatches |
 | Model delivery (web) | Fetched from HF Hub by default (`onnx-community/silero-vad`), self-hostable |
 | Frame delivery | `VadStage` aggregates to exact 512-sample frames in `decide`; engines are strict about frame length |
@@ -283,7 +283,7 @@ References: Hugging Face official examples
 `conversational-webgpu/src/worker.js` (the `AutoModel` +
 `config: { model_type: "custom" }` pattern with manual `state` feedback);
 model repo `onnx-community/silero-vad` (fp32 2.24 MB, fp16 1.15 MB,
-int8 0.64 MB); `@huggingface/transformers` 3.8.1.
+int8 0.64 MB); `@huggingface/transformers` 4.2.0.
 
 A thin JS shim (`js/silero.js`) wraps transformers.js; Rust binds it with
 `#[wasm_bindgen(module = "/js/silero.js")]` + `wasm_bindgen_futures::JsFuture`:
@@ -437,6 +437,22 @@ pub enum VadError {
 - The partial-frame remainder simply waits for more samples (the reference
   never pads), and survives interrupts like any other `decide` state.
 
+**Why `pipecrab-vad` and not `pipecrab-vad-silero`?** The trait crate stays a
+lightweight interface: the *interface* addition is one defaulted method, and
+the buffer is ~30 dependency-free lines inside `VadStage` — the stage adapter
+this crate already ships (ARCHITECTURE.md:20: "trait + Stage adapter"). The
+decisive coupling is the invariant: framing exists so that
+`start_windows`/`stop_windows` count fixed frames, and that counter
+(`VadState::observe`) lives in `VadStage`. If the model crate buffered inside
+`detect` instead, one call could complete zero or several frames without the
+stage knowing — window counts revert to chunk-relative, and fixing *that*
+would drag debounce into the model crate, gutting the stage adapter. The
+mechanism is also not model-specific: nothing Silero-flavored beyond the
+number itself, which the engine advertises via `frame_len()` — any
+fixed-window engine (e.g. WebRTC-VAD-style detectors want 10/20/30 ms frames)
+reuses it. What *is* model-specific — which length per sample rate, the
+context prefix, the state tensor — stays in the engine crates.
+
 This is a semver-minor trait addition (defaulted method) plus one `VadError`
 variant, shipped as its own compartmental PR before `pipecrab-vad-silero`.
 
@@ -490,11 +506,23 @@ Why each part, with references (ort docs `setup/linking`, `setup/cargo-features`
 **On web there is no linking question**: no ONNX Runtime enters our wasm binary.
 transformers.js loads its own onnxruntime-web (a pinned dev build) from CDN or
 a self-hosted path (`env.backends.onnx.wasm.wasmPaths`); models come from HF
-Hub or `env.localModelPath` (offline deployments fully supported). One caveat
-is **pinned as policy**: `kokoro-js` 1.2.1 requires `@huggingface/transformers
-^3.5.1` and rejects 4.x, so all `-web` crates standardize on **3.8.1** until
-kokoro-js moves — otherwise an app ships two transformers.js and two ort-wasm
-runtimes, defeating the universality that motivated this choice.
+Hub or `env.localModelPath` (offline deployments fully supported).
+
+Two web policies, **pinned**:
+
+- **E2E Rust up to the transformers.js boundary.** The JS shim in each `-web`
+  engine does model loading and tensor execution *only*; every piece of pre-
+  and post-processing lives in Rust (for Silero: framing, context, state,
+  segmentation — all in the `silero-vad` core). This rules out wrapper
+  libraries like `kokoro-js` for the later TTS work: convenient, but it drags
+  its own transformers.js version constraint (`^3.5.1`, rejects 4.x) and moves
+  logic across the boundary. Engines bind `@huggingface/transformers` directly.
+- **One transformers.js version app-wide**: `@huggingface/transformers`
+  **4.2.0** (latest; carries onnxruntime-web 1.26). With no kokoro-js in the
+  graph there is no constraint holding us to 3.x. All `-web` shims are written
+  against, and documented for, this single version so an app ships exactly one
+  transformers.js and one ort-wasm runtime — the universality that motivated
+  the substrate choice.
 
 ## 6. Model-file delivery
 
@@ -555,7 +583,8 @@ Verified 2026-07-08.
   https://github.com/huggingface/transformers.js-examples
   (`moonshine-web/src/worker.js`, `conversational-webgpu/src/worker.js`);
   model https://huggingface.co/onnx-community/silero-vad;
-  kokoro-js 1.2.1 https://www.npmjs.com/package/kokoro-js.
+  kokoro-js 1.2.1 https://www.npmjs.com/package/kokoro-js (evidence that
+  Kokoro runs on transformers.js — not a dependency; see §5).
 - Prior art: https://github.com/nkeenan38/voice_activity_detector (0.2.1),
   https://github.com/sheldonix/silero-vad-rust (6.2.1),
   https://github.com/binarycrayon/silero-vad-rs (0.1.2),
