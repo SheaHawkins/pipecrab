@@ -75,7 +75,7 @@ fn interrupt_abandons_perform_and_runs_decide_system() {
         let _output = ends.output; // keep the tail's output channel open
 
         let feeder = async move {
-            input.send_data(DataFrame::Transcript(Transcript::user_final("go"))).await.unwrap();
+            input.send_data(Transcript::user_final("go").into()).await.unwrap();
             started_rx.next().await.expect("perform must start");
             input.send_system(Direction::Down, SystemFrame::Interrupt).await.unwrap();
             // Returning drops `input` -> head inbound closes -> the driver exits.
@@ -139,7 +139,7 @@ fn sys_preempts_backed_up_data() {
 
         // Back up the data lane, then enqueue a (non-flushing) Start behind it.
         for i in 0..8 {
-            input.send_data(DataFrame::Transcript(Transcript::user_final(i.to_string()))).await.unwrap();
+            input.send_data(Transcript::user_final(i.to_string()).into()).await.unwrap();
         }
         input.send_system(Direction::Down, SystemFrame::Start).await.unwrap();
         drop(input);
@@ -180,7 +180,7 @@ fn pass_through_forwards_data() {
         let mut output = ends.output;
 
         let feeder = async move {
-            input.send_data(DataFrame::Transcript(Transcript::user_final("hi"))).await.unwrap();
+            input.send_data(Transcript::user_final("hi").into()).await.unwrap();
             // Dropping `input` at block end closes the head -> shutdown.
         };
 
@@ -212,7 +212,7 @@ fn interrupt_flushes_data_keeping_survivors_in_order() {
         // then an Interrupt behind it — sys-biased recv handles it first, while
         // the whole backlog is still queued.
         input.send_data(input_audio(1)).await.unwrap();
-        input.send_data(DataFrame::Transcript(Transcript::user_final("drop me"))).await.unwrap();
+        input.send_data(Transcript::user_final("drop me").into()).await.unwrap();
         input.send_data(input_audio(2)).await.unwrap();
         let audio = AudioChunk::new(Arc::from(&[0.0f32, 0.0][..]), AudioFormat::new(48_000, 1));
         input.send_data(DataFrame::Audio(audio)).await.unwrap();
@@ -247,7 +247,7 @@ fn nested_pipeline_forwards_through_both_levels() {
         let mut output = ends.output;
 
         let feeder = async move {
-            input.send_data(DataFrame::Transcript(Transcript::user_final("deep"))).await.unwrap();
+            input.send_data(Transcript::user_final("deep").into()).await.unwrap();
         };
 
         join(feeder, driver).await;

@@ -60,7 +60,7 @@ impl<T: Transcriber> Stage for SttStage<T> {
         // One utterance per audio frame, so the whole thing is final user speech.
         // Ignore the send error: it only happens once the sink has gone away
         // during shutdown, matching the runtime's own forward path.
-        let _ = out.send_data(DataFrame::Transcript(Transcript::user_final(text))).await;
+        let _ = out.send_data(Transcript::user_final(text).into()).await;
         Ok(())
     }
 }

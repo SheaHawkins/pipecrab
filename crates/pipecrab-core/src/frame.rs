@@ -229,13 +229,21 @@ impl DataFrame {
     /// };
     /// assert!(input.survives_flush());
     ///
-    /// assert!(!DataFrame::Transcript(Transcript::agent_final("hi")).survives_flush());
+    /// assert!(!DataFrame::from(Transcript::agent_final("hi")).survives_flush());
     ///
     /// let audio = AudioChunk::new(Arc::from(&[0.0f32][..]), AudioFormat::new(48_000, 1));
     /// assert!(!DataFrame::Audio(audio).survives_flush());
     /// ```
     pub fn survives_flush(&self) -> bool {
         matches!(self, DataFrame::InputAudio { .. })
+    }
+}
+
+impl From<Transcript> for DataFrame {
+    /// Wrap a [`Transcript`] as a [`DataFrame::Transcript`] so a stage can write
+    /// `Transcript::user_final(text).into()` instead of naming the variant.
+    fn from(transcript: Transcript) -> Self {
+        DataFrame::Transcript(transcript)
     }
 }
 

@@ -38,7 +38,7 @@ fn interrupt_path_allocates_nothing() {
 #[test]
 fn transcript_path_within_budget() {
     let mut s = Say;
-    let frame = DataFrame::Transcript(Transcript::user_final("hello"));
+    let frame = DataFrame::from(Transcript::user_final("hello"));
     let n = allocs(|| {
         black_box(s.decide_data(black_box(&frame)));
     });

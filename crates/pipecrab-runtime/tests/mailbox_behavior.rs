@@ -25,7 +25,7 @@ fn interrupt_preempts_backed_up_data() {
     block_on(async {
         let (mut sys_tx, mut data_tx, mut inb) = lanes();
         for i in 0..8 {
-            data_tx.send(DataFrame::Transcript(Transcript::user_final(i.to_string()))).await.unwrap();
+            data_tx.send(Transcript::user_final(i.to_string()).into()).await.unwrap();
         }
         sys_tx.send((Direction::Down, SystemFrame::Interrupt)).await.unwrap();
 
@@ -42,7 +42,7 @@ fn fatal_error_propagates_upstream_ahead_of_data() {
     block_on(async {
         let (mut sys_tx, mut data_tx, mut inb) = lanes();
         for i in 0..8 {
-            data_tx.send(DataFrame::Transcript(Transcript::user_final(i.to_string()))).await.unwrap();
+            data_tx.send(Transcript::user_final(i.to_string()).into()).await.unwrap();
         }
         sys_tx
             .send((Direction::Up, SystemFrame::Error { message: "inference exploded".into(), fatal: true }))
@@ -63,7 +63,7 @@ fn data_lane_is_fifo() {
     block_on(async {
         let (_sys_tx, mut data_tx, mut inb) = lanes();
         for i in 0..4 {
-            data_tx.send(DataFrame::Transcript(Transcript::user_final(i.to_string()))).await.unwrap();
+            data_tx.send(Transcript::user_final(i.to_string()).into()).await.unwrap();
         }
         for i in 0..4 {
             match inb.recv().await.unwrap() {
@@ -78,8 +78,8 @@ fn data_lane_is_fifo() {
 fn data_lane_is_always_downstream() {
     block_on(async {
         let (_sys_tx, mut data_tx, mut inb) = lanes();
-        data_tx.send(DataFrame::Transcript(Transcript::user_final("a"))).await.unwrap();
-        data_tx.send(DataFrame::Transcript(Transcript::user_final("b"))).await.unwrap();
+        data_tx.send(Transcript::user_final("a").into()).await.unwrap();
+        data_tx.send(Transcript::user_final("b").into()).await.unwrap();
         assert!(matches!(inb.recv().await.unwrap(), Received::Data(_)));
         assert!(matches!(inb.recv().await.unwrap(), Received::Data(_)));
     });
@@ -121,7 +121,7 @@ fn one_closed_lane_does_not_signal_shutdown() {
 fn closed_sys_lane_still_serves_buffered_data() {
     block_on(async {
         let (sys_tx, mut data_tx, mut inb) = lanes();
-        data_tx.send(DataFrame::Transcript(Transcript::user_final("after sys closed"))).await.unwrap();
+        data_tx.send(Transcript::user_final("after sys closed").into()).await.unwrap();
         // Sys lane closes, but a buffered data frame must still be delivered.
         drop(sys_tx);
 
