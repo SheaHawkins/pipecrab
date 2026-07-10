@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::executor::block_on;
-use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Direction, SystemFrame};
+use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Direction, Finality, Role, SystemFrame};
 use pipecrab_runtime::{PipelineBuilder, Received};
 use pipecrab_stt::{SttError, SttStage, Transcriber};
 
@@ -50,15 +50,18 @@ fn audio_frame_becomes_transcript() {
         let drain = async move {
             let mut transcript = None;
             while let Some(received) = output.recv().await {
-                if let Received::Data(DataFrame::Transcript(text)) = received {
-                    transcript = Some(text);
+                if let Received::Data(DataFrame::Transcript(t)) = received {
+                    transcript = Some(t);
                 }
             }
             transcript
         };
 
         let (_, transcript, _) = futures::join!(feed, drain, driver);
-        assert_eq!(transcript.as_deref(), Some("heard 3 samples"));
+        let t = transcript.expect("the audio frame should produce a transcript");
+        assert_eq!(&*t.text, "heard 3 samples");
+        assert_eq!(t.role, Role::User, "STT output is the user's speech");
+        assert_eq!(t.finality, Finality::Final, "one utterance per audio frame is final");
     });
 }
 

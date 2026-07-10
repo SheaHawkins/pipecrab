@@ -19,7 +19,9 @@ use futures::executor::block_on;
 use futures::future::join;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
-use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Decision, Direction, Processor, SystemFrame};
+use pipecrab_core::{
+    AudioChunk, AudioFormat, DataFrame, Decision, Direction, Processor, SystemFrame, Transcript,
+};
 use pipecrab_runtime::{Outbound, PipelineBuilder, Received, Stage, StageError};
 
 // --- Test 1: an Interrupt abandons an in-flight perform and runs decide_system.
@@ -73,7 +75,7 @@ fn interrupt_abandons_perform_and_runs_decide_system() {
         let _output = ends.output; // keep the tail's output channel open
 
         let feeder = async move {
-            input.send_data(DataFrame::Transcript("go".into())).await.unwrap();
+            input.send_data(Transcript::user_final("go").into()).await.unwrap();
             started_rx.next().await.expect("perform must start");
             input.send_system(Direction::Down, SystemFrame::Interrupt).await.unwrap();
             // Returning drops `input` -> head inbound closes -> the driver exits.
@@ -137,7 +139,7 @@ fn sys_preempts_backed_up_data() {
 
         // Back up the data lane, then enqueue a (non-flushing) Start behind it.
         for i in 0..8 {
-            input.send_data(DataFrame::Transcript(i.to_string().into())).await.unwrap();
+            input.send_data(Transcript::user_final(i.to_string()).into()).await.unwrap();
         }
         input.send_system(Direction::Down, SystemFrame::Start).await.unwrap();
         drop(input);
@@ -178,14 +180,14 @@ fn pass_through_forwards_data() {
         let mut output = ends.output;
 
         let feeder = async move {
-            input.send_data(DataFrame::Transcript("hi".into())).await.unwrap();
+            input.send_data(Transcript::user_final("hi").into()).await.unwrap();
             // Dropping `input` at block end closes the head -> shutdown.
         };
 
         join(feeder, driver).await;
 
         match output.recv().await {
-            Some(Received::Data(DataFrame::Transcript(s))) => assert_eq!(&*s, "hi"),
+            Some(Received::Data(DataFrame::Transcript(s))) => assert_eq!(&*s.text, "hi"),
             other => panic!("expected forwarded Transcript(hi), got {other:?}"),
         }
     });
@@ -210,7 +212,7 @@ fn interrupt_flushes_data_keeping_survivors_in_order() {
         // then an Interrupt behind it — sys-biased recv handles it first, while
         // the whole backlog is still queued.
         input.send_data(input_audio(1)).await.unwrap();
-        input.send_data(DataFrame::Transcript("drop me".into())).await.unwrap();
+        input.send_data(Transcript::user_final("drop me").into()).await.unwrap();
         input.send_data(input_audio(2)).await.unwrap();
         let audio = AudioChunk::new(Arc::from(&[0.0f32, 0.0][..]), AudioFormat::new(48_000, 1));
         input.send_data(DataFrame::Audio(audio)).await.unwrap();
@@ -245,13 +247,13 @@ fn nested_pipeline_forwards_through_both_levels() {
         let mut output = ends.output;
 
         let feeder = async move {
-            input.send_data(DataFrame::Transcript("deep".into())).await.unwrap();
+            input.send_data(Transcript::user_final("deep").into()).await.unwrap();
         };
 
         join(feeder, driver).await;
 
         match output.recv().await {
-            Some(Received::Data(DataFrame::Transcript(s))) => assert_eq!(&*s, "deep"),
+            Some(Received::Data(DataFrame::Transcript(s))) => assert_eq!(&*s.text, "deep"),
             other => panic!("expected forwarded Transcript(deep), got {other:?}"),
         }
     });

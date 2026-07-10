@@ -2,7 +2,7 @@
 //! [`Stage`].
 
 use async_trait::async_trait;
-use pipecrab_core::{AudioChunk, DataFrame, Decision, Processor};
+use pipecrab_core::{AudioChunk, DataFrame, Decision, Processor, Transcript};
 use pipecrab_runtime::{Outbound, Stage, StageError};
 
 use crate::{SttError, Transcriber};
@@ -57,9 +57,10 @@ impl<T: Transcriber> Processor for SttStage<T> {
 impl<T: Transcriber> Stage for SttStage<T> {
     async fn perform(&self, Transcribe(chunk): Transcribe, out: &Outbound) -> Result<(), StageError> {
         let text = self.transcriber.transcribe(&chunk.samples, chunk.format).await?;
+        // One utterance per audio frame, so the whole thing is final user speech.
         // Ignore the send error: it only happens once the sink has gone away
         // during shutdown, matching the runtime's own forward path.
-        let _ = out.send_data(DataFrame::Transcript(text.into())).await;
+        let _ = out.send_data(Transcript::user_final(text).into()).await;
         Ok(())
     }
 }

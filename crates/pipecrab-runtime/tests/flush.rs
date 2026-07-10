@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use futures::channel::mpsc;
-use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Direction, SystemFrame};
+use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Direction, SystemFrame, Transcript};
 use pipecrab_runtime::Inbound;
 
 fn lanes() -> (mpsc::Sender<(Direction, SystemFrame)>, mpsc::Sender<DataFrame>, Inbound) {
@@ -23,7 +23,7 @@ fn audio() -> DataFrame {
 #[test]
 fn flush_selective_drops_unmarked_keeps_input_audio_in_order() {
     let (_, mut data_tx, mut inb) = lanes();
-    data_tx.try_send(DataFrame::Transcript("A".into())).unwrap();
+    data_tx.try_send(Transcript::user_final("A").into()).unwrap();
     data_tx.try_send(input_audio()).unwrap(); // IN1
     data_tx.try_send(audio()).unwrap(); // B
     data_tx.try_send(input_audio()).unwrap(); // IN2
@@ -43,8 +43,8 @@ fn flush_empty_lane_returns_empty() {
 #[test]
 fn flush_all_unmarked_returns_empty() {
     let (_, mut data_tx, mut inb) = lanes();
-    data_tx.try_send(DataFrame::Transcript("x".into())).unwrap();
-    data_tx.try_send(DataFrame::Transcript("y".into())).unwrap();
+    data_tx.try_send(Transcript::user_final("x").into()).unwrap();
+    data_tx.try_send(Transcript::user_final("y").into()).unwrap();
     assert!(inb.flush_data().is_empty());
 }
 
@@ -63,7 +63,7 @@ fn flush_all_marked_returns_all_in_order() {
 fn flush_does_not_touch_sys_lane() {
     let (mut sys_tx, mut data_tx, mut inb) = lanes();
     sys_tx.try_send((Direction::Down, SystemFrame::Interrupt)).unwrap();
-    data_tx.try_send(DataFrame::Transcript("drop me".into())).unwrap();
+    data_tx.try_send(Transcript::user_final("drop me").into()).unwrap();
 
     let kept = inb.flush_data();
     assert!(kept.is_empty());

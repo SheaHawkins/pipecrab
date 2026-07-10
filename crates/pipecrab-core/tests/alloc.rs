@@ -1,7 +1,7 @@
 //! Allocation audits: deterministic counts asserted as hard limits.
 //! A regression that adds an allocation to a hot path fails the build.
 
-use pipecrab_core::{DataFrame, Decision, Direction, Processor, SystemFrame};
+use pipecrab_core::{DataFrame, Decision, Direction, Processor, SystemFrame, Transcript};
 use pipecrab_test_util::allocs;
 use std::hint::black_box;
 
@@ -38,7 +38,7 @@ fn interrupt_path_allocates_nothing() {
 #[test]
 fn transcript_path_within_budget() {
     let mut s = Say;
-    let frame = DataFrame::Transcript("hello".into());
+    let frame = DataFrame::from(Transcript::user_final("hello"));
     let n = allocs(|| {
         black_box(s.decide_data(black_box(&frame)));
     });
