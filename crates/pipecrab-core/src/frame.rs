@@ -285,4 +285,46 @@ mod tests {
         assert_eq!(af.role, Role::Agent);
         assert_eq!(af.finality, Finality::Final);
     }
+
+    #[test]
+    fn user_partial_accepts_stable_on_char_boundaries() {
+        // "héllo": 'é' occupies bytes 1..3, so byte 3 (start of the first 'l')
+        // is a valid interior boundary; 0 and text.len() are the trivial ones.
+        for stable in [0usize, 3, "héllo".len()] {
+            let t = Transcript::user_partial("héllo", stable);
+            assert_eq!(t.finality, Finality::Partial { stable });
+        }
+    }
+
+    // The `stable` invariant is enforced by `debug_assert!`, so the failure
+    // cases only panic in debug builds; gate them so `cargo test --release`
+    // (asserts compiled out) does not expect a panic that never fires.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "exceeds text length")]
+    fn user_partial_rejects_stable_past_end() {
+        // stable = 3 > "hi".len() = 2.
+        let _ = Transcript::user_partial("hi", 3);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "char boundary")]
+    fn user_partial_rejects_stable_off_char_boundary() {
+        // "é" is two UTF-8 bytes; stable = 1 splits the codepoint.
+        let _ = Transcript::user_partial("é", 1);
+    }
+
+    #[test]
+    fn transcript_converts_into_dataframe() {
+        let frame: DataFrame = Transcript::user_final("hi").into();
+        match frame {
+            DataFrame::Transcript(t) => {
+                assert_eq!(&*t.text, "hi");
+                assert_eq!(t.role, Role::User);
+                assert_eq!(t.finality, Finality::Final);
+            }
+            other => panic!("expected a Transcript frame, got {other:?}"),
+        }
+    }
 }
