@@ -18,11 +18,7 @@ Dependencies point downward only — backend → trait crate → core.
 - `pipecrab-audio-cpal` — cpal backend behind those traits.
 - `pipecrab-stt` — `Transcriber` trait + `SttStage` adapter.
 - `pipecrab-vad` — `VoiceActivityDetector` trait + `VadStage` adapter.
-
-Above the trait crates sit *model crates* (one per capability): each adapts a
-single engine to its trait crate and cfg-selects a pipecrab-free, per-target
-engine crate (`-ort` native, `-web` browser). No model or engine crates ship
-in-tree today — they are being replaced.
+- `pipecrab-stt-sherpa`, `pipecrab-vad-sherpa` — engine crates: implements the corresponding traits using the engine specified (`sherpa-onnx`)
 
 ## Crating strategy
 
@@ -30,39 +26,20 @@ in-tree today — they are being replaced.
 you depend on ──────────────────────────────────────────────────────────
   your-app/          graph.rs (shared) + main.rs / web.rs (thin roots)
   ├── pipecrab                       umbrella: core + runtime re-exports
-  ├── pipecrab-tokio | pipecrab-web  environment (pick ONE): drives the
-  │                                  pipeline; Timer + Offload impls
-  ├── pipecrab-<stt-model>           model crates (one per capability):
-  ├── pipecrab-<vad-model>           all policy, public Backend trait,
+  ├── pipecrab-stt-sherpa            model crates (one per capability):
+  ├── pipecrab-vad-sherpa            all policy, public Backend trait,
   │                                  re-export everything you need
   └── pipecrab-audio-cpal            audio edge for your platform
 
 pulled in for you ──────────────────────────────────────────────────────
-  <engine>-ort / <engine>-web        engines: pipecrab-free, cfg-selected
-      ▲ wrapped by model crates          (a shared core crate is optional)
+  sherpa-onnx                        engine: pipecrab-free, cfg-selected
+      ▲ wrapped by model crates          
   pipecrab-stt · pipecrab-vad · pipecrab-audio   trait crates: capability
       ▲ implemented by model crates               trait + Stage adapter
   pipecrab-runtime   Stage, two lanes, run loop; Timer/Offload definitions
       ▲
   pipecrab-core      frames, Processor — zero deps, no async, no cfg
 ```
-
-An application depends on exactly three kinds of crates: the
-`pipecrab` umbrella (frames plus the Stage/pipeline machinery), **one**
-environment crate — `pipecrab-tokio` (native) or `pipecrab-web` (browser) —
-which drives the pipeline and supplies the `Timer`/`Offload` implementations,
-and one model crate per capability (an STT model crate, a VAD model crate,
-`pipecrab-audio-cpal`).
-
-Underneath, each model crate cfg-selects a pipecrab-free engine wrapper per
-target (an `-ort` crate natively, a `-web` crate via transformers.js) and
-adapts it to its trait crate (`pipecrab-stt` = `Transcriber` + `SttStage`),
-which rides on `pipecrab-runtime` and the zero-dependency `pipecrab-core`. The
-naming rule is the dependency rule: a `pipecrab-` prefix means it depends on
-pipecrab; unprefixed engines are useful standalone. To extend, implement a
-model crate's `Backend` (new engine) or stamp the trait-crate → engine → model
-template (new capability). The pipeline graph is written once; only two
-~15-line platform roots differ.
 
 ## Off-thread work
 
