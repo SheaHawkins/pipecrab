@@ -7,16 +7,7 @@ members = [
     "crates/pipecrab-audio",
     "crates/pipecrab-audio-cpal",
     "crates/pipecrab-stt",
-    "crates/pipecrab-stt-moonshine",
     "crates/pipecrab-vad",
-    "crates/pipecrab-vad-silero",
-    "crates/moonshine-web",
-    "crates/moonshine-ort",
-    "crates/silero-vad-core",
-    "crates/silero-vad-web",
-    "crates/silero-vad-ort",
-    "crates/kokoro-web",
-    "crates/kokoro-ort",
     "crates/test-util",
     "examples/echo",
 ]
@@ -39,12 +30,5 @@ pipecrab-audio      = { path = "crates/pipecrab-audio", version = "0.1.0" }
 pipecrab-audio-cpal = { path = "crates/pipecrab-audio-cpal", version = "0.1.0" }
 pipecrab-stt        = { path = "crates/pipecrab-stt", version = "0.1.0" }
 pipecrab-vad        = { path = "crates/pipecrab-vad", version = "0.1.0" }
-moonshine-web       = { path = "crates/moonshine-web", version = "0.1.0" }
-moonshine-ort       = { path = "crates/moonshine-ort", version = "0.1.0" }
-silero-vad-core     = { path = "crates/silero-vad-core", version = "0.1.0" }
-silero-vad-web      = { path = "crates/silero-vad-web", version = "0.1.0" }
-silero-vad-ort      = { path = "crates/silero-vad-ort", version = "0.1.0" }
-kokoro-web          = { path = "crates/kokoro-web", version = "0.1.0" }
-kokoro-ort          = { path = "crates/kokoro-ort", version = "0.1.0" }
 # Dev-only; `publish = false`, so it never needs a version.
 pipecrab-test-util  = { path = "crates/test-util" }

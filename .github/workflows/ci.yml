@@ -35,12 +35,3 @@ jobs:
       # The VAD interface is likewise engine-free — just the VoiceActivityDetector trait —
       # so it must build for the browser, where the engine is onnxruntime-web.
       - run: cargo check -p pipecrab-vad --target wasm32-unknown-unknown
-      # The model crates sit above the trait crates and must run in the browser too —
-      # on wasm they select their -web engine. Gate them so a host-only dep can't creep in.
-      - run: cargo check -p pipecrab-stt-moonshine --target wasm32-unknown-unknown
-      - run: cargo check -p pipecrab-vad-silero --target wasm32-unknown-unknown
-      # The -web engines are the browser backends by definition, so they must build for
-      # wasm. Their -ort siblings are native-only (like pipecrab-audio-cpal) and exempt.
-      - run: cargo check -p moonshine-web --target wasm32-unknown-unknown
-      - run: cargo check -p silero-vad-web --target wasm32-unknown-unknown
-      - run: cargo check -p kokoro-web --target wasm32-unknown-unknown

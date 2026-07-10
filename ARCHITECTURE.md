@@ -2,8 +2,8 @@ We differ from pipecat in a few ways:
 
 1. Pipecat Processor = Pipecrab Stage
 1. The pipeline is split into two lanes: Data and Sys (high-priority). Messages in the sys queue are drained first and can interrupt work in progress, as well as travel to stage upstream (such as for configuration requests). The data lane is one-directional and flows downstream only.
-1. A Stage can manage internal state via the uninterruptable synchronous `decide` function. By contrast, the async `perform` function can be interrupted but cannot modify state. This prevents broken state 
-1. SystemFrames are distinct from DataFrames. In pipecrab, they don't share an inheritance tree so you can't accidentally push SystemFrames into the downstream-only data lane. 
+1. A Stage can manage internal state via the uninterruptable synchronous `decide` function. By contrast, the async `perform` function can be interrupted but cannot modify state. This prevents broken state
+1. SystemFrames are distinct from DataFrames. In pipecrab, they don't share an inheritance tree so you can't accidentally push SystemFrames into the downstream-only data lane.
 1. We are explicit about whether Stages `forward` or `drop` frames. It's enforced by the compiler so you can't [accidentally forget to push frames](https://docs.pipecat.ai/pipecat/fundamentals/custom-frame-processor#example-metricsframe-logger).
 1. Pipecat treats InputAudio as a SystemFrame. That's a wart here. There's a system lane for `Interrupt` and Audio rides the data lane with flush resistance. When an interrupt comes through, it flushes non-survivor frames (i.e., flushes everything other than Audio).
 
@@ -18,9 +18,7 @@ Dependencies point downward only — backend → trait crate → core.
 - `pipecrab-audio-cpal` — cpal backend behind those traits.
 - `pipecrab-stt` — `Transcriber` trait + `SttStage` adapter.
 - `pipecrab-vad` — `VoiceActivityDetector` trait + `VadStage` adapter.
-- `pipecrab-stt-moonshine`, `pipecrab-vad-silero` — model crates: adapt one engine to a trait crate.
-- `moonshine-{ort,web}`, `kokoro-{ort,web}` — pipecrab-free, cfg-selected engines.
-- `silero-vad-core` — pipecrab-free, backend-free model core; `silero-vad-{ort,web}` — its cfg-selected engines.
+- `pipecrab-stt-sherpa`, `pipecrab-vad-sherpa` — engine crates: implements the corresponding traits using the engine specified (`sherpa-onnx`)
 
 ## Crating strategy
 
@@ -28,39 +26,20 @@ Dependencies point downward only — backend → trait crate → core.
 you depend on ──────────────────────────────────────────────────────────
   your-app/          graph.rs (shared) + main.rs / web.rs (thin roots)
   ├── pipecrab                       umbrella: core + runtime re-exports
-  ├── pipecrab-tokio | pipecrab-web  environment (pick ONE): drives the
-  │                                  pipeline; Timer + Offload impls
-  ├── pipecrab-stt-moonshine         model crates (one per capability):
-  ├── pipecrab-vad-silero            all policy, public Backend trait,
+  ├── pipecrab-stt-sherpa            model crates (one per capability):
+  ├── pipecrab-vad-sherpa            all policy, public Backend trait,
   │                                  re-export everything you need
   └── pipecrab-audio-cpal            audio edge for your platform
 
 pulled in for you ──────────────────────────────────────────────────────
-  moonshine-ort/-web · silero-vad-ort/-web   engines: pipecrab-free, cfg-selected
-      ▲ wrapped by model crates          (silero-vad-* share silero-vad-core)
+  sherpa-onnx                        engine: pipecrab-free, cfg-selected
+      ▲ wrapped by model crates          
   pipecrab-stt · pipecrab-vad · pipecrab-audio   trait crates: capability
       ▲ implemented by model crates               trait + Stage adapter
   pipecrab-runtime   Stage, two lanes, run loop; Timer/Offload definitions
       ▲
   pipecrab-core      frames, Processor — zero deps, no async, no cfg
 ```
-
-An application depends on exactly three kinds of crates: the
-`pipecrab` umbrella (frames plus the Stage/pipeline machinery), **one**
-environment crate — `pipecrab-tokio` (native) or `pipecrab-web` (browser) —
-which drives the pipeline and supplies the `Timer`/`Offload` implementations,
-and one model crate per capability (`pipecrab-stt-moonshine`,
-`pipecrab-vad-silero`, `pipecrab-audio-cpal`).
-
-Underneath, each model crate cfg-selects a pipecrab-free engine wrapper per
-target (`moonshine-ort` natively, `moonshine-web` via transformers.js) and
-adapts it to its trait crate (`pipecrab-stt` = `Transcriber` + `SttStage`),
-which rides on `pipecrab-runtime` and the zero-dependency `pipecrab-core`. The
-naming rule is the dependency rule: a `pipecrab-` prefix means it depends on
-pipecrab; unprefixed engines are useful standalone. To extend, implement a
-model crate's `Backend` (new engine) or stamp the trait-crate → engine → model
-template (new capability). The pipeline graph is written once; only two
-~15-line platform roots differ.
 
 ## Off-thread work
 

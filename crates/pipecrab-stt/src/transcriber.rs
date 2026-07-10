@@ -26,7 +26,7 @@ pub trait Transcriber: MaybeSendSync {
     /// not mutate observable state, so the run loop can drop an in-flight call on
     /// a barge-in interrupt without tearing anything.
     ///
-    /// An impl that accepts only one format (Moonshine wants 16 kHz mono) should
+    /// An impl that accepts only one format (say, 16 kHz mono) should
     /// reject a mismatch with [`SttError::UnsupportedFormat`] rather than
     /// resample — resampling belongs to a separate stage.
     async fn transcribe(&self, samples: &[f32], format: AudioFormat) -> Result<String, SttError>;

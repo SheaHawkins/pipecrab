@@ -3,7 +3,7 @@
 //! One trait — [`VoiceActivityDetector`] — is the swappable VAD capability:
 //! `f32` samples in, a [`VadVerdict`] (is this window speech, and how sure?)
 //! out. It mirrors [`pipecrab-stt`](https://docs.rs/pipecrab-stt)'s
-//! `Transcriber` trait: the concrete engines — native `ort`-hosted Silero, the
+//! `Transcriber` trait: the concrete engines — a native `ort`-hosted build, the
 //! browser onnxruntime-web build — live in their own crates behind this one
 //! trait, so the pipeline above never names a model and the interface itself carries
 //! no backend dependency. It compiles for the host and for
@@ -28,7 +28,7 @@ use pipecrab_runtime::MaybeSendSync;
 /// The swappable voice-activity-detection capability: `f32` samples in, a
 /// [`VadVerdict`] out.
 ///
-/// This is the durable interface. A native engine (`ort`-hosted Silero) and a
+/// This is the durable interface. A native engine (`ort`-hosted) and a
 /// browser engine (onnxruntime-web in a Web Worker) both implement this one
 /// trait, so the stage above never names a concrete model. Like every other
 /// pipecrab interface it takes `&self`, so an in-flight call can be dropped on a
@@ -42,7 +42,7 @@ use pipecrab_runtime::MaybeSendSync;
 pub trait VoiceActivityDetector: MaybeSendSync {
     /// Classify `samples` (interleaved `f32` PCM in `format`) as speech or not.
     ///
-    /// An engine that accepts only one format (Silero wants 16 kHz mono) should
+    /// An engine that accepts only one format (say, 16 kHz mono) should
     /// reject a mismatch with [`VadError::UnsupportedFormat`] rather than
     /// resample — resampling belongs to a separate stage.
     async fn detect(&self, samples: &[f32], format: AudioFormat)
