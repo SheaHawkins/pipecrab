@@ -1,7 +1,7 @@
 use futures::channel::mpsc;
 use futures::executor::block_on;
 use futures::stream::StreamExt;
-use pipecrab_core::{DataFrame, Direction, SystemFrame};
+use pipecrab_core::{DataFrame, Direction, SystemFrame, Transcript};
 use pipecrab_runtime::Outbound;
 
 #[test]
@@ -11,10 +11,10 @@ fn send_data_delivers_frame() {
         let (sys_tx, _sys_rx) = mpsc::channel(8);
         let outb = Outbound { data: data_tx, sys: sys_tx };
 
-        outb.send_data(DataFrame::Transcript("hello".into())).await.unwrap();
+        outb.send_data(DataFrame::Transcript(Transcript::user_final("hello"))).await.unwrap();
 
         match data_rx.next().await.unwrap() {
-            DataFrame::Transcript(s) => assert_eq!(s, "hello".into()),
+            DataFrame::Transcript(s) => assert_eq!(s.text, "hello".into()),
             other => panic!("unexpected {other:?}"),
         }
     });
@@ -46,7 +46,7 @@ fn send_data_to_closed_channel_returns_err() {
         let outb = Outbound { data: data_tx, sys: sys_tx };
         drop(data_rx);
 
-        assert!(outb.send_data(DataFrame::Transcript("x".into())).await.is_err());
+        assert!(outb.send_data(DataFrame::Transcript(Transcript::user_final("x"))).await.is_err());
     });
 }
 

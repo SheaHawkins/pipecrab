@@ -80,6 +80,17 @@ impl<E> Default for Decision<E> {
 /// The methods emit commands describing *what should happen*; the runtime's
 /// `perform` interprets them and does the I/O.
 ///
+/// # Control calls
+///
+/// "No I/O" has one carve-out. `decide_*` may issue *control calls*:
+/// synchronous, non-blocking, idempotent, infallible operations on owned
+/// engines. The canonical example is `cancel()`, which flips an atomic flag an
+/// engine's worker observes; it cannot block, fail, allocate unboundedly, or
+/// tear state, so invoking it from the synchronous, `&mut self` decide step is
+/// sound. Anything that can block, fail, allocate unboundedly, or perform real
+/// I/O is *not* a control call — it remains an [`Effect`](Processor::Effect)
+/// for `perform` to carry out.
+///
 /// # Defaults
 ///
 /// Both methods default to [`Decision::forward()`]: an un-overridden stage is a
