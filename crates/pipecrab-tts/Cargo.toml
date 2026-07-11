@@ -1,0 +1,16 @@
+[package]
+name = "pipecrab-tts"
+description = "The text-to-speech interface for pipecrab: the Synthesizer trait, a generic TtsStage adapter, and a SentenceChunker."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pipecrab-core    = { workspace = true }
+pipecrab-runtime = { workspace = true }
+async-trait      = "0.1"
+# A lib-level dep (not just dev): the `TtsAudioStream` alias is a boxed
+# `futures::Stream`, so the trait's public surface names `futures` types.
+futures          = "0.3"
