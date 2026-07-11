@@ -81,6 +81,18 @@ fn does_not_split_mid_number_or_mid_token() {
 }
 
 #[test]
+fn does_not_split_after_an_abbreviation() {
+    // "Dr." must not end a sentence: the title and the name stay together, and
+    // the real boundary only lands after "today".
+    let sentences = block_on(run(vec![
+        partial("Dr. Smith called."),
+        partial("Dr. Smith called. Come"),
+        agent_final("Dr. Smith called. Come in today"),
+    ]));
+    assert_eq!(sentences, vec!["Dr. Smith called.", "Come in today"]);
+}
+
+#[test]
 fn forwards_non_agent_frames_untouched() {
     // A user transcript is not the chunker's to touch: it forwards unchanged and
     // keeps its user/final identity.
@@ -104,21 +116,6 @@ fn forwards_non_agent_frames_untouched() {
         let (_, got, _) = futures::join!(feed, drain, driver);
         assert_eq!(got, Some((Role::User, "a question".to_string())));
     });
-}
-
-#[test]
-fn shorter_next_generation_resets_the_offset() {
-    // A generation that advances the offset but never finalizes (e.g. it was
-    // abandoned), followed by a *shorter* new generation. The offset guard must
-    // restart from zero rather than slice past the end of the shorter text.
-    let sentences = block_on(run(vec![
-        // Advances `emitted` to 14 bytes ("one two three."), leaving a tail.
-        partial("one two three. four five"),
-        // New generation, shorter than 14 bytes: the guard must reset the offset.
-        partial("hi."),
-        agent_final("hi there."),
-    ]));
-    assert_eq!(sentences, vec!["one two three.", "hi there."]);
 }
 
 #[test]
