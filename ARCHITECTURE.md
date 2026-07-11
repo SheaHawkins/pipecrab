@@ -18,7 +18,7 @@ Dependencies point downward only — backend → trait crate → core.
 - `pipecrab-audio` — `AudioSource`/`AudioSink` traits + hardware-free mocks.
 - `pipecrab-audio-cpal` — cpal backend behind those traits.
 - `pipecrab-stt` — `Transcriber` trait + `SttStage` adapter.
-- `pipecrab-vad` — `VoiceActivityDetector` trait + `VadStage` adapter.
+- `pipecrab-vad` — two-tier VAD: the `VoiceActivityDetector` trait (audio in, speech edges out) that `VadStage` gates on, plus the `SpeechScorer` raw-model tier and the `Debounced` adapter that lifts a scorer into a detector. See "VAD gate" below.
 - `pipecrab-stt-sherpa`, `pipecrab-vad-sherpa` — engine crates: implements the corresponding traits using the engine specified (`sherpa-onnx`)
 
 ## Crating strategy
@@ -57,3 +57,15 @@ cpal's device callbacks run on a real-time thread that must never block, allocat
 ## STT interface
 
 `Transcriber` (`f32` in, text out) is the swappable capability; `SttStage` adapts one to a `Stage`, replacing a `DataFrame::Audio` with a `DataFrame::Transcript`. Engines live behind the trait — native `ort`, browser Transformers.js in a Worker — each owning its own offload, so the pipeline never names a concrete model.
+
+## VAD gate
+
+VAD is two tiers. `VoiceActivityDetector` (audio in, speech *edges* out) is the stage-facing capability that segmenter-class engines (sherpa's VAD, platform VADs) implement directly. `SpeechScorer` (a per-window probability) is the raw-model tier a bare silero build exposes; `Debounced` lifts a scorer into a detector, owning the windowing, threshold, and hangover. Because a segmenter never passes through `Debounced`, no engine is ever debounced twice.
+
+`VadStage` is a **gate**, not a tap. It runs the detector over every conforming chunk and emits, on the data lane, an utterance's audio **bracketed by its edges** — `SpeechStarted`, then the utterance's chunks (pre-roll included, drained from a ring the gate owns), then `SpeechStopped`. While idle it emits nothing.
+
+**Contract inversion.** The older lane-discipline design made VAD a tap and emitted the edge *after* the chunk that triggered it. The gate inverts this: downstream of `VadStage`, edges bracket the utterance audio — `SpeechStarted` precedes every utterance chunk, `SpeechStopped` follows the last. A downstream stage can therefore be stateless off the edges, opening its utterance on `SpeechStarted` alone.
+
+**Topology commitment.** Because the gate drops silence, any future consumer of *continuous* raw audio (recording, a level meter, an AEC reference) must sit **upstream** of `VadStage`. Nothing downstream consumes silence today, so this constrains nothing yet — but it is a standing commitment.
+
+**Format is fatal.** A bare `&[f32]` carries no sample rate, so the detector declares its `input_format()` and the stage enforces it fatally: nonconforming audio is rejected before it reaches any engine (`VadError` therefore carries no format-mismatch variant). Continuous-format conversion belongs to a resample stage upstream.
