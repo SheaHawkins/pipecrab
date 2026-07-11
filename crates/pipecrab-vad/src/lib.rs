@@ -12,9 +12,10 @@
 //! The trait only answers "speech or not, right now." [`VadStage`] layers the
 //! segmentation on top: it runs the detector per window and collapses the
 //! verdict stream into just the two *edges* of speech
-//! ([`SpeechStarted`](pipecrab_core::SystemFrame::SpeechStarted) /
-//! [`SpeechStopped`](pipecrab_core::SystemFrame::SpeechStopped)), so the
-//! pipeline sees a handful of control frames, not a per-window flood.
+//! ([`SpeechStarted`](pipecrab_core::DataFrame::SpeechStarted) /
+//! [`SpeechStopped`](pipecrab_core::DataFrame::SpeechStopped)), emitted on the
+//! data lane in order with the audio, so the pipeline sees a handful of control
+//! frames, not a per-window flood.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 

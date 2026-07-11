@@ -72,12 +72,9 @@ fn emits_edges_with_hangover_and_forwards_audio() {
             while let Some(received) = output.recv().await {
                 match received {
                     Received::Data(DataFrame::Audio(_)) => audio_forwarded += 1,
-                    Received::Sys(Direction::Down, SystemFrame::SpeechStarted) => {
-                        edges.push("started")
-                    }
-                    Received::Sys(Direction::Down, SystemFrame::SpeechStopped) => {
-                        edges.push("stopped")
-                    }
+                    // The edges now ride the data lane, in order with the audio.
+                    Received::Data(DataFrame::SpeechStarted) => edges.push("started"),
+                    Received::Data(DataFrame::SpeechStopped) => edges.push("stopped"),
                     _ => {}
                 }
             }
