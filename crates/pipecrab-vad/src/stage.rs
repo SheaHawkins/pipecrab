@@ -28,7 +28,7 @@ use crate::{VadError, VadEvent, VoiceActivityDetector};
 /// utterance audio**: `SpeechStarted` *precedes* every utterance chunk (pre-roll
 /// included) and `SpeechStopped` *follows* the last one. A stateless downstream
 /// stage can therefore open its utterance on the edge alone — the onset audio is
-/// already gated in behind it. The old "edge after trigger" wording is gone.
+/// already gated in behind it.
 ///
 /// # The pre-roll ring
 ///
