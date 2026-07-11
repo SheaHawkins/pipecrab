@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use pipecrab_core::{
-    DataFrame, Decision, Direction, Finality, Processor, Role, SystemFrame, Transcript,
+    DataFrame, Decision, Direction, Disposition, Finality, Processor, Role, SystemFrame, Transcript,
 };
 use pipecrab_runtime::{Outbound, Stage, StageError};
 
@@ -132,7 +132,7 @@ impl Processor for SentenceChunker {
             }
         }
         // Consume the raw agent frame; the per-sentence finals replace it.
-        effects.into_iter().fold(Decision::drop(), Decision::emit)
+        Decision { disposition: Disposition::Drop, effects }
     }
 
     fn decide_system(&mut self, _dir: Direction, frame: &SystemFrame) -> Decision<EmitSentence> {
