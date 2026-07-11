@@ -91,6 +91,13 @@ impl<E> Default for Decision<E> {
 /// I/O is *not* a control call — it remains an [`Effect`](Processor::Effect)
 /// for `perform` to carry out.
 ///
+/// The bound is on the *mechanism*, not the intent: a `cancel` impl may use an
+/// atomic store or an unbounded `try_send`, but never a bounded-channel send
+/// (which can block on a full queue) or an FFI call that could contend a lock an
+/// engine holds during inference. The rationale is that effects ride the
+/// droppable, deferrable path by design, whereas cancellation must be
+/// unmissable — so it is invoked directly, where the `Interrupt` is decided.
+///
 /// # Defaults
 ///
 /// Both methods default to [`Decision::forward()`]: an un-overridden stage is a

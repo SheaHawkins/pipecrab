@@ -7,6 +7,7 @@ members = [
     "crates/pipecrab-audio",
     "crates/pipecrab-audio-cpal",
     "crates/pipecrab-stt",
+    "crates/pipecrab-tts",
     "crates/pipecrab-vad",
     "crates/test-util",
     "examples/echo",
@@ -29,6 +30,7 @@ pipecrab-runtime    = { path = "crates/pipecrab-runtime", version = "0.1.0" }
 pipecrab-audio      = { path = "crates/pipecrab-audio", version = "0.1.0" }
 pipecrab-audio-cpal = { path = "crates/pipecrab-audio-cpal", version = "0.1.0" }
 pipecrab-stt        = { path = "crates/pipecrab-stt", version = "0.1.0" }
+pipecrab-tts        = { path = "crates/pipecrab-tts", version = "0.1.0" }
 pipecrab-vad        = { path = "crates/pipecrab-vad", version = "0.1.0" }
 # Dev-only; `publish = false`, so it never needs a version.
 pipecrab-test-util  = { path = "crates/test-util" }
