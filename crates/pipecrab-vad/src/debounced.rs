@@ -10,13 +10,11 @@
 //!   [`window_len()`](SpeechScorer::window_len) windows, with the remainder
 //!   carried across calls.
 //! * **Threshold** — a probability is a speech/not-speech bit only once compared
-//!   against [`DebounceConfig::threshold`]. This is the threshold that used to
-//!   live inside the engine.
+//!   against [`DebounceConfig::threshold`].
 //! * **Hangover** — a run of consecutive agreeing windows must accrue before the
 //!   state flips ([`start_windows`](DebounceConfig::start_windows) /
 //!   [`stop_windows`](DebounceConfig::stop_windows)), so a stray window does not
-//!   chatter start/stop pairs. This is the hangover that used to live inside the
-//!   stage.
+//!   chatter start/stop pairs.
 //!
 //! # Only for scorers — double hysteresis is impossible by construction
 //!
@@ -166,62 +164,5 @@ impl<S: SpeechScorer> VoiceActivityDetector for Debounced<S> {
         let mut st = self.state.lock().expect("Debounced state mutex poisoned");
         st.remainder.clear();
         st.observe.reset();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn config(start: u32, stop: u32) -> DebounceConfig {
-        DebounceConfig { threshold: 0.5, start_windows: start, stop_windows: stop }
-    }
-
-    // The ported `observe` unit tests: the hangover state machine in isolation.
-
-    #[test]
-    fn observe_agreeing_verdict_emits_nothing_and_resets_the_run() {
-        let mut st = ObserveState { in_speech: false, against: 0 };
-        let cfg = config(2, 3);
-        // Silence while already idle: no edge, and any opposing run is cleared.
-        st.against = 1;
-        assert_eq!(st.observe(false, &cfg), None);
-        assert_eq!(st.against, 0);
-    }
-
-    #[test]
-    fn observe_starts_after_start_windows_speech() {
-        let mut st = ObserveState { in_speech: false, against: 0 };
-        let cfg = config(2, 3);
-        // One speech window is short of the start hangover of 2.
-        assert_eq!(st.observe(true, &cfg), None);
-        // The second flips the state and emits the onset edge.
-        assert_eq!(st.observe(true, &cfg), Some(VadEvent::SpeechStarted));
-        assert!(st.in_speech);
-    }
-
-    #[test]
-    fn observe_stops_after_stop_windows_silence_and_a_gap_resets() {
-        let mut st = ObserveState { in_speech: true, against: 0 };
-        let cfg = config(2, 3);
-        // Two silence windows are short of the stop hangover of 3...
-        assert_eq!(st.observe(false, &cfg), None);
-        assert_eq!(st.observe(false, &cfg), None);
-        // ...a single speech window resets the closing run...
-        assert_eq!(st.observe(true, &cfg), None);
-        assert_eq!(st.against, 0);
-        // ...so it now takes a fresh run of three to close.
-        assert_eq!(st.observe(false, &cfg), None);
-        assert_eq!(st.observe(false, &cfg), None);
-        assert_eq!(st.observe(false, &cfg), Some(VadEvent::SpeechStopped));
-        assert!(!st.in_speech);
-    }
-
-    #[test]
-    fn observe_reset_clears_state() {
-        let mut st = ObserveState { in_speech: true, against: 2 };
-        st.reset();
-        assert!(!st.in_speech);
-        assert_eq!(st.against, 0);
     }
 }

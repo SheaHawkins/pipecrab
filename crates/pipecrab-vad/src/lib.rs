@@ -13,7 +13,7 @@
 //!   [`Debounced`] adapter, which owns the windowing, threshold, and hangover.
 //!
 //! Probabilities used to live on the one VAD trait; they moved *down* to
-//! [`SpeechScorer`], the tier where they are real. A segmenter never has a
+//! [`SpeechScorer`]. A segmenter never has a
 //! probability to hand back, and anything downstream that wants confidence
 //! (a turn manager, prosody) composes its own [`SpeechScorer`] rather than
 //! leaning on the VAD to surface one.
@@ -137,10 +137,6 @@ pub trait SpeechScorer: MaybeSendSync {
 /// Mirrors the message-plus-kind shape of the pipeline's other error types
 /// (e.g. `pipecrab-stt`'s `SttError`) so the conversion at a stage boundary is
 /// direct.
-///
-/// There is no format-mismatch variant: [`input_format`](VoiceActivityDetector::input_format)
-/// is declared and the stage enforces it fatally, so an engine never sees
-/// nonconforming audio, and a bare `&[f32]` carries no rate to validate against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VadError {
     /// The engine itself failed — an inference error, a worker that crashed, a

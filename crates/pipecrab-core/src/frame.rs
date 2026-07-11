@@ -212,17 +212,12 @@ pub enum DataFrame {
     /// A chunk of `f32` PCM audio carrying its own [`AudioFormat`].
     Audio(AudioChunk),
     /// Voice-activity detection observed the user *start* speaking: the
-    /// silence→speech edge, emitted by a VAD stage once at onset (not per audio
-    /// window). It rides the data lane and **brackets** the utterance: the VAD
-    /// gate emits it *ahead* of the utterance's audio (pre-roll included), so a
-    /// downstream stage can open its utterance on the edge alone, with the onset
-    /// audio arriving right behind it.
+    /// silence→speech edge, emitted by the VAD stage at onset and followed by the
+    /// utterance's [`Audio`](DataFrame::Audio) frames.
     SpeechStarted,
     /// Voice-activity detection observed the user *stop* speaking: the
-    /// speech→silence edge. Brackets the utterance like
-    /// [`SpeechStarted`](DataFrame::SpeechStarted): the gate emits it *after* the
-    /// utterance's last audio chunk, so a stage closes the utterance only once
-    /// all of its audio has passed.
+    /// speech→silence edge, emitted by the VAD stage after the utterance's last
+    /// [`Audio`](DataFrame::Audio) frame.
     SpeechStopped,
     /// Application-defined payload; see [`CustomFrame`].
     Custom(Arc<dyn CustomFrame>),
