@@ -68,18 +68,23 @@ fn accumulates_windows_and_finalizes_once() {
 }
 
 #[test]
-fn begin_utterance_clears_the_previous_buffer() {
+fn begin_utterance_rejects_a_second_begin() {
     block_on(async {
         let engine = Buffered::new(CountingTranscriber { format: FMT });
 
         engine.begin_utterance(FMT).await.unwrap();
         engine.feed(&[0.0; 9]).await.unwrap();
-        // A fresh begin drops the 9 accumulated samples.
-        engine.begin_utterance(FMT).await.unwrap();
-        engine.feed(&[0.0; 2]).await.unwrap();
 
+        // A second begin without closing the first is a protocol violation:
+        // reject it rather than silently dropping the 9 accumulated samples.
+        assert!(matches!(engine.begin_utterance(FMT).await, Err(SttError::Engine(_))));
+
+        // The original utterance is untouched and still finalizes over its 9.
         let events = engine.end_utterance().await.unwrap();
-        assert_eq!(events, vec![SttEvent::Final("heard 2 samples".into())]);
+        assert_eq!(events, vec![SttEvent::Final("heard 9 samples".into())]);
+
+        // Once closed, a fresh begin is accepted again.
+        engine.begin_utterance(FMT).await.unwrap();
     });
 }
 

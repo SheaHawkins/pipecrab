@@ -36,7 +36,13 @@ use crate::{SttError, Transcriber};
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait StreamingTranscriber: MaybeSendSync {
-    /// Open an utterance. Rejects a format the engine cannot take
+    /// Open an utterance. Only one is active per engine instance, so the caller
+    /// must close the previous one — via [`end_utterance`](Self::end_utterance)
+    /// or [`cancel`](Self::cancel) — before opening another; calling this while
+    /// an utterance is already active is a protocol violation and an engine
+    /// rejects it rather than silently discarding the in-progress utterance.
+    ///
+    /// Rejects a format the engine cannot take
     /// ([`SttError::UnsupportedFormat`]); does not resample.
     async fn begin_utterance(&self, format: AudioFormat) -> Result<(), SttError>;
 
@@ -128,9 +134,17 @@ impl<T: Transcriber> Buffered<T> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl<T: Transcriber> StreamingTranscriber for Buffered<T> {
     async fn begin_utterance(&self, format: AudioFormat) -> Result<(), SttError> {
+        let mut st = self.state.lock().expect("Buffered state mutex poisoned");
+        // One active utterance per instance: refuse a second begin rather than
+        // silently dropping the in-progress one. The caller must `end_utterance`
+        // or `cancel` to close it first.
+        if st.format.is_some() {
+            return Err(SttError::Engine(
+                "Buffered::begin_utterance called while an utterance is already active".into(),
+            ));
+        }
         // No upfront format check: the wrapped one-shot engine only validates at
         // transcribe time, so rejection is deferred to `end_utterance`.
-        let mut st = self.state.lock().expect("Buffered state mutex poisoned");
         st.format = Some(format);
         st.buffer.clear();
         Ok(())
