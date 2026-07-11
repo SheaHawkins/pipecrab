@@ -17,11 +17,13 @@
 //!   partial-less engine still plugs into the same streaming interface, without
 //!   the pipeline knowing the difference.
 //!
-//! [`SttStage`] is a standalone, simpler adapter for the non-streaming case: it
-//! turns a one-shot [`Transcriber`] into a pipeline
-//! [`Stage`](pipecrab_runtime::Stage), mapping a
-//! [`DataFrame::Audio`](pipecrab_core::DataFrame::Audio) to a single
-//! [`DataFrame::Transcript`](pipecrab_core::DataFrame::Transcript).
+//! [`SttStage`] adapts a [`StreamingTranscriber`] into a pipeline
+//! [`Stage`](pipecrab_runtime::Stage). It is gated by the VAD's
+//! [`SpeechStarted`](pipecrab_core::SystemFrame::SpeechStarted) /
+//! [`SpeechStopped`](pipecrab_core::SystemFrame::SpeechStopped) edges rather than
+//! transcribing one utterance per audio frame, and owns a pre-roll ring so an
+//! utterance's onset — the audio that precedes the `SpeechStarted` edge — is not
+//! clipped. A one-shot [`Transcriber`] plugs in through [`Buffered`].
 //!
 //! Platform-neutral and `wasm32`-checkable: the concrete engines live elsewhere
 //! (native `ort`, browser Transformers.js in a Web Worker), each behind these
@@ -34,6 +36,6 @@ mod stage;
 mod streaming;
 mod transcriber;
 
-pub use stage::{SttStage, Transcribe};
+pub use stage::{SttConfig, SttEffect, SttStage};
 pub use streaming::{Buffered, SttEvent, StreamingTranscriber};
 pub use transcriber::{SttError, Transcriber};
