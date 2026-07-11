@@ -6,6 +6,7 @@ members = [
     "crates/pipecrab",
     "crates/pipecrab-audio",
     "crates/pipecrab-audio-cpal",
+    "crates/pipecrab-lm",
     "crates/pipecrab-stt",
     "crates/pipecrab-tts",
     "crates/pipecrab-vad",
@@ -29,6 +30,7 @@ pipecrab-core       = { path = "crates/pipecrab-core", version = "0.1.0" }
 pipecrab-runtime    = { path = "crates/pipecrab-runtime", version = "0.1.0" }
 pipecrab-audio      = { path = "crates/pipecrab-audio", version = "0.1.0" }
 pipecrab-audio-cpal = { path = "crates/pipecrab-audio-cpal", version = "0.1.0" }
+pipecrab-lm         = { path = "crates/pipecrab-lm", version = "0.1.0" }
 pipecrab-stt        = { path = "crates/pipecrab-stt", version = "0.1.0" }
 pipecrab-tts        = { path = "crates/pipecrab-tts", version = "0.1.0" }
 pipecrab-vad        = { path = "crates/pipecrab-vad", version = "0.1.0" }

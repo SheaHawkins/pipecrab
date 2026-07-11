@@ -35,3 +35,9 @@ jobs:
       # The VAD interface is likewise engine-free — just the VoiceActivityDetector trait —
       # so it must build for the browser, where the engine is onnxruntime-web.
       - run: cargo check -p pipecrab-vad --target wasm32-unknown-unknown
+      # The TTS interface is engine-free — the Synthesizer trait, its stage, and the
+      # chunker — so it must build for the browser, where the engine runs in a Worker.
+      - run: cargo check -p pipecrab-tts --target wasm32-unknown-unknown
+      # The LM interface is engine-free — the LanguageModel trait plus the LmStage
+      # adapter — so it must build for the browser, where the engine runs in a Worker.
+      - run: cargo check -p pipecrab-lm --target wasm32-unknown-unknown
