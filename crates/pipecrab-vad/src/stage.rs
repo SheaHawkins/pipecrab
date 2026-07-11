@@ -4,7 +4,7 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use pipecrab_core::{AudioChunk, DataFrame, Decision, Direction, Processor, SystemFrame};
+use pipecrab_core::{AudioChunk, DataFrame, Decision, Processor};
 use pipecrab_runtime::{Outbound, Stage, StageError};
 
 use crate::{VadError, VoiceActivityDetector};
@@ -15,9 +15,12 @@ use crate::{VadError, VoiceActivityDetector};
 /// detection **and forwards the audio unchanged**, so a downstream STT stage
 /// still sees every sample. What it emits is not the per-window verdict — that
 /// would flood the pipeline — but the two *edges* of speech: a
-/// [`SystemFrame::SpeechStarted`] on the silence→speech transition and a
-/// [`SystemFrame::SpeechStopped`] on the speech→silence transition, both
-/// travelling downstream. Between edges it emits nothing.
+/// [`DataFrame::SpeechStarted`] on the silence→speech transition and a
+/// [`DataFrame::SpeechStopped`] on the speech→silence transition. Both ride the
+/// **data lane**, in order right behind the audio that produced them, so a
+/// downstream stage sees the onset audio before the edge announcing it; a
+/// system-lane edge would preempt that audio instead. Between edges it emits
+/// nothing.
 ///
 /// The edge is debounced with a hangover ([`VadConfig`]): a run of consecutive
 /// windows must agree before the state flips, so a single stray window does not
@@ -31,7 +34,7 @@ use crate::{VadError, VoiceActivityDetector};
 /// [`perform`](Stage::perform). Since `perform` takes `&self`, the bit lives
 /// behind a [`Mutex`] rather than in the `&mut self` `decide_data`. This stays
 /// cancellation-safe: the state is touched only in a single synchronous
-/// critical section *after* the `await`, so an [`Interrupt`](SystemFrame::Interrupt)
+/// critical section *after* the `await`, so an [`Interrupt`](pipecrab_core::SystemFrame::Interrupt)
 /// that drops an in-flight `perform` (before `detect` returns) changes nothing —
 /// there is no torn state to leave behind.
 pub struct VadStage<V: VoiceActivityDetector> {
@@ -136,13 +139,15 @@ impl<V: VoiceActivityDetector> Stage for VadStage<V> {
             state.observe(verdict.is_speech, &self.config)
         };
         let frame = match edge {
-            Some(Edge::Started) => SystemFrame::SpeechStarted,
-            Some(Edge::Stopped) => SystemFrame::SpeechStopped,
+            Some(Edge::Started) => DataFrame::SpeechStarted,
+            Some(Edge::Stopped) => DataFrame::SpeechStopped,
             None => return Ok(()),
         };
+        // The edge rides the data lane, in order behind the audio this same tap
+        // already forwarded, so a downstream stage sees the onset before the edge.
         // Ignore the send error: it only happens once the sink has gone away
         // during shutdown, matching the runtime's own forward path.
-        let _ = out.send_system(Direction::Down, frame).await;
+        let _ = out.send_data(frame).await;
         Ok(())
     }
 }

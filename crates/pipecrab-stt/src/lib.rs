@@ -19,11 +19,12 @@
 //!
 //! [`SttStage`] adapts a [`StreamingTranscriber`] into a pipeline
 //! [`Stage`](pipecrab_runtime::Stage). It is gated by the VAD's
-//! [`SpeechStarted`](pipecrab_core::SystemFrame::SpeechStarted) /
-//! [`SpeechStopped`](pipecrab_core::SystemFrame::SpeechStopped) edges rather than
-//! transcribing one utterance per audio frame, and owns a pre-roll ring so an
-//! utterance's onset — the audio that precedes the `SpeechStarted` edge — is not
-//! clipped. A one-shot [`Transcriber`] plugs in through [`Buffered`].
+//! [`SpeechStarted`](pipecrab_core::DataFrame::SpeechStarted) /
+//! [`SpeechStopped`](pipecrab_core::DataFrame::SpeechStopped) edges — which ride
+//! the data lane, in order with the audio — rather than transcribing one
+//! utterance per audio frame, and owns a pre-roll ring so an utterance's onset —
+//! the audio that precedes the `SpeechStarted` edge — is not clipped. A one-shot
+//! [`Transcriber`] plugs in through [`Buffered`].
 //!
 //! Platform-neutral and `wasm32`-checkable: the concrete engines live elsewhere
 //! (native `ort`, browser Transformers.js in a Web Worker), each behind these

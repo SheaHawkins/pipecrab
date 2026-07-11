@@ -17,10 +17,12 @@ use crate::{SttError, SttEvent, StreamingTranscriber};
 ///
 /// The stage does not decide *where* an utterance begins and ends — an upstream
 /// [`VadStage`](https://docs.rs/pipecrab-vad) does, emitting
-/// [`SpeechStarted`](SystemFrame::SpeechStarted) /
-/// [`SpeechStopped`](SystemFrame::SpeechStopped) edges. Between those edges this
-/// stage streams live audio into the engine and forwards its
-/// [`SttEvent`]s downstream as [`Transcript`]s; outside them it stays idle.
+/// [`SpeechStarted`](DataFrame::SpeechStarted) /
+/// [`SpeechStopped`](DataFrame::SpeechStopped) edges. These ride the **data
+/// lane**, so they arrive here in order with the audio and are handled in
+/// [`decide_data`]. Between those edges the stage streams live audio into the
+/// engine and forwards its [`SttEvent`]s downstream as [`Transcript`]s; outside
+/// them it stays idle.
 ///
 /// # The pre-roll ring
 ///
@@ -29,34 +31,35 @@ use crate::{SttError, SttEvent, StreamingTranscriber};
 /// already flowed past by the time the edge arrives. Without pre-roll every
 /// utterance would lose its first syllables. So while idle the stage stashes
 /// each incoming [`Audio`](DataFrame::Audio) chunk in a duration-bounded
-/// `PrerollRing`; on [`SpeechStarted`](SystemFrame::SpeechStarted) it drains
-/// the ring, in arrival order, into the engine ahead of any live audio. The
-/// budget is [`SttConfig::preroll`] (default 300 ms).
+/// `PrerollRing`; on [`SpeechStarted`](DataFrame::SpeechStarted) it drains the
+/// ring, in arrival order, into the engine ahead of any live audio. The budget
+/// is [`SttConfig::preroll`] (default 300 ms).
+///
+/// Because the edge travels the data lane *behind* the audio that triggered it,
+/// the ring always holds that onset window when `SpeechStarted` arrives — so the
+/// stage can always open the utterance from the ring's format, with no special
+/// cold-start case.
 ///
 /// # State and the decide/perform split
 ///
-/// Following the [`Processor`]/[`Stage`] split, all state — the ring, the
-/// in-speech bit — lives in the synchronous `&mut self` `decide_*`; `perform`
-/// takes `&self` and only drives the awaited engine calls. The engine itself is
-/// a worker-handle (see [`StreamingTranscriber`]), so a barge-in that drops an
-/// in-flight [`feed`](StreamingTranscriber::feed) leaves no torn state, and the
-/// [`Interrupt`](SystemFrame::Interrupt) cancel is a *control call* invoked right
-/// where the interrupt is decided.
+/// Following the [`Processor`]/[`Stage`] split, all state — the ring and the
+/// single `in_speech` bit, which is true exactly when the engine has an open
+/// utterance — lives in the synchronous `&mut self`
+/// `decide_*`; `perform` takes `&self` and only drives the awaited engine calls.
+/// The engine itself is a worker-handle (see [`StreamingTranscriber`]), so a
+/// barge-in that drops an in-flight [`feed`](StreamingTranscriber::feed) leaves
+/// no torn state, and the [`Interrupt`](SystemFrame::Interrupt) cancel is a
+/// *control call* invoked right where the interrupt is decided.
 ///
 /// [`decide_data`]: Processor::decide_data
 pub struct SttStage<S: StreamingTranscriber> {
     transcriber: S,
     /// Pre-roll ring; accumulates while idle, drained on `SpeechStarted`.
     preroll: PrerollRing,
-    /// Whether we are between a `SpeechStarted` and its `SpeechStopped`.
+    /// Whether we are inside an utterance — between a `SpeechStarted` and its
+    /// `SpeechStopped`. True exactly when the engine has an open utterance, so it
+    /// gates both the live `Feed`s and the closing `End`.
     in_speech: bool,
-    /// Whether `begin_utterance` has been emitted for the active utterance. It
-    /// lags `in_speech` only across the cold-start deferral window: a
-    /// `SpeechStarted` that finds an empty ring has no format to open with, so
-    /// begin is deferred to the first live chunk (see [`decide_data`]).
-    ///
-    /// [`decide_data`]: Processor::decide_data
-    utterance_open: bool,
 }
 
 /// Tuning for [`SttStage`].
@@ -82,12 +85,7 @@ impl<S: StreamingTranscriber> SttStage<S> {
 
     /// Wrap `transcriber` as a stage with an explicit [`SttConfig`].
     pub fn with_config(transcriber: S, config: SttConfig) -> Self {
-        Self {
-            transcriber,
-            preroll: PrerollRing::new(config.preroll),
-            in_speech: false,
-            utterance_open: false,
-        }
+        Self { transcriber, preroll: PrerollRing::new(config.preroll), in_speech: false }
     }
 }
 
@@ -176,48 +174,34 @@ impl<S: StreamingTranscriber> Processor for SttStage<S> {
     type Effect = SttEffect;
 
     fn decide_data(&mut self, frame: &DataFrame) -> Decision<SttEffect> {
-        let DataFrame::Audio(chunk) = frame else {
-            // Transcripts, transport bytes, custom frames: not ours to touch.
-            return Decision::forward();
-        };
-        if !self.in_speech {
-            // Idle: stash the chunk so the utterance onset — which arrives before
-            // the VAD's `SpeechStarted` edge — survives. Mutating state in the
-            // sync `&mut self` decide step is legal; the chunk is Arc-backed, so
-            // this clone is a refcount bump.
-            self.preroll.push(chunk.clone());
-            return Decision::drop();
-        }
-        // Live speech: consume the audio and feed it to the engine. If
-        // `SpeechStarted` found an empty ring there was no format to open with,
-        // so open the utterance now, from this chunk's format, before feeding.
-        let mut decision = Decision::drop();
-        if !self.utterance_open {
-            self.utterance_open = true;
-            decision = decision.emit(SttEffect::Begin(chunk.format));
-        }
-        decision.emit(SttEffect::Feed(chunk.clone()))
-    }
-
-    fn decide_system(&mut self, _dir: Direction, frame: &SystemFrame) -> Decision<SttEffect> {
         match frame {
-            SystemFrame::SpeechStarted => {
+            DataFrame::Audio(chunk) if self.in_speech => {
+                // Live speech: consume the audio and feed it to the open utterance.
+                // The chunk is Arc-backed, so this clone is a refcount bump.
+                Decision::drop().emit(SttEffect::Feed(chunk.clone()))
+            }
+            DataFrame::Audio(chunk) => {
+                // Idle: stash the chunk so the utterance onset — the audio ahead of
+                // the VAD's `SpeechStarted` edge — survives. Mutating state in the
+                // sync `&mut self` decide step is legal.
+                self.preroll.push(chunk.clone());
+                Decision::drop()
+            }
+            DataFrame::SpeechStarted => {
                 if self.in_speech {
                     // Duplicate edge: the utterance is already open. Idempotent —
-                    // no effects, or `begin_utterance` would be called twice.
+                    // forward, no effects, or `begin_utterance` would run twice.
                     return Decision::forward();
                 }
-                self.in_speech = true;
-                // Drain the pre-roll ahead of any live audio so the onset is
-                // kept. These effects run un-raced through the runtime's
-                // `handle_system`, but each is a cheap message-pass to the engine
-                // worker and the ring holds only ~budget/window chunks (~10 at
-                // 300 ms), so this stays within the "keep system effects short"
-                // rule.
+                // The VAD emits this edge on the data lane, in order behind the
+                // audio that triggered it, so the ring already holds that onset
+                // window: drain it, open the utterance from its format, and replay
+                // it. The `Begin`/`Feed` effects run on the data path, raced
+                // against the sys lane, so a barge-in can still drop them.
                 let preroll = self.preroll.drain();
                 match preroll.first().map(|c| c.format) {
                     Some(format) => {
-                        self.utterance_open = true;
+                        self.in_speech = true;
                         let mut decision = Decision::forward().emit(SttEffect::Begin(format));
                         for chunk in preroll {
                             decision = decision.emit(SttEffect::Feed(chunk));
@@ -225,36 +209,37 @@ impl<S: StreamingTranscriber> Processor for SttStage<S> {
                         decision
                     }
                     None => {
-                        // Cold start: nothing buffered, so no format to open with
-                        // yet. Defer begin to the first live chunk (decide_data).
+                        // Empty ring: no audio preceded the edge. A VAD never does
+                        // this (it fires only after a speech window), so it means a
+                        // malformed upstream. Stay idle rather than open an
+                        // utterance we have no format for; still forward the edge.
                         Decision::forward()
                     }
                 }
             }
-            SystemFrame::SpeechStopped => {
+            DataFrame::SpeechStopped => {
                 if !self.in_speech {
-                    // Already idle: nothing to close.
+                    // Not in an utterance: nothing to close.
                     return Decision::forward();
                 }
                 self.in_speech = false;
-                if self.utterance_open {
-                    self.utterance_open = false;
-                    Decision::forward().emit(SttEffect::End)
-                } else {
-                    // Speech ended before any audio opened the utterance (a cold
-                    // start with no live chunk in between): nothing to end.
-                    Decision::forward()
-                }
+                Decision::forward().emit(SttEffect::End)
             }
+            // Transcripts, transport bytes, custom frames: not ours to touch.
+            _ => Decision::forward(),
+        }
+    }
+
+    fn decide_system(&mut self, _dir: Direction, frame: &SystemFrame) -> Decision<SttEffect> {
+        match frame {
             SystemFrame::Interrupt => {
                 // Control call (see the `Processor` control-call carve-out): flip
                 // the engine's cancel flag right where the interrupt is decided,
-                // so the in-flight utterance is abandoned promptly and
-                // unmissably. Sync, non-blocking, idempotent, infallible — sound
-                // from the `&mut self` decide step.
+                // so the in-flight utterance is abandoned promptly and unmissably.
+                // Sync, non-blocking, idempotent, infallible — sound from the
+                // `&mut self` decide step.
                 self.transcriber.cancel();
                 self.in_speech = false;
-                self.utterance_open = false;
                 // The ring is left intact: it only accumulates while idle, so
                 // there is nothing from the cancelled utterance to clear.
                 Decision::forward()
@@ -307,5 +292,37 @@ impl From<SttError> for StageError {
         // A failed engine call is recoverable: skip it and keep the pipeline
         // alive. The run loop surfaces it as an Error frame upstream.
         StageError::new(e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn chunk(sample_rate: u32, channels: u16, samples: usize) -> AudioChunk {
+        AudioChunk::new(Arc::from(vec![0.0f32; samples]), AudioFormat::new(sample_rate, channels))
+    }
+
+    #[test]
+    fn chunk_duration_is_frames_over_sample_rate() {
+        // 16 000 mono samples at 16 kHz is exactly one second.
+        assert_eq!(chunk_duration(&chunk(16_000, 1, 16_000)), Duration::from_secs(1));
+        // 1 kHz mono makes one sample == one millisecond.
+        assert_eq!(chunk_duration(&chunk(1_000, 1, 250)), Duration::from_millis(250));
+    }
+
+    #[test]
+    fn chunk_duration_counts_interleaved_frames_not_samples() {
+        // Stereo: 480 interleaved samples is 240 frames, so 240/48k = 5 ms — half
+        // what a naive samples/rate would give.
+        assert_eq!(chunk_duration(&chunk(48_000, 2, 480)), Duration::from_millis(5));
+    }
+
+    #[test]
+    fn chunk_duration_of_empty_or_degenerate_is_zero() {
+        assert_eq!(chunk_duration(&chunk(16_000, 1, 0)), Duration::ZERO);
+        // A zero sample rate can't yield a duration; guard rather than divide by it.
+        assert_eq!(chunk_duration(&chunk(0, 1, 100)), Duration::ZERO);
     }
 }

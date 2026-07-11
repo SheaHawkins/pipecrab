@@ -67,9 +67,17 @@ pub enum Direction {
 
 /// System frames: lifecycle, control, and errors.
 ///
-/// These are bidirectional: `Interrupt`, `Start`/`Stop`, and the
-/// `SpeechStarted`/`SpeechStopped` voice-activity edges travel downstream;
+/// These are bidirectional: `Interrupt` and `Start`/`Stop` travel downstream;
 /// `Error` typically travels upstream. Immutable once constructed.
+///
+/// A frame belongs on this lane only if it must *hop the queue* — be handled
+/// ahead of the data backlog instead of in sequence with it. That is a
+/// deliberately small set (a barge-in `Interrupt`, `Start`/`Stop` lifecycle, an
+/// `Error`), and the bar is high. Anything that marks a *point* in the stream —
+/// a state change that must stay ordered with the media it annotates, like the
+/// voice-activity edges (`SpeechStarted` / `SpeechStopped`) or a future turn
+/// boundary — instead rides the data lane as a [`DataFrame`], where frames keep
+/// their arrival order. When in doubt, use the data lane.
 #[derive(Clone, Debug)]
 pub enum SystemFrame {
     /// Pipeline is starting; stages should initialise any runtime state.
@@ -78,14 +86,6 @@ pub enum SystemFrame {
     Stop,
     /// User barged in; stages should discard in-flight work and reset.
     Interrupt,
-    /// Voice-activity detection observed the user *start* speaking. Travels
-    /// downstream so stages can open an utterance and prepare to transcribe.
-    /// Emitted by a VAD stage on the silence→speech edge, not per audio window.
-    SpeechStarted,
-    /// Voice-activity detection observed the user *stop* speaking. Travels
-    /// downstream so stages can close the utterance and flush it for
-    /// transcription. Emitted on the speech→silence edge.
-    SpeechStopped,
     /// An error propagated through the pipeline.
     Error {
         /// Human-readable description of the error.
@@ -188,7 +188,9 @@ impl Transcript {
     }
 }
 
-/// Data frames: media payload flowing downstream (source → sink).
+/// Data frames: everything flowing downstream (source → sink) in FIFO order —
+/// the media payload plus the in-band voice-activity edges that must stay
+/// ordered with it.
 ///
 /// Immutable: don't try to make mutable frames. Instead, aggregate frames and
 /// produce a new one when you're ready.
@@ -209,6 +211,17 @@ pub enum DataFrame {
     Transcript(Transcript),
     /// A chunk of `f32` PCM audio carrying its own [`AudioFormat`].
     Audio(AudioChunk),
+    /// Voice-activity detection observed the user *start* speaking: the
+    /// silence→speech edge, emitted by a VAD stage once at onset (not per audio
+    /// window). It rides the data lane, in order *behind* the audio that
+    /// triggered it, so a downstream STT stage can rely on that onset audio
+    /// already being buffered when the edge arrives.
+    SpeechStarted,
+    /// Voice-activity detection observed the user *stop* speaking: the
+    /// speech→silence edge. Ordered in-band like
+    /// [`SpeechStarted`](DataFrame::SpeechStarted), so a stage closes the
+    /// utterance only after the last of its audio has passed.
+    SpeechStopped,
     /// Application-defined payload; see [`CustomFrame`].
     Custom(Arc<dyn CustomFrame>),
 }
@@ -216,7 +229,9 @@ pub enum DataFrame {
 impl DataFrame {
     /// True for frames that must survive an interrupt's data-queue flush —
     /// input-from-transport media, since a barge-in utterance must not be
-    /// clipped. False for everything else.
+    /// clipped. False for everything else, including the voice-activity edges:
+    /// like a transcript they are derived control, so a barge-in drops any queued
+    /// one and fresh edges are regenerated from the surviving transport audio.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -264,6 +279,14 @@ mod tests {
         ] {
             assert!(!DataFrame::Transcript(t).survives_flush());
         }
+    }
+
+    #[test]
+    fn voice_edges_do_not_survive_flush() {
+        // The VAD edges ride the data lane but are derived control, not captured
+        // media: a barge-in flush discards them, same as a transcript.
+        assert!(!DataFrame::SpeechStarted.survives_flush());
+        assert!(!DataFrame::SpeechStopped.survives_flush());
     }
 
     #[test]

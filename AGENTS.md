@@ -1,6 +1,7 @@
 1. Refer to ARCHITECTURE.md for basic rules and decisions about this repo.
-2. wasm32 check is per-crate, NOT `--workspace`. The browser-portability gate covers only the platform-neutral crates — `pipecrab-core`, `pipecrab-runtime`, `pipecrab-audio`, `pipecrab-stt`, `pipecrab-vad` — each checked individually with `cargo check -p <crate> --target wasm32-unknown-unknown`. Native backend crates are exempt and WILL fail a wasm build: `pipecrab-audio-cpal` is native-only (the browser audio path will be a separate crate). So do not run `cargo check --workspace --target wasm32-unknown-unknown` — a cpal failure there is expected, not a regression. `.github/workflows/ci.yml` is the source of truth for which crates are gated.
-3. We follow conventionalcommits.org. The essential rules are attached:
+1. Individual stateless functions should always be unit tested. Tend toward unit tested, stateless functions.
+1. wasm32 check is per-crate, NOT `--workspace`. The browser-portability gate covers only the platform-neutral crates — `pipecrab-core`, `pipecrab-runtime`, `pipecrab-audio`, `pipecrab-stt`, `pipecrab-vad` — each checked individually with `cargo check -p <crate> --target wasm32-unknown-unknown`. Native backend crates are exempt and WILL fail a wasm build: `pipecrab-audio-cpal` is native-only (the browser audio path will be a separate crate). So do not run `cargo check --workspace --target wasm32-unknown-unknown` — a cpal failure there is expected, not a regression. `.github/workflows/ci.yml` is the source of truth for which crates are gated.
+1. We follow conventionalcommits.org. The essential rules are attached:
 
 – Commits MUST be prefixed with a type, which consists of a noun, feat, fix, etc., followed by the OPTIONAL scope, OPTIONAL !, and REQUIRED terminal colon and space.
 - The type feat MUST be used when a commit adds a new feature to your application or library.

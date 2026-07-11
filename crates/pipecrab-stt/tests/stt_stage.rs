@@ -2,11 +2,13 @@
 //! `SpeechStarted` / `SpeechStopped` edges and fronted by a pre-roll ring that
 //! keeps an utterance's onset.
 //!
-//! The behavior table is defined in terms of the synchronous `decide_*` output,
-//! so most tests drive `decide_data` / `decide_system` directly and assert on the
-//! emitted effects — fully deterministic, no lane-ordering races. Two async tests
-//! cover the parts that only exist past the decide step: the `SttEvent` →
-//! `Transcript` mapping in `perform`, and barge-in through the real run loop.
+//! The edges ride the data lane, so they are handled in `decide_data` alongside
+//! audio; only `Interrupt` remains a `decide_system` frame. The behavior table is
+//! defined in terms of that synchronous `decide_*` output, so most tests drive
+//! `decide_data` / `decide_system` directly and assert on the emitted effects —
+//! fully deterministic, no lane-ordering races. Two async tests cover the parts
+//! that only exist past the decide step: the `SttEvent` → `Transcript` mapping in
+//! `perform`, and barge-in through the real run loop.
 //!
 //! Deterministic and tokio-free (`block_on`), so it rides the default
 //! `cargo test --workspace` path.
@@ -155,7 +157,7 @@ fn preroll_evicts_by_duration_and_feeds_in_arrival_order_before_live() {
     }
 
     // SpeechStarted drains the ring: begin, then the survivors in arrival order.
-    let started = stage.decide_system(Direction::Down, &SystemFrame::SpeechStarted);
+    let started = stage.decide_data(&DataFrame::SpeechStarted);
     assert_eq!(started.disposition, Disposition::Forward, "the edge is forwarded downstream");
     assert_eq!(summarize(&started.effects), vec!["begin 1000/1", "feed 40", "feed 30"]);
 
@@ -166,27 +168,32 @@ fn preroll_evicts_by_duration_and_feeds_in_arrival_order_before_live() {
 }
 
 #[test]
-fn cold_start_with_empty_ring_defers_begin_to_the_first_chunk() {
+fn empty_ring_speech_started_stays_idle() {
+    // A real VAD emits SpeechStarted on the data lane *after* the onset audio, so
+    // the ring is never empty here. If a malformed source sends the edge with no
+    // preceding audio, the stage must not open a beginless utterance — it stays
+    // idle (no format to begin with) and only forwards the edge.
     let mut stage = SttStage::new(Mock::silent());
 
-    // SpeechStarted with nothing buffered: no format to open with yet, so no
-    // effects — but the edge still forwards and the stage is now in speech.
-    let started = stage.decide_system(Direction::Down, &SystemFrame::SpeechStarted);
-    assert_eq!(started.disposition, Disposition::Forward);
-    assert!(started.effects.is_empty(), "an empty ring cold-starts with no begin");
+    let started = stage.decide_data(&DataFrame::SpeechStarted);
+    assert_eq!(started.disposition, Disposition::Forward, "the edge still forwards");
+    assert!(started.effects.is_empty(), "an empty ring opens nothing");
 
-    // The first live chunk opens the utterance from its own format, then feeds.
-    let first = stage.decide_data(&audio(16_000, 1, 8));
-    assert_eq!(summarize(&first.effects), vec!["begin 16000/1", "feed 8"]);
+    // Since we never entered speech, a following chunk is treated as fresh
+    // pre-roll (buffered, not fed), not as live audio for a torn utterance.
+    let audio_after = stage.decide_data(&audio(16_000, 1, 8));
+    assert_eq!(audio_after.disposition, Disposition::Drop);
+    assert!(audio_after.effects.is_empty(), "the chunk goes to the ring, not the engine");
 
-    // Subsequent chunks feed without re-opening.
-    let second = stage.decide_data(&audio(16_000, 1, 5));
-    assert_eq!(summarize(&second.effects), vec!["feed 5"]);
+    // A subsequent edge — now with that pre-roll present — opens cleanly.
+    let restarted = stage.decide_data(&DataFrame::SpeechStarted);
+    assert_eq!(summarize(&restarted.effects), vec!["begin 16000/1", "feed 8"]);
 
-    // SpeechStopped closes the (now-open) utterance.
-    let stopped = stage.decide_system(Direction::Down, &SystemFrame::SpeechStopped);
+    // And a SpeechStopped with no open utterance is itself a forwarded no-op.
+    let mut idle = SttStage::new(Mock::silent());
+    let stopped = idle.decide_data(&DataFrame::SpeechStopped);
     assert_eq!(stopped.disposition, Disposition::Forward);
-    assert_eq!(summarize(&stopped.effects), vec!["end"]);
+    assert!(stopped.effects.is_empty(), "nothing to end when not in speech");
 }
 
 #[test]
@@ -195,18 +202,18 @@ fn duplicate_speech_edges_are_idempotent_both_ways() {
     stage.decide_data(&audio(16_000, 1, 4)); // one chunk of pre-roll
 
     // First SpeechStarted opens the utterance...
-    let first = stage.decide_system(Direction::Down, &SystemFrame::SpeechStarted);
+    let first = stage.decide_data(&DataFrame::SpeechStarted);
     assert_eq!(summarize(&first.effects), vec!["begin 16000/1", "feed 4"]);
     // ...a duplicate one is a no-op: forwarded, but no second begin_utterance.
-    let dup_start = stage.decide_system(Direction::Down, &SystemFrame::SpeechStarted);
+    let dup_start = stage.decide_data(&DataFrame::SpeechStarted);
     assert_eq!(dup_start.disposition, Disposition::Forward);
     assert!(dup_start.effects.is_empty(), "a repeated start must not begin a second utterance");
 
     // First SpeechStopped closes it...
-    let stop = stage.decide_system(Direction::Down, &SystemFrame::SpeechStopped);
+    let stop = stage.decide_data(&DataFrame::SpeechStopped);
     assert_eq!(summarize(&stop.effects), vec!["end"]);
     // ...a duplicate one is a no-op: forwarded, no second end_utterance.
-    let dup_stop = stage.decide_system(Direction::Down, &SystemFrame::SpeechStopped);
+    let dup_stop = stage.decide_data(&DataFrame::SpeechStopped);
     assert_eq!(dup_stop.disposition, Disposition::Forward);
     assert!(dup_stop.effects.is_empty(), "a repeated stop must not end a second time");
 }
@@ -222,7 +229,7 @@ fn format_change_while_idle_clears_the_ring() {
     // format, so it drops the stale contents and restarts in the new one.
     stage.decide_data(&audio(48_000, 2, 8));
 
-    let started = stage.decide_system(Direction::Down, &SystemFrame::SpeechStarted);
+    let started = stage.decide_data(&DataFrame::SpeechStarted);
     assert_eq!(
         summarize(&started.effects),
         vec!["begin 48000/2", "feed 8"],
@@ -247,7 +254,7 @@ fn interrupt_cancels_resets_and_keeps_the_ring() {
 
     // The ring survived the interrupt (it only accumulates while idle), so the
     // next SpeechStarted still replays that pre-roll.
-    let started = stage.decide_system(Direction::Down, &SystemFrame::SpeechStarted);
+    let started = stage.decide_data(&DataFrame::SpeechStarted);
     assert_eq!(summarize(&started.effects), vec!["begin 16000/1", "feed 12"]);
 
     // A mid-speech interrupt resets the in-speech state cleanly: audio that
@@ -257,7 +264,7 @@ fn interrupt_cancels_resets_and_keeps_the_ring() {
     let idle_again = stage.decide_data(&audio(16_000, 1, 7));
     assert_eq!(idle_again.disposition, Disposition::Drop);
     assert!(idle_again.effects.is_empty(), "after interrupt the stage is idle: audio goes to the ring");
-    let restarted = stage.decide_system(Direction::Down, &SystemFrame::SpeechStarted);
+    let restarted = stage.decide_data(&DataFrame::SpeechStarted);
     assert_eq!(summarize(&restarted.effects), vec!["begin 16000/1", "feed 7"], "clean restart");
 }
 
@@ -321,10 +328,12 @@ fn barge_in_drops_the_in_flight_feed_and_cancels() {
         let feed = async move {
             let _park_tx = park_tx; // keep the feed parked until the interrupt drops it
             let _ = input.send_system(Direction::Down, SystemFrame::Start).await;
-            // Cold start, then one live chunk whose feed opens the utterance and
-            // then parks.
-            let _ = input.send_system(Direction::Down, SystemFrame::SpeechStarted).await;
+            // A pre-roll chunk, then the edge — both on the data lane, so the run
+            // loop processes them in order: the chunk lands in the ring, then
+            // SpeechStarted drains it and emits `[Begin, Feed(4)]`. That first feed
+            // parks.
             let _ = input.send_data(audio(16_000, 1, 4)).await;
+            let _ = input.send_data(DataFrame::SpeechStarted).await;
             // Wait until that feed is actually in flight before barging in, so the
             // interrupt lands on a parked perform rather than racing ahead of it.
             assert_eq!(notes_rx.next().await, Some(Note::FeedStarted));
