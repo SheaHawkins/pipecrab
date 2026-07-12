@@ -7,6 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# An adapter: bridges cpal (an external engine/device) to the pipecrab-audio
+# traits. May depend on trait/facade/runtime/core; nothing in engine/ may
+# depend back on it.
+[package.metadata.pipecrab]
+layer = "adapter"
+
 [dependencies]
 pipecrab-audio = { workspace = true }
 cpal           = "0.15"

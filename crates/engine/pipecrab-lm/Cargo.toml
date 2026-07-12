@@ -9,6 +9,9 @@ repository.workspace = true
 # The crate is `-lm`, not `-llm`; carry "llm" as a keyword for discoverability.
 keywords = ["llm", "language-model", "conversation", "ai"]
 
+[package.metadata.pipecrab]
+layer = "trait"
+
 [dependencies]
 pipecrab-core    = { workspace = true }
 pipecrab-runtime = { workspace = true }
