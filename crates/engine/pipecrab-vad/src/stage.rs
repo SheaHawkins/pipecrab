@@ -6,7 +6,9 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Decision, Direction, Processor, SystemFrame};
+use pipecrab_core::{
+    AudioChunk, AudioFormat, DataFrame, Decision, Direction, Processor, SystemFrame,
+};
 use pipecrab_runtime::{Outbound, Stage, StageError};
 
 use crate::{VadError, VadEvent, VoiceActivityDetector};
@@ -76,7 +78,9 @@ pub struct GateConfig {
 
 impl Default for GateConfig {
     fn default() -> Self {
-        Self { preroll: Duration::from_millis(300) }
+        Self {
+            preroll: Duration::from_millis(300),
+        }
     }
 }
 
@@ -116,7 +120,10 @@ struct PrerollRing {
 
 impl PrerollRing {
     fn new(budget: Duration) -> Self {
-        Self { budget, chunks: VecDeque::new() }
+        Self {
+            budget,
+            chunks: VecDeque::new(),
+        }
     }
 
     /// The total buffered duration. Recomputed from the chunks (the ring is
@@ -173,7 +180,10 @@ impl<V: VoiceActivityDetector> VadStage<V> {
         Self {
             detector,
             expected,
-            gate: Mutex::new(Gate { mode: Mode::Idle, ring: PrerollRing::new(config.preroll) }),
+            gate: Mutex::new(Gate {
+                mode: Mode::Idle,
+                ring: PrerollRing::new(config.preroll),
+            }),
         }
     }
 }
@@ -332,22 +342,34 @@ mod tests {
     use std::sync::Arc;
 
     fn chunk(sample_rate: u32, channels: u16, samples: usize) -> AudioChunk {
-        AudioChunk::new(Arc::from(vec![0.0f32; samples]), AudioFormat::new(sample_rate, channels))
+        AudioChunk::new(
+            Arc::from(vec![0.0f32; samples]),
+            AudioFormat::new(sample_rate, channels),
+        )
     }
 
     #[test]
     fn chunk_duration_is_frames_over_sample_rate() {
         // 16 000 mono samples at 16 kHz is exactly one second.
-        assert_eq!(chunk_duration(&chunk(16_000, 1, 16_000)), Duration::from_secs(1));
+        assert_eq!(
+            chunk_duration(&chunk(16_000, 1, 16_000)),
+            Duration::from_secs(1)
+        );
         // 1 kHz mono makes one sample == one millisecond.
-        assert_eq!(chunk_duration(&chunk(1_000, 1, 250)), Duration::from_millis(250));
+        assert_eq!(
+            chunk_duration(&chunk(1_000, 1, 250)),
+            Duration::from_millis(250)
+        );
     }
 
     #[test]
     fn chunk_duration_counts_interleaved_frames_not_samples() {
         // Stereo: 480 interleaved samples is 240 frames, so 240/48k = 5 ms — half
         // what a naive samples/rate would give.
-        assert_eq!(chunk_duration(&chunk(48_000, 2, 480)), Duration::from_millis(5));
+        assert_eq!(
+            chunk_duration(&chunk(48_000, 2, 480)),
+            Duration::from_millis(5)
+        );
     }
 
     #[test]
@@ -369,7 +391,11 @@ mod tests {
             ring.push(chunk(1000, 1, n));
         }
         let survivors: Vec<usize> = ring.take().iter().map(|c| c.samples.len()).collect();
-        assert_eq!(survivors, vec![40, 30], "only the last two chunks survive, in arrival order");
+        assert_eq!(
+            survivors,
+            vec![40, 30],
+            "only the last two chunks survive, in arrival order"
+        );
     }
 
     #[test]
@@ -379,6 +405,10 @@ mod tests {
         let mut ring = PrerollRing::new(Duration::from_millis(10));
         ring.push(chunk(1000, 1, 500)); // 500 ms >> 10 ms budget
         let survivors: Vec<usize> = ring.take().iter().map(|c| c.samples.len()).collect();
-        assert_eq!(survivors, vec![500], "the most-recent chunk is never evicted");
+        assert_eq!(
+            survivors,
+            vec![500],
+            "the most-recent chunk is never evicted"
+        );
     }
 }

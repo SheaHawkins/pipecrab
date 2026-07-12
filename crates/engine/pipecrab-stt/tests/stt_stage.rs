@@ -28,11 +28,14 @@ use pipecrab_core::{
 };
 use pipecrab_runtime::{link, PipelineBuilder, Received, Stage};
 use pipecrab_stt::{
-    Buffered, SttEffect, SttError, SttEvent, SttStage, StreamingTranscriber, Transcriber,
+    Buffered, StreamingTranscriber, SttEffect, SttError, SttEvent, SttStage, Transcriber,
 };
 
 /// The format the mocks declare; the stage caches it and enforces it.
-const FMT: AudioFormat = AudioFormat { sample_rate: 16_000, channels: 1 };
+const FMT: AudioFormat = AudioFormat {
+    sample_rate: 16_000,
+    channels: 1,
+};
 
 /// What a [`Mock`] recorded, shared with the test via an `Arc<Mutex<_>>`.
 #[derive(Default)]
@@ -73,12 +76,20 @@ impl Mock {
     /// A mock whose notes go nowhere — for the synchronous decide/perform tests.
     fn silent() -> Self {
         let (notes, _rx) = mpsc::unbounded();
-        Self { log: Arc::new(Mutex::new(Log::default())), notes, park: Mutex::new(None) }
+        Self {
+            log: Arc::new(Mutex::new(Log::default())),
+            notes,
+            park: Mutex::new(None),
+        }
     }
 
     /// A mock that reports milestones on `notes`; `park` gates its first feed.
     fn reporting(notes: mpsc::UnboundedSender<Note>, park: Option<oneshot::Receiver<()>>) -> Self {
-        Self { log: Arc::new(Mutex::new(Log::default())), notes, park: Mutex::new(park) }
+        Self {
+            log: Arc::new(Mutex::new(Log::default())),
+            notes,
+            park: Mutex::new(park),
+        }
     }
 }
 
@@ -109,7 +120,10 @@ impl StreamingTranscriber for Mock {
             log.feeds.iter().sum::<usize>()
         };
         let _ = self.notes.unbounded_send(Note::Fed(n));
-        Ok(vec![SttEvent::Partial { text: format!("partial {total}").into(), stable: 0 }])
+        Ok(vec![SttEvent::Partial {
+            text: format!("partial {total}").into(),
+            stable: 0,
+        }])
     }
 
     async fn end_utterance(&self) -> Result<Vec<SttEvent>, SttError> {
@@ -118,7 +132,9 @@ impl StreamingTranscriber for Mock {
             log.ends += 1;
             log.feeds.iter().sum::<usize>()
         };
-        Ok(vec![SttEvent::Final(format!("heard {total} samples").into())])
+        Ok(vec![SttEvent::Final(
+            format!("heard {total} samples").into(),
+        )])
     }
 
     fn cancel(&self) {
@@ -145,7 +161,10 @@ impl Transcriber for OneShot {
 
 /// An `Audio` data frame of `n` zeroed interleaved samples in the given format.
 fn audio(sample_rate: u32, channels: u16, n: usize) -> DataFrame {
-    let chunk = AudioChunk::new(Arc::from(vec![0.0f32; n]), AudioFormat::new(sample_rate, channels));
+    let chunk = AudioChunk::new(
+        Arc::from(vec![0.0f32; n]),
+        AudioFormat::new(sample_rate, channels),
+    );
     DataFrame::Audio(chunk)
 }
 
@@ -173,18 +192,30 @@ fn happy_path_translates_edges_and_chunks_to_the_utterance_protocol() {
     let mut stage = SttStage::new(Mock::silent());
 
     let started = stage.decide_data(&DataFrame::SpeechStarted);
-    assert_eq!(started.disposition, Disposition::Forward, "the edge is forwarded downstream");
+    assert_eq!(
+        started.disposition,
+        Disposition::Forward,
+        "the edge is forwarded downstream"
+    );
     assert_eq!(summarize(&started.effects), vec!["begin"]);
 
     // Three conforming chunks each feed straight through, unconditionally.
     for n in [10usize, 20, 30] {
         let live = stage.decide_data(&audio(16_000, 1, n));
-        assert_eq!(live.disposition, Disposition::Drop, "consumed audio does not travel on");
+        assert_eq!(
+            live.disposition,
+            Disposition::Drop,
+            "consumed audio does not travel on"
+        );
         assert_eq!(summarize(&live.effects), vec![format!("feed {n}")]);
     }
 
     let stopped = stage.decide_data(&DataFrame::SpeechStopped);
-    assert_eq!(stopped.disposition, Disposition::Forward, "the edge is forwarded downstream");
+    assert_eq!(
+        stopped.disposition,
+        Disposition::Forward,
+        "the edge is forwarded downstream"
+    );
     assert_eq!(summarize(&stopped.effects), vec!["end"]);
 }
 
@@ -217,9 +248,17 @@ fn nonconforming_chunk_cancels_and_emits_reject() {
     let mut stage = SttStage::new(mock);
 
     let rejected = stage.decide_data(&audio(48_000, 2, 8));
-    assert_eq!(rejected.disposition, Disposition::Drop, "the nonconforming chunk is consumed");
+    assert_eq!(
+        rejected.disposition,
+        Disposition::Drop,
+        "the nonconforming chunk is consumed"
+    );
     assert_eq!(summarize(&rejected.effects), vec!["reject 48000/2"]);
-    assert_eq!(log.lock().unwrap().cancels, 1, "the engine is cancelled before the reject");
+    assert_eq!(
+        log.lock().unwrap().cancels,
+        1,
+        "the engine is cancelled before the reject"
+    );
 }
 
 #[test]
@@ -233,7 +272,10 @@ fn interrupt_cancels_unconditionally() {
     // harmless no-op.
     let idle = stage.decide_system(Direction::Down, &SystemFrame::Interrupt);
     assert_eq!(idle.disposition, Disposition::Forward);
-    assert!(idle.effects.is_empty(), "interrupt cancels via a control-call, not an effect");
+    assert!(
+        idle.effects.is_empty(),
+        "interrupt cancels via a control-call, not an effect"
+    );
     assert_eq!(log.lock().unwrap().cancels, 1);
 
     // Mid-utterance (after a begin): the same unconditional cancel.
@@ -241,7 +283,11 @@ fn interrupt_cancels_unconditionally() {
     let mid = stage.decide_system(Direction::Down, &SystemFrame::Interrupt);
     assert_eq!(mid.disposition, Disposition::Forward);
     assert!(mid.effects.is_empty());
-    assert_eq!(log.lock().unwrap().cancels, 2, "cancel is unconditional, idle or mid-utterance");
+    assert_eq!(
+        log.lock().unwrap().cancels,
+        2,
+        "cancel is unconditional, idle or mid-utterance"
+    );
 }
 
 #[test]
@@ -267,7 +313,11 @@ fn events_map_to_user_transcripts() {
 
         // feed's Partial -> user_partial; end's Final -> user_final. Begin emits
         // nothing downstream.
-        assert_eq!(transcripts.len(), 2, "one partial from feed, one final from end");
+        assert_eq!(
+            transcripts.len(),
+            2,
+            "one partial from feed, one final from end"
+        );
         let partial = &transcripts[0];
         assert_eq!(partial.role, Role::User);
         assert_eq!(partial.finality, Finality::Partial { stable: 0 });
@@ -285,7 +335,10 @@ fn first_nonconforming_chunk_completes_with_a_fatal_error() {
         // The engine declares 16 kHz mono; the very first chunk is 48 kHz stereo.
         let mock = Mock::silent();
         let log = mock.log.clone();
-        let (ends, driver) = PipelineBuilder::new().stage(SttStage::new(mock)).build().start();
+        let (ends, driver) = PipelineBuilder::new()
+            .stage(SttStage::new(mock))
+            .build()
+            .start();
         let input = ends.input;
         let mut output = ends.output;
 
@@ -297,7 +350,8 @@ fn first_nonconforming_chunk_completes_with_a_fatal_error() {
         let drain = async move {
             let mut error = None;
             while let Some(received) = output.recv().await {
-                if let Received::Sys(Direction::Up, SystemFrame::Error { message, fatal }) = received
+                if let Received::Sys(Direction::Up, SystemFrame::Error { message, fatal }) =
+                    received
                 {
                     error = Some((message, fatal));
                 }
@@ -307,9 +361,19 @@ fn first_nonconforming_chunk_completes_with_a_fatal_error() {
 
         let (_, error, _) = futures::join!(feed, drain, driver);
         let (message, fatal) = error.expect("a format mismatch should surface an Error frame");
-        assert!(fatal, "a format mismatch is fatal: the stage can never conform the audio");
-        assert!(message.contains("SttStage requires"), "unexpected message: {message}");
-        assert_eq!(log.lock().unwrap().cancels, 1, "the engine was cancelled before the reject");
+        assert!(
+            fatal,
+            "a format mismatch is fatal: the stage can never conform the audio"
+        );
+        assert!(
+            message.contains("SttStage requires"),
+            "unexpected message: {message}"
+        );
+        assert_eq!(
+            log.lock().unwrap().cancels,
+            1,
+            "the engine was cancelled before the reject"
+        );
     });
 }
 
@@ -321,7 +385,10 @@ fn mismatch_mid_utterance_cancels_and_tears_down_fatally() {
         // mid-utterance.
         let mock = Mock::silent();
         let log = mock.log.clone();
-        let (ends, driver) = PipelineBuilder::new().stage(SttStage::new(mock)).build().start();
+        let (ends, driver) = PipelineBuilder::new()
+            .stage(SttStage::new(mock))
+            .build()
+            .start();
         let input = ends.input;
         let mut output = ends.output;
 
@@ -335,7 +402,8 @@ fn mismatch_mid_utterance_cancels_and_tears_down_fatally() {
         let drain = async move {
             let mut error = None;
             while let Some(received) = output.recv().await {
-                if let Received::Sys(Direction::Up, SystemFrame::Error { message, fatal }) = received
+                if let Received::Sys(Direction::Up, SystemFrame::Error { message, fatal }) =
+                    received
                 {
                     error = Some((message, fatal));
                 }
@@ -344,9 +412,13 @@ fn mismatch_mid_utterance_cancels_and_tears_down_fatally() {
         };
 
         let (_, error, _) = futures::join!(feed, drain, driver);
-        let (message, fatal) = error.expect("a mid-utterance mismatch should surface an Error frame");
+        let (message, fatal) =
+            error.expect("a mid-utterance mismatch should surface an Error frame");
         assert!(fatal, "a format mismatch is fatal wherever it arrives");
-        assert!(message.contains("SttStage requires"), "unexpected message: {message}");
+        assert!(
+            message.contains("SttStage requires"),
+            "unexpected message: {message}"
+        );
         let log = log.lock().unwrap();
         assert_eq!(log.begins, 1, "the utterance opened before the mismatch");
         assert_eq!(log.cancels, 1, "the mismatch cancelled the open utterance");
@@ -374,7 +446,8 @@ fn audio_before_speech_started_surfaces_a_recoverable_engine_error() {
         let drain = async move {
             let mut error = None;
             while let Some(received) = output.recv().await {
-                if let Received::Sys(Direction::Up, SystemFrame::Error { message, fatal }) = received
+                if let Received::Sys(Direction::Up, SystemFrame::Error { message, fatal }) =
+                    received
                 {
                     error = Some((message, fatal));
                 }
@@ -415,7 +488,8 @@ fn duplicate_speech_started_surfaces_a_recoverable_engine_error() {
         let drain = async move {
             let mut error = None;
             while let Some(received) = output.recv().await {
-                if let Received::Sys(Direction::Up, SystemFrame::Error { message, fatal }) = received
+                if let Received::Sys(Direction::Up, SystemFrame::Error { message, fatal }) =
+                    received
                 {
                     error = Some((message, fatal));
                 }
@@ -426,7 +500,10 @@ fn duplicate_speech_started_surfaces_a_recoverable_engine_error() {
         let (_, error, _) = futures::join!(feed, drain, driver);
         let (message, fatal) = error.expect("a duplicate begin should surface an Error frame");
         assert!(!fatal, "a protocol violation is recoverable, not fatal");
-        assert!(message.contains("already active"), "unexpected message: {message}");
+        assert!(
+            message.contains("already active"),
+            "unexpected message: {message}"
+        );
     });
 }
 
@@ -459,7 +536,9 @@ fn barge_in_drops_the_in_flight_feed_and_cancels() {
             // Wait until that feed is actually in flight before barging in, so the
             // interrupt lands on a parked perform rather than racing ahead of it.
             assert_eq!(notes_rx.next().await, Some(Note::FeedStarted));
-            let _ = input.send_system(Direction::Down, SystemFrame::Interrupt).await;
+            let _ = input
+                .send_system(Direction::Down, SystemFrame::Interrupt)
+                .await;
             // Returning drops `input`, cascading shutdown through the pipeline.
         };
 
@@ -478,9 +557,15 @@ fn barge_in_drops_the_in_flight_feed_and_cancels() {
         let (_, finals, _) = futures::join!(feed, drain, driver);
 
         let log = log.lock().unwrap();
-        assert_eq!(log.cancels, 1, "the barge-in flipped the engine's cancel flag once");
+        assert_eq!(
+            log.cancels, 1,
+            "the barge-in flipped the engine's cancel flag once"
+        );
         assert_eq!(log.begins, 1, "the utterance opened before the feed parked");
-        assert!(log.feeds.is_empty(), "the feed was dropped before it recorded anything");
+        assert!(
+            log.feeds.is_empty(),
+            "the feed was dropped before it recorded anything"
+        );
         assert_eq!(log.ends, 0, "a cancelled utterance is never ended");
         assert_eq!(finals, 0, "the dropped feed produced no transcript");
     });

@@ -41,9 +41,14 @@ impl CpalSource {
         // The interface is `Send` but a `cpal::Stream` is not, so build and park the
         // stream on its own thread, keeping only the `Send` ring end here.
         let config = config.clone();
-        let ((ring, name), thread) =
-            crate::stream::spawn_stream(move || build_capture(&config).map(|(s, r, n)| (s, (r, n))))?;
-        Ok(Self { name, ring, _thread: thread })
+        let ((ring, name), thread) = crate::stream::spawn_stream(move || {
+            build_capture(&config).map(|(s, r, n)| (s, (r, n)))
+        })?;
+        Ok(Self {
+            name,
+            ring,
+            _thread: thread,
+        })
     }
 
     /// The name of the input device audio is being captured from.
@@ -98,23 +103,47 @@ fn build_capture(config: &CpalConfig) -> Result<(cpal::Stream, CaptureRing, Stri
     // Only one match arm runs, so moving `producer`/the Arcs into each is fine.
     let stream = match sample_format {
         SampleFormat::F32 => build_capture_stream::<f32>(
-            &device, &stream_config, producer, signal.clone(), overruns.clone(), channels,
+            &device,
+            &stream_config,
+            producer,
+            signal.clone(),
+            overruns.clone(),
+            channels,
         ),
         SampleFormat::I16 => build_capture_stream::<i16>(
-            &device, &stream_config, producer, signal.clone(), overruns.clone(), channels,
+            &device,
+            &stream_config,
+            producer,
+            signal.clone(),
+            overruns.clone(),
+            channels,
         ),
         SampleFormat::U16 => build_capture_stream::<u16>(
-            &device, &stream_config, producer, signal.clone(), overruns.clone(), channels,
+            &device,
+            &stream_config,
+            producer,
+            signal.clone(),
+            overruns.clone(),
+            channels,
         ),
         other => {
-            return Err(AudioError::Device(format!("unsupported input sample format: {other:?}")))
+            return Err(AudioError::Device(format!(
+                "unsupported input sample format: {other:?}"
+            )))
         }
     }
     .map_err(|e| AudioError::Device(format!("build input stream: {e}")))?;
-    stream.play().map_err(|e| AudioError::Device(format!("start input stream: {e}")))?;
+    stream
+        .play()
+        .map_err(|e| AudioError::Device(format!("start input stream: {e}")))?;
 
-    let ring =
-        CaptureRing::new(consumer, signal, overruns, chunk_frames, AudioFormat::new(sample_rate, 1));
+    let ring = CaptureRing::new(
+        consumer,
+        signal,
+        overruns,
+        chunk_frames,
+        AudioFormat::new(sample_rate, 1),
+    );
     Ok((stream, ring, name))
 }
 
@@ -129,7 +158,10 @@ pub fn input_device_names() -> Result<Vec<String>, AudioError> {
 }
 
 /// Resolve a [`DeviceSelection`] against the host's input devices.
-fn find_input_device(host: &cpal::Host, selection: &DeviceSelection) -> Result<cpal::Device, AudioError> {
+fn find_input_device(
+    host: &cpal::Host,
+    selection: &DeviceSelection,
+) -> Result<cpal::Device, AudioError> {
     match selection {
         DeviceSelection::Default => host
             .default_input_device()
@@ -175,8 +207,12 @@ where
 /// count samples dropped when the ring is full (an overrun the async side
 /// observes via [`CpalSource::overruns`]). This is the one cpal-coupled piece of
 /// the capture path; the ring itself ([`crate::bridge`]) is backend-agnostic.
-fn capture_write<T>(data: &[T], channels: usize, producer: &mut Producer<f32>, overruns: &AtomicUsize)
-where
+fn capture_write<T>(
+    data: &[T],
+    channels: usize,
+    producer: &mut Producer<f32>,
+    overruns: &AtomicUsize,
+) where
     T: Sample,
     f32: FromSample<T>,
 {
@@ -205,6 +241,10 @@ mod tests {
         // 10 mono frames (channels = 1); only 4 fit, so 6 must overrun.
         capture_write(&[0.0f32; 10], 1, &mut producer, &overruns);
 
-        assert_eq!(overruns.load(Ordering::Relaxed), 6, "6 dropped on a 4-slot ring");
+        assert_eq!(
+            overruns.load(Ordering::Relaxed),
+            6,
+            "6 dropped on a 4-slot ring"
+        );
     }
 }

@@ -10,8 +10,8 @@
 //! mechanism (the receiver was dropped, and `decide_system(Interrupt)` ran).
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use async_trait::async_trait;
 use futures::channel::{mpsc, oneshot};
@@ -52,7 +52,12 @@ impl Processor for BlockingStage {
 impl Stage for BlockingStage {
     async fn perform(&self, _effect: (), _out: &Outbound) -> Result<(), StageError> {
         let _ = self.started.clone().send(()).await;
-        let rx = self.block_rx.lock().unwrap().take().expect("perform runs once");
+        let rx = self
+            .block_rx
+            .lock()
+            .unwrap()
+            .take()
+            .expect("perform runs once");
         let _ = rx.await; // never fires; the receiver drops when perform is abandoned
         Ok(())
     }
@@ -75,15 +80,24 @@ fn interrupt_abandons_perform_and_runs_decide_system() {
         let _output = ends.output; // keep the tail's output channel open
 
         let feeder = async move {
-            input.send_data(Transcript::user_final("go").into()).await.unwrap();
+            input
+                .send_data(Transcript::user_final("go").into())
+                .await
+                .unwrap();
             started_rx.next().await.expect("perform must start");
-            input.send_system(Direction::Down, SystemFrame::Interrupt).await.unwrap();
+            input
+                .send_system(Direction::Down, SystemFrame::Interrupt)
+                .await
+                .unwrap();
             // Returning drops `input` -> head inbound closes -> the driver exits.
         };
 
         join(feeder, driver).await;
 
-        assert!(interrupted.load(Ordering::SeqCst), "decide_system(Interrupt) must have run");
+        assert!(
+            interrupted.load(Ordering::SeqCst),
+            "decide_system(Interrupt) must have run"
+        );
         assert!(
             block_tx.is_canceled(),
             "the in-flight perform must have been dropped (its receiver gone)",
@@ -139,9 +153,15 @@ fn sys_preempts_backed_up_data() {
 
         // Back up the data lane, then enqueue a (non-flushing) Start behind it.
         for i in 0..8 {
-            input.send_data(Transcript::user_final(i.to_string()).into()).await.unwrap();
+            input
+                .send_data(Transcript::user_final(i.to_string()).into())
+                .await
+                .unwrap();
         }
-        input.send_system(Direction::Down, SystemFrame::Start).await.unwrap();
+        input
+            .send_system(Direction::Down, SystemFrame::Start)
+            .await
+            .unwrap();
         drop(input);
 
         driver.await;
@@ -151,7 +171,11 @@ fn sys_preempts_backed_up_data() {
             Some(0),
             "the Start frame must jump the 8-frame data backlog",
         );
-        assert_eq!(data_count.load(Ordering::SeqCst), 8, "all backed-up data is still processed afterward");
+        assert_eq!(
+            data_count.load(Ordering::SeqCst),
+            8,
+            "all backed-up data is still processed afterward"
+        );
     });
 }
 
@@ -180,7 +204,10 @@ fn pass_through_forwards_data() {
         let mut output = ends.output;
 
         let feeder = async move {
-            input.send_data(Transcript::user_final("hi").into()).await.unwrap();
+            input
+                .send_data(Transcript::user_final("hi").into())
+                .await
+                .unwrap();
             // Dropping `input` at block end closes the head -> shutdown.
         };
 
@@ -196,7 +223,11 @@ fn pass_through_forwards_data() {
 // --- Test 4: an Interrupt flushes the data backlog, keeping transport-audio.
 
 fn input_audio(id: u8) -> DataFrame {
-    DataFrame::InputAudio { bytes: Arc::from(&[id][..]), sample_rate: 16_000, num_channels: 1 }
+    DataFrame::InputAudio {
+        bytes: Arc::from(&[id][..]),
+        sample_rate: 16_000,
+        num_channels: 1,
+    }
 }
 
 #[test]
@@ -212,11 +243,17 @@ fn interrupt_flushes_data_keeping_survivors_in_order() {
         // then an Interrupt behind it — sys-biased recv handles it first, while
         // the whole backlog is still queued.
         input.send_data(input_audio(1)).await.unwrap();
-        input.send_data(Transcript::user_final("drop me").into()).await.unwrap();
+        input
+            .send_data(Transcript::user_final("drop me").into())
+            .await
+            .unwrap();
         input.send_data(input_audio(2)).await.unwrap();
         let audio = AudioChunk::new(Arc::from(&[0.0f32, 0.0][..]), AudioFormat::new(48_000, 1));
         input.send_data(DataFrame::Audio(audio)).await.unwrap();
-        input.send_system(Direction::Down, SystemFrame::Interrupt).await.unwrap();
+        input
+            .send_system(Direction::Down, SystemFrame::Interrupt)
+            .await
+            .unwrap();
         drop(input);
 
         driver.await;
@@ -229,7 +266,11 @@ fn interrupt_flushes_data_keeping_survivors_in_order() {
                 other => panic!("a non-survivor leaked past the flush: {other:?}"),
             }
         }
-        assert_eq!(ids, vec![1, 2], "survivors kept in order; droppable frames flushed");
+        assert_eq!(
+            ids,
+            vec![1, 2],
+            "survivors kept in order; droppable frames flushed"
+        );
     });
 }
 
@@ -241,13 +282,19 @@ fn nested_pipeline_forwards_through_both_levels() {
         // Inner pipeline is a single pass-through; nest it inside an outer one
         // that also has a pass-through. A frame must traverse both levels.
         let inner = PipelineBuilder::new().stage(PassThrough).build();
-        let (ends, driver) =
-            PipelineBuilder::new().stage(inner).stage(PassThrough).build().start();
+        let (ends, driver) = PipelineBuilder::new()
+            .stage(inner)
+            .stage(PassThrough)
+            .build()
+            .start();
         let input = ends.input;
         let mut output = ends.output;
 
         let feeder = async move {
-            input.send_data(Transcript::user_final("deep").into()).await.unwrap();
+            input
+                .send_data(Transcript::user_final("deep").into())
+                .await
+                .unwrap();
         };
 
         join(feeder, driver).await;

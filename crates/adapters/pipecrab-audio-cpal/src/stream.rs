@@ -68,9 +68,13 @@ where
         .map_err(|e| AudioError::Device(format!("spawn audio thread: {e}")))?;
 
     match setup_rx.recv() {
-        Ok(Ok(handles)) => {
-            Ok((handles, StreamThread { shutdown: Some(shutdown_tx), handle: Some(handle) }))
-        }
+        Ok(Ok(handles)) => Ok((
+            handles,
+            StreamThread {
+                shutdown: Some(shutdown_tx),
+                handle: Some(handle),
+            },
+        )),
         Ok(Err(e)) => {
             let _ = handle.join();
             Err(e)
@@ -79,7 +83,9 @@ where
         // device error rather than leaving the caller to hang.
         Err(_) => {
             let _ = handle.join();
-            Err(AudioError::Device("audio thread exited before setup".into()))
+            Err(AudioError::Device(
+                "audio thread exited before setup".into(),
+            ))
         }
     }
 }

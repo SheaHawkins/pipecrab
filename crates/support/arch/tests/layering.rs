@@ -58,9 +58,7 @@ fn declared_layer(pkg: &Package) -> Option<&str> {
 
 #[test]
 fn layering() {
-    let metadata = MetadataCommand::new()
-        .exec()
-        .expect("run `cargo metadata`");
+    let metadata = MetadataCommand::new().exec().expect("run `cargo metadata`");
 
     let workspace: HashSet<_> = metadata.workspace_members.iter().cloned().collect();
     let members: Vec<&Package> = metadata
@@ -94,8 +92,7 @@ fn layering() {
     // Pass 2 — downward-only: no dependency may point to an equal-or-higher
     // layer. Only workspace members are ranked; external crates and the exempt
     // `support` layer are skipped as both source and target.
-    let by_name: HashMap<&str, &Package> =
-        members.iter().map(|p| (p.name.as_str(), *p)).collect();
+    let by_name: HashMap<&str, &Package> = members.iter().map(|p| (p.name.as_str(), *p)).collect();
 
     for pkg in &members {
         let Some(from) = layer_of.get(pkg.name.as_str()).and_then(|l| rank(l)) else {

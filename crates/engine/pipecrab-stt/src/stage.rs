@@ -7,7 +7,7 @@ use pipecrab_core::{
 };
 use pipecrab_runtime::{Outbound, Stage, StageError};
 
-use crate::{SttError, SttEvent, StreamingTranscriber};
+use crate::{StreamingTranscriber, SttError, SttEvent};
 
 /// Adapts any [`StreamingTranscriber`] into a pipeline [`Stage`] as a **stateless
 /// protocol adapter**.
@@ -37,7 +37,7 @@ use crate::{SttError, SttEvent, StreamingTranscriber};
 ///
 /// Following the [`Processor`]/[`Stage`] split, `decide_*` is synchronous and
 /// `perform` drives the awaited engine calls. Here `decide_data` touches **no**
-/// mutable state — the `&mut self` goes unused. The engine itself is a 
+/// mutable state — the `&mut self` goes unused. The engine itself is a
 //  worker-handle (see [`StreamingTranscriber`]), so a barge-in that
 /// drops an in-flight [`feed`](StreamingTranscriber::feed) leaves no torn state,
 /// and the [`Interrupt`](SystemFrame::Interrupt) cancel is a *control call*
@@ -53,7 +53,10 @@ impl<S: StreamingTranscriber> SttStage<S> {
     /// Wrap `transcriber` as a stage, caching the format it declares.
     pub fn new(transcriber: S) -> Self {
         let expected = transcriber.input_format();
-        Self { transcriber, expected }
+        Self {
+            transcriber,
+            expected,
+        }
     }
 }
 

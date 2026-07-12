@@ -38,17 +38,26 @@ pub struct Message {
 impl Message {
     /// A [`System`](ChatRole::System) message — the framing prompt.
     pub fn system(content: impl Into<Arc<str>>) -> Self {
-        Self { role: ChatRole::System, content: content.into() }
+        Self {
+            role: ChatRole::System,
+            content: content.into(),
+        }
     }
 
     /// A [`User`](ChatRole::User) message.
     pub fn user(content: impl Into<Arc<str>>) -> Self {
-        Self { role: ChatRole::User, content: content.into() }
+        Self {
+            role: ChatRole::User,
+            content: content.into(),
+        }
     }
 
     /// An [`Assistant`](ChatRole::Assistant) message — a generated reply.
     pub fn assistant(content: impl Into<Arc<str>>) -> Self {
-        Self { role: ChatRole::Assistant, content: content.into() }
+        Self {
+            role: ChatRole::Assistant,
+            content: content.into(),
+        }
     }
 }
 
