@@ -19,49 +19,46 @@ use pipecrab_runtime::MaybeSendSync;
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait Transcriber: MaybeSendSync {
-    /// Transcribe `samples` (interleaved `f32` PCM in `format`) to text.
+    /// The one format this engine accepts. The stage caches it and enforces it
+    /// *before* feeding — see the crate-level [format authority](crate) note.
+    /// Sync and infallible: it is known at construction, so it is callable from
+    /// a stage's `decide_*` under the control-call carve-out.
+    fn input_format(&self) -> AudioFormat;
+
+    /// Transcribe `samples` (interleaved `f32` PCM) to text.
+    ///
+    /// Samples are interpreted as [`input_format()`](Self::input_format): a bare
+    /// `&[f32]` carries no sample rate, so no runtime detection is possible.
+    /// Feeding a mismatch is a wiring bug the stage rejects fatally before a
+    /// sample reaches here, so this method never has to.
     ///
     /// Takes `&self`: like every
     /// [`Stage::perform`](pipecrab_runtime::Stage::perform), transcription must
     /// not mutate observable state, so the run loop can drop an in-flight call on
     /// a barge-in interrupt without tearing anything.
-    ///
-    /// An impl that accepts only one format (say, 16 kHz mono) should
-    /// reject a mismatch with [`SttError::UnsupportedFormat`] rather than
-    /// resample — resampling belongs to a separate stage.
-    async fn transcribe(&self, samples: &[f32], format: AudioFormat) -> Result<String, SttError>;
+    async fn transcribe(&self, samples: &[f32]) -> Result<String, SttError>;
 }
 
 /// Why a [`Transcriber::transcribe`] call failed.
 ///
 /// Mirrors the message-plus-kind shape of the pipeline's other error types so
 /// the conversion at the stage boundary
-/// (`impl From<SttError> for StageError`) is direct.
+/// (`impl From<SttError> for StageError`) is direct. There is deliberately no
+/// format-mismatch variant: samples are interpreted as
+/// [`input_format()`](Transcriber::input_format) and the stage enforces that
+/// format fatally, so an engine never sees nonconforming audio to reject.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SttError {
     /// The transcription engine itself failed — an inference error, a worker
     /// that crashed, a model that never loaded. Carries a human-readable
     /// description.
     Engine(String),
-    /// The transcriber requires a specific input format and got another. It does
-    /// not resample: feed it audio in the format it expects.
-    UnsupportedFormat {
-        /// The format this transcriber accepts (e.g. 16 kHz mono).
-        expected: AudioFormat,
-        /// The format of the rejected samples.
-        got: AudioFormat,
-    },
 }
 
 impl std::fmt::Display for SttError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SttError::Engine(msg) => write!(f, "stt engine error: {msg}"),
-            SttError::UnsupportedFormat { expected, got } => write!(
-                f,
-                "stt format mismatch: transcriber expects {} Hz/{} ch, got {} Hz/{} ch",
-                expected.sample_rate, expected.channels, got.sample_rate, got.channels,
-            ),
         }
     }
 }

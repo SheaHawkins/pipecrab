@@ -18,13 +18,12 @@
 //!   the pipeline knowing the difference.
 //!
 //! [`SttStage`] adapts a [`StreamingTranscriber`] into a pipeline
-//! [`Stage`](pipecrab_runtime::Stage). It is gated by the VAD's
-//! [`SpeechStarted`](pipecrab_core::DataFrame::SpeechStarted) /
-//! [`SpeechStopped`](pipecrab_core::DataFrame::SpeechStopped) edges — which ride
-//! the data lane, in order with the audio — rather than transcribing one
-//! utterance per audio frame, and owns a pre-roll ring so an utterance's onset —
-//! the audio that precedes the `SpeechStarted` edge — is not clipped. A one-shot
-//! [`Transcriber`] plugs in through [`Buffered`].
+//! [`Stage`](pipecrab_runtime::Stage) as a **stateless protocol adapter**.
+//!
+//! # Format authority
+//!
+//! Format authority flows from the party that *knows* the requirement, not from
+//! whatever the wire happens to carry. Stages reject fatally mismatched formats.
 //!
 //! Platform-neutral and `wasm32`-checkable: the concrete engines live elsewhere
 //! (native `ort`, browser Transformers.js in a Web Worker), each behind these
@@ -37,6 +36,6 @@ mod stage;
 mod streaming;
 mod transcriber;
 
-pub use stage::{SttConfig, SttEffect, SttStage};
+pub use stage::{SttEffect, SttStage};
 pub use streaming::{Buffered, SttEvent, StreamingTranscriber};
 pub use transcriber::{SttError, Transcriber};
