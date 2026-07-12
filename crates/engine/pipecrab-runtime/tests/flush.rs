@@ -6,24 +6,37 @@ use futures::channel::mpsc;
 use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Direction, SystemFrame, Transcript};
 use pipecrab_runtime::Inbound;
 
-fn lanes() -> (mpsc::Sender<(Direction, SystemFrame)>, mpsc::Sender<DataFrame>, Inbound) {
+fn lanes() -> (
+    mpsc::Sender<(Direction, SystemFrame)>,
+    mpsc::Sender<DataFrame>,
+    Inbound,
+) {
     let (sys_tx, sys) = mpsc::channel(16);
     let (data_tx, data) = mpsc::channel(16);
     (sys_tx, data_tx, Inbound { sys, data })
 }
 
 fn input_audio() -> DataFrame {
-    DataFrame::InputAudio { bytes: Arc::from(&[0u8; 4][..]), sample_rate: 16_000, num_channels: 1 }
+    DataFrame::InputAudio {
+        bytes: Arc::from(&[0u8; 4][..]),
+        sample_rate: 16_000,
+        num_channels: 1,
+    }
 }
 
 fn audio() -> DataFrame {
-    DataFrame::Audio(AudioChunk::new(Arc::from(&[0.0f32][..]), AudioFormat::new(48_000, 1)))
+    DataFrame::Audio(AudioChunk::new(
+        Arc::from(&[0.0f32][..]),
+        AudioFormat::new(48_000, 1),
+    ))
 }
 
 #[test]
 fn flush_selective_drops_unmarked_keeps_input_audio_in_order() {
     let (_, mut data_tx, mut inb) = lanes();
-    data_tx.try_send(Transcript::user_final("A").into()).unwrap();
+    data_tx
+        .try_send(Transcript::user_final("A").into())
+        .unwrap();
     data_tx.try_send(input_audio()).unwrap(); // IN1
     data_tx.try_send(audio()).unwrap(); // B
     data_tx.try_send(input_audio()).unwrap(); // IN2
@@ -43,8 +56,12 @@ fn flush_empty_lane_returns_empty() {
 #[test]
 fn flush_all_unmarked_returns_empty() {
     let (_, mut data_tx, mut inb) = lanes();
-    data_tx.try_send(Transcript::user_final("x").into()).unwrap();
-    data_tx.try_send(Transcript::user_final("y").into()).unwrap();
+    data_tx
+        .try_send(Transcript::user_final("x").into())
+        .unwrap();
+    data_tx
+        .try_send(Transcript::user_final("y").into())
+        .unwrap();
     assert!(inb.flush_data().is_empty());
 }
 
@@ -56,21 +73,30 @@ fn flush_all_marked_returns_all_in_order() {
     data_tx.try_send(input_audio()).unwrap();
     let kept = inb.flush_data();
     assert_eq!(kept.len(), 3);
-    assert!(kept.iter().all(|f| matches!(f, DataFrame::InputAudio { .. })));
+    assert!(kept
+        .iter()
+        .all(|f| matches!(f, DataFrame::InputAudio { .. })));
 }
 
 #[test]
 fn flush_does_not_touch_sys_lane() {
     let (mut sys_tx, mut data_tx, mut inb) = lanes();
-    sys_tx.try_send((Direction::Down, SystemFrame::Interrupt)).unwrap();
-    data_tx.try_send(Transcript::user_final("drop me").into()).unwrap();
+    sys_tx
+        .try_send((Direction::Down, SystemFrame::Interrupt))
+        .unwrap();
+    data_tx
+        .try_send(Transcript::user_final("drop me").into())
+        .unwrap();
 
     let kept = inb.flush_data();
     assert!(kept.is_empty());
     // `futures`' Receiver has no `len()`; prove the lane is untouched by
     // pulling the frame back out — it must still be the buffered Interrupt.
     assert!(
-        matches!(inb.sys.try_recv(), Ok((Direction::Down, SystemFrame::Interrupt))),
+        matches!(
+            inb.sys.try_recv(),
+            Ok((Direction::Down, SystemFrame::Interrupt))
+        ),
         "sys lane must be untouched by flush_data",
     );
 }

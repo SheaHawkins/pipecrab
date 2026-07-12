@@ -31,7 +31,11 @@ struct MockDetector {
 
 impl MockDetector {
     fn new(script: Vec<Vec<VadEvent>>, format: AudioFormat) -> Self {
-        Self { script: Mutex::new(script.into_iter().collect()), format, resets: Arc::default() }
+        Self {
+            script: Mutex::new(script.into_iter().collect()),
+            format,
+            resets: Arc::default(),
+        }
     }
 }
 
@@ -61,7 +65,10 @@ enum Seen {
     Audio(usize),
 }
 
-const FMT: AudioFormat = AudioFormat { sample_rate: 16_000, channels: 1 };
+const FMT: AudioFormat = AudioFormat {
+    sample_rate: 16_000,
+    channels: 1,
+};
 
 fn audio(n: usize) -> DataFrame {
     DataFrame::Audio(AudioChunk::new(Arc::from(vec![0.0f32; n]), FMT))
@@ -79,8 +86,10 @@ fn run_gate(
     block_on(async {
         let detector = MockDetector::new(script, FMT);
         let resets = detector.resets.clone();
-        let (ends, driver) =
-            PipelineBuilder::new().stage(VadStage::with_config(detector, config)).build().start();
+        let (ends, driver) = PipelineBuilder::new()
+            .stage(VadStage::with_config(detector, config))
+            .build()
+            .start();
         let input = ends.input;
         let mut output = ends.output;
 
@@ -113,7 +122,9 @@ fn run_gate(
 
 fn big_preroll() -> GateConfig {
     // A budget large enough that eviction never fires in these ordering tests.
-    GateConfig { preroll: std::time::Duration::from_secs(10) }
+    GateConfig {
+        preroll: std::time::Duration::from_secs(10),
+    }
 }
 
 #[test]
@@ -134,7 +145,12 @@ fn onset_emits_edge_then_ring_in_arrival_order_then_trigger() {
     let (seen, _) = run_gate(big_preroll(), script, vec![10, 20, 30]);
     assert_eq!(
         seen,
-        vec![Seen::Started, Seen::Audio(10), Seen::Audio(20), Seen::Audio(30)],
+        vec![
+            Seen::Started,
+            Seen::Audio(10),
+            Seen::Audio(20),
+            Seen::Audio(30)
+        ],
         "onset: edge -> ring (arrival order) -> trigger chunk",
     );
 }
@@ -147,7 +163,12 @@ fn live_speech_passes_through() {
     let (seen, _) = run_gate(big_preroll(), script, vec![5, 6, 7]);
     assert_eq!(
         seen,
-        vec![Seen::Started, Seen::Audio(5), Seen::Audio(6), Seen::Audio(7)],
+        vec![
+            Seen::Started,
+            Seen::Audio(5),
+            Seen::Audio(6),
+            Seen::Audio(7)
+        ],
         "live speech: the trigger chunk then each live chunk pass through",
     );
 }
@@ -156,11 +177,21 @@ fn live_speech_passes_through() {
 fn close_emits_tail_chunk_then_edge() {
     // Onset, a live chunk, then a chunk that closes: the closing chunk is the
     // utterance's tail and must precede the SpeechStopped edge.
-    let script = vec![vec![VadEvent::SpeechStarted], vec![], vec![VadEvent::SpeechStopped]];
+    let script = vec![
+        vec![VadEvent::SpeechStarted],
+        vec![],
+        vec![VadEvent::SpeechStopped],
+    ];
     let (seen, _) = run_gate(big_preroll(), script, vec![5, 6, 7]);
     assert_eq!(
         seen,
-        vec![Seen::Started, Seen::Audio(5), Seen::Audio(6), Seen::Audio(7), Seen::Stopped],
+        vec![
+            Seen::Started,
+            Seen::Audio(5),
+            Seen::Audio(6),
+            Seen::Audio(7),
+            Seen::Stopped
+        ],
         "close: tail chunk -> SpeechStopped",
     );
 }
@@ -185,16 +216,26 @@ fn preroll_evicts_keeping_most_recent_before_onset() {
     // Feed 20, 50, 40, 30 while idle, then trigger on the fifth chunk. Eviction
     // leaves the ring holding 40 then 30 (see the unit test); onset replays those
     // in arrival order ahead of the trigger.
-    let config = GateConfig { preroll: std::time::Duration::from_millis(100) };
-    let script = vec![vec![], vec![], vec![], vec![], vec![VadEvent::SpeechStarted]];
+    let config = GateConfig {
+        preroll: std::time::Duration::from_millis(100),
+    };
+    let script = vec![
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![VadEvent::SpeechStarted],
+    ];
 
     // These chunks are 1 kHz mono, unlike the 16 kHz `audio()` helper, so drive a
     // bespoke pipeline here.
     let seen = block_on(async {
         let one_khz = AudioFormat::new(1_000, 1);
         let detector = MockDetector::new(script, one_khz);
-        let (ends, driver) =
-            PipelineBuilder::new().stage(VadStage::with_config(detector, config)).build().start();
+        let (ends, driver) = PipelineBuilder::new()
+            .stage(VadStage::with_config(detector, config))
+            .build()
+            .start();
         let input = ends.input;
         let mut output = ends.output;
         let feed = async move {
@@ -220,7 +261,12 @@ fn preroll_evicts_keeping_most_recent_before_onset() {
     });
     assert_eq!(
         seen,
-        vec![Seen::Started, Seen::Audio(40), Seen::Audio(30), Seen::Audio(15)],
+        vec![
+            Seen::Started,
+            Seen::Audio(40),
+            Seen::Audio(30),
+            Seen::Audio(15)
+        ],
         "evicted ring (40,30) replayed in arrival order, then the trigger chunk (15)",
     );
 }
@@ -252,7 +298,10 @@ fn format_mismatch_completes_with_a_fatal_error() {
     block_on(async {
         // Detector accepts 16 kHz mono; feed 48 kHz stereo.
         let detector = MockDetector::new(vec![], AudioFormat::new(16_000, 1));
-        let (ends, driver) = PipelineBuilder::new().stage(VadStage::new(detector)).build().start();
+        let (ends, driver) = PipelineBuilder::new()
+            .stage(VadStage::new(detector))
+            .build()
+            .start();
         let input = ends.input;
         let mut output = ends.output;
 
@@ -265,7 +314,8 @@ fn format_mismatch_completes_with_a_fatal_error() {
         let drain = async move {
             let mut error = None;
             while let Some(received) = output.recv().await {
-                if let Received::Sys(Direction::Up, SystemFrame::Error { message, fatal }) = received
+                if let Received::Sys(Direction::Up, SystemFrame::Error { message, fatal }) =
+                    received
                 {
                     error = Some((message, fatal));
                 }
@@ -275,8 +325,14 @@ fn format_mismatch_completes_with_a_fatal_error() {
 
         let (_, error, _) = futures::join!(feed, drain, driver);
         let (message, fatal) = error.expect("a format mismatch should surface an Error frame");
-        assert!(fatal, "a format mismatch is fatal: the gate can never conform the audio");
-        assert!(message.contains("VadStage requires"), "unexpected message: {message}");
+        assert!(
+            fatal,
+            "a format mismatch is fatal: the gate can never conform the audio"
+        );
+        assert!(
+            message.contains("VadStage requires"),
+            "unexpected message: {message}"
+        );
     });
 }
 
@@ -313,8 +369,15 @@ fn interrupt_resets_the_gate_and_the_detector() {
 
         // Interrupt: forwards, emits no effects, clears the ring, resets the detector.
         let interrupt = stage.decide_system(Direction::Down, &SystemFrame::Interrupt);
-        assert!(interrupt.effects.is_empty(), "interrupt resets via control-call, not an effect");
-        assert_eq!(*resets.lock().unwrap(), 1, "the interrupt fired the detector's reset control-call");
+        assert!(
+            interrupt.effects.is_empty(),
+            "interrupt resets via control-call, not an effect"
+        );
+        assert_eq!(
+            *resets.lock().unwrap(),
+            1,
+            "the interrupt fired the detector's reset control-call"
+        );
 
         // Post-reset: one fresh idle chunk, then the onset chunk.
         drive_data(&mut stage, audio(13), &out).await;

@@ -33,7 +33,10 @@ pub(crate) struct Signal {
 
 impl Signal {
     pub(crate) fn new() -> Arc<Self> {
-        Arc::new(Self { waker: AtomicWaker::new(), closed: AtomicBool::new(false) })
+        Arc::new(Self {
+            waker: AtomicWaker::new(),
+            closed: AtomicBool::new(false),
+        })
     }
 
     /// Async side: arm the waker to be notified of the next `wake`/`fail`.
@@ -76,7 +79,13 @@ impl CaptureRing {
         chunk_frames: usize,
         format: AudioFormat,
     ) -> Self {
-        Self { consumer, signal, overruns, chunk_frames, format }
+        Self {
+            consumer,
+            signal,
+            overruns,
+            chunk_frames,
+            format,
+        }
     }
 
     pub(crate) fn format(&self) -> AudioFormat {
@@ -98,7 +107,10 @@ impl CaptureRing {
 
     /// `Ready(Ok(Some))` once a whole chunk is buffered, `Ready(Err(Closed))` if
     /// the stream has failed, else `Pending` with the waker armed.
-    fn poll_next_chunk(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<AudioChunk>, AudioError>> {
+    fn poll_next_chunk(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Option<AudioChunk>, AudioError>> {
         if self.consumer.slots() >= self.chunk_frames {
             return Poll::Ready(Ok(Some(self.collect())));
         }
@@ -138,7 +150,11 @@ pub(crate) struct PlaybackRing {
 
 impl PlaybackRing {
     pub(crate) fn new(producer: Producer<f32>, signal: Arc<Signal>, format: AudioFormat) -> Self {
-        Self { producer, signal, format }
+        Self {
+            producer,
+            signal,
+            format,
+        }
     }
 
     pub(crate) fn format(&self) -> AudioFormat {
@@ -150,7 +166,10 @@ impl PlaybackRing {
         // playing a chunk in the wrong rate/channel count would be a silent
         // pitch/speed bug. The caller must resample to the sink's format first.
         if chunk.format != self.format {
-            return Err(AudioError::FormatMismatch { expected: self.format, got: chunk.format });
+            return Err(AudioError::FormatMismatch {
+                expected: self.format,
+                got: chunk.format,
+            });
         }
         let samples = chunk.samples;
         let mut offset = 0usize;
@@ -160,7 +179,12 @@ impl PlaybackRing {
     /// Push `samples[*offset..]` into the ring; `Ready(Ok)` once all are in,
     /// `Ready(Err(Closed))` if the stream failed, else `Pending` (backpressure)
     /// with the waker armed for the output callback's next drain.
-    fn poll_push(&mut self, samples: &[f32], offset: &mut usize, cx: &mut Context<'_>) -> Poll<Result<(), AudioError>> {
+    fn poll_push(
+        &mut self,
+        samples: &[f32],
+        offset: &mut usize,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), AudioError>> {
         if self.signal.is_closed() {
             return Poll::Ready(Err(AudioError::Closed));
         }
@@ -215,7 +239,10 @@ mod tests {
         }
     }
 
-    const FMT: AudioFormat = AudioFormat { sample_rate: 48_000, channels: 1 };
+    const FMT: AudioFormat = AudioFormat {
+        sample_rate: 48_000,
+        channels: 1,
+    };
 
     // #1 (capture): a stream error must wake a parked `next_chunk`, and the next
     // poll must resolve to an error rather than hang.
@@ -236,7 +263,11 @@ mod tests {
 
         // Simulate the cpal error callback.
         signal.fail();
-        assert_eq!(cw.count(), 1, "a stream error must wake the parked next_chunk");
+        assert_eq!(
+            cw.count(),
+            1,
+            "a stream error must wake the parked next_chunk"
+        );
 
         assert!(matches!(
             ring.poll_next_chunk(&mut cx),
@@ -259,7 +290,10 @@ mod tests {
         let mut cx = Context::from_waker(&w);
 
         // Pushes 2, then parks on a full ring with the waker armed.
-        assert!(matches!(ring.poll_push(&samples, &mut offset, &mut cx), Poll::Pending));
+        assert!(matches!(
+            ring.poll_push(&samples, &mut offset, &mut cx),
+            Poll::Pending
+        ));
         assert_eq!(offset, 2);
 
         signal.fail();
@@ -282,7 +316,10 @@ mod tests {
         let wrong = AudioChunk::new(Arc::from(&[0.0f32; 4][..]), wrong_fmt);
         assert_eq!(
             block_on(ring.play(wrong)),
-            Err(AudioError::FormatMismatch { expected: FMT, got: wrong_fmt }),
+            Err(AudioError::FormatMismatch {
+                expected: FMT,
+                got: wrong_fmt
+            }),
         );
 
         // Matching format is accepted (fits comfortably in the ring).

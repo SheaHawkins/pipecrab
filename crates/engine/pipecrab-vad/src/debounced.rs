@@ -48,7 +48,11 @@ pub struct DebounceConfig {
 impl Default for DebounceConfig {
     fn default() -> Self {
         // React to onset immediately; ride out short gaps before closing.
-        Self { threshold: 0.5, start_windows: 1, stop_windows: 8 }
+        Self {
+            threshold: 0.5,
+            start_windows: 1,
+            stop_windows: 8,
+        }
     }
 }
 
@@ -70,13 +74,21 @@ impl ObserveState {
             return None;
         }
         self.against += 1;
-        let needed = if self.in_speech { config.stop_windows } else { config.start_windows };
+        let needed = if self.in_speech {
+            config.stop_windows
+        } else {
+            config.start_windows
+        };
         if self.against < needed {
             return None;
         }
         self.in_speech = is_speech;
         self.against = 0;
-        Some(if is_speech { VadEvent::SpeechStarted } else { VadEvent::SpeechStopped })
+        Some(if is_speech {
+            VadEvent::SpeechStarted
+        } else {
+            VadEvent::SpeechStopped
+        })
     }
 
     fn reset(&mut self) {
@@ -116,7 +128,10 @@ impl<S: SpeechScorer> Debounced<S> {
             config,
             state: Mutex::new(DebouncedState {
                 remainder: Vec::new(),
-                observe: ObserveState { in_speech: false, against: 0 },
+                observe: ObserveState {
+                    in_speech: false,
+                    against: 0,
+                },
             }),
         }
     }

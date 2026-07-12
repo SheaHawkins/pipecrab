@@ -129,7 +129,11 @@ impl<T: Transcriber> Buffered<T> {
     pub fn new(transcriber: T) -> Self {
         Self {
             inner: transcriber,
-            state: Mutex::new(BufferedState { active: false, buffer: Vec::new(), generation: 0 }),
+            state: Mutex::new(BufferedState {
+                active: false,
+                buffer: Vec::new(),
+                generation: 0,
+            }),
         }
     }
 }

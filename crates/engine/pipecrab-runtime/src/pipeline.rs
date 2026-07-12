@@ -57,7 +57,16 @@ pub fn link(capacity: usize) -> (Outbound, Inbound) {
     let capacity = capacity.max(1);
     let (data_tx, data_rx) = mpsc::channel::<DataFrame>(capacity);
     let (sys_tx, sys_rx) = mpsc::channel::<(Direction, SystemFrame)>(capacity);
-    (Outbound { data: data_tx, sys: sys_tx }, Inbound { sys: sys_rx, data: data_rx })
+    (
+        Outbound {
+            data: data_tx,
+            sys: sys_tx,
+        },
+        Inbound {
+            sys: sys_rx,
+            data: data_rx,
+        },
+    )
 }
 
 /// The external endpoints of a running [`Pipeline`]: send in via `input`, read
@@ -115,7 +124,10 @@ pub struct PipelineBuilder {
 impl PipelineBuilder {
     /// A new, empty builder with the default lane capacity.
     pub fn new() -> Self {
-        Self { stages: Vec::new(), capacity: DEFAULT_CAPACITY }
+        Self {
+            stages: Vec::new(),
+            capacity: DEFAULT_CAPACITY,
+        }
     }
 
     /// Override the per-lane buffer depth — how many frames may queue on a lane
@@ -148,8 +160,14 @@ impl PipelineBuilder {
     ///
     /// Panics if no stages were added — a pipeline needs at least one stage.
     pub fn build(self) -> Pipeline {
-        assert!(!self.stages.is_empty(), "a pipeline needs at least one stage");
-        Pipeline { stages: self.stages, capacity: self.capacity }
+        assert!(
+            !self.stages.is_empty(),
+            "a pipeline needs at least one stage"
+        );
+        Pipeline {
+            stages: self.stages,
+            capacity: self.capacity,
+        }
     }
 }
 

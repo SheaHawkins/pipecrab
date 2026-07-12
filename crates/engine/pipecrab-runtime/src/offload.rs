@@ -34,7 +34,8 @@ where
     std::thread::spawn(move || {
         let _ = tx.send(f());
     });
-    rx.await.expect("offload worker panicked or was dropped before sending a result")
+    rx.await
+        .expect("offload worker panicked or was dropped before sending a result")
 }
 
 /// wasm stub: offloading to a Web Worker is not yet implemented.

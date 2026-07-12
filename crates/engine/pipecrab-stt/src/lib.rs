@@ -37,5 +37,5 @@ mod streaming;
 mod transcriber;
 
 pub use stage::{SttEffect, SttStage};
-pub use streaming::{Buffered, SttEvent, StreamingTranscriber};
+pub use streaming::{Buffered, StreamingTranscriber, SttEvent};
 pub use transcriber::{SttError, Transcriber};

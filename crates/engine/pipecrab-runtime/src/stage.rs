@@ -45,18 +45,28 @@ pub struct StageError {
 impl StageError {
     /// A recoverable error: the pipeline may keep running.
     pub fn new(message: impl Into<Arc<str>>) -> Self {
-        Self { message: message.into(), fatal: false }
+        Self {
+            message: message.into(),
+            fatal: false,
+        }
     }
 
     /// An unrecoverable error: the pipeline should shut down.
     pub fn fatal(message: impl Into<Arc<str>>) -> Self {
-        Self { message: message.into(), fatal: true }
+        Self {
+            message: message.into(),
+            fatal: true,
+        }
     }
 }
 
 impl fmt::Display for StageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let kind = if self.fatal { "fatal stage error" } else { "stage error" };
+        let kind = if self.fatal {
+            "fatal stage error"
+        } else {
+            "stage error"
+        };
         write!(f, "{kind}: {}", self.message)
     }
 }
@@ -273,6 +283,12 @@ where
 /// follow-up.
 async fn emit_error(out: &Outbound, e: StageError) {
     let _ = out
-        .send_system(Direction::Up, SystemFrame::Error { message: e.message, fatal: e.fatal })
+        .send_system(
+            Direction::Up,
+            SystemFrame::Error {
+                message: e.message,
+                fatal: e.fatal,
+            },
+        )
         .await;
 }

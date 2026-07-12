@@ -5,7 +5,9 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use futures::stream::StreamExt;
-use pipecrab_core::{DataFrame, Decision, Direction, Finality, Processor, Role, SystemFrame, Transcript};
+use pipecrab_core::{
+    DataFrame, Decision, Direction, Finality, Processor, Role, SystemFrame, Transcript,
+};
 use pipecrab_runtime::{Outbound, Stage, StageError};
 
 use crate::{Conversation, GenParams, LanguageModel, LmError, Message, TokenOut};
@@ -69,8 +71,14 @@ impl<M: LanguageModel> LmStage<M> {
         system_prompt: impl Into<std::sync::Arc<str>>,
         params: GenParams,
     ) -> Self {
-        let convo = Conversation { messages: vec![Message::system(system_prompt)] };
-        Self { model, params, convo: Mutex::new(convo) }
+        let convo = Conversation {
+            messages: vec![Message::system(system_prompt)],
+        };
+        Self {
+            model,
+            params,
+            convo: Mutex::new(convo),
+        }
     }
 }
 
@@ -101,9 +109,11 @@ impl<M: LanguageModel> Processor for LmStage<M> {
             // An in-progress user transcript is not yet actionable in v1 — consume
             // it. Speculative prefill will hook here to warm the KV cache
             // from the partial before the final arrives.
-            DataFrame::Transcript(Transcript { role: Role::User, finality: Finality::Partial { .. }, .. }) => {
-                Decision::drop()
-            }
+            DataFrame::Transcript(Transcript {
+                role: Role::User,
+                finality: Finality::Partial { .. },
+                ..
+            }) => Decision::drop(),
             // Agent transcripts (our own output looping back), audio, custom
             // frames: not ours to consume.
             _ => Decision::forward(),
@@ -127,7 +137,12 @@ impl<M: LanguageModel> Stage for LmStage<M> {
     async fn perform(&self, _effect: Generate, out: &Outbound) -> Result<(), StageError> {
         // Snapshot the conversation under the lock, then release it before the
         // awaited generation — the guard must not cross an `.await`.
-        let convo = { self.convo.lock().expect("LmStage conversation mutex poisoned").clone() };
+        let convo = {
+            self.convo
+                .lock()
+                .expect("LmStage conversation mutex poisoned")
+                .clone()
+        };
 
         let mut stream = self.model.generate(&convo, &self.params).await?;
         let mut reply = String::new();
@@ -147,7 +162,9 @@ impl<M: LanguageModel> Stage for LmStage<M> {
             // during shutdown, matching the runtime's own forward path.
             let _ = out.send_data(partial.into()).await;
         }
-        let _ = out.send_data(Transcript::agent_final(reply.clone()).into()).await;
+        let _ = out
+            .send_data(Transcript::agent_final(reply.clone()).into())
+            .await;
 
         // Record the assistant turn now — the Mutex-after-await idiom. This runs
         // synchronously after the final send's await resolves (no await between),

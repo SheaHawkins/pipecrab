@@ -13,7 +13,10 @@ use pipecrab_tts::SentenceChunker;
 /// Collect the text of every agent-final transcript the chunker emits for a
 /// scripted sequence of input frames, closing the pipeline afterward.
 async fn run(inputs: Vec<DataFrame>) -> Vec<String> {
-    let (ends, driver) = PipelineBuilder::new().stage(SentenceChunker::new()).build().start();
+    let (ends, driver) = PipelineBuilder::new()
+        .stage(SentenceChunker::new())
+        .build()
+        .start();
     let input = ends.input;
     let mut output = ends.output;
 
@@ -30,7 +33,11 @@ async fn run(inputs: Vec<DataFrame>) -> Vec<String> {
         while let Some(received) = output.recv().await {
             if let Received::Data(DataFrame::Transcript(t)) = received {
                 assert_eq!(t.role, Role::Agent, "the chunker only emits agent speech");
-                assert_eq!(t.finality, Finality::Final, "each emitted sentence is final");
+                assert_eq!(
+                    t.finality,
+                    Finality::Final,
+                    "each emitted sentence is final"
+                );
                 sentences.push(t.text.to_string());
             }
         }
@@ -68,7 +75,10 @@ fn emits_a_sentence_as_soon_as_it_completes() {
 fn final_flushes_the_trailing_remainder_without_punctuation() {
     // A generation that ends mid-thought: the tail past the last boundary is
     // flushed as a final sentence even though it has no terminator.
-    let sentences = block_on(run(vec![partial("Hello world. And"), agent_final("Hello world. And more")]));
+    let sentences = block_on(run(vec![
+        partial("Hello world. And"),
+        agent_final("Hello world. And more"),
+    ]));
     assert_eq!(sentences, vec!["Hello world.", "And more"]);
 }
 
@@ -76,7 +86,11 @@ fn final_flushes_the_trailing_remainder_without_punctuation() {
 fn does_not_split_mid_number_or_mid_token() {
     // "3." with no following whitespace is not a boundary; the whole thing is
     // one sentence flushed at the final.
-    let sentences = block_on(run(vec![partial("pi is 3."), partial("pi is 3.14"), agent_final("pi is 3.14")]));
+    let sentences = block_on(run(vec![
+        partial("pi is 3."),
+        partial("pi is 3.14"),
+        agent_final("pi is 3.14"),
+    ]));
     assert_eq!(sentences, vec!["pi is 3.14"]);
 }
 
@@ -96,13 +110,18 @@ fn does_not_split_after_an_abbreviation() {
 fn forwards_non_agent_frames_untouched() {
     // A user transcript is not the chunker's to touch: it forwards unchanged and
     // keeps its user/final identity.
-    let (ends, driver) = PipelineBuilder::new().stage(SentenceChunker::new()).build().start();
+    let (ends, driver) = PipelineBuilder::new()
+        .stage(SentenceChunker::new())
+        .build()
+        .start();
     let input = ends.input;
     let mut output = ends.output;
 
     block_on(async {
         let feed = async move {
-            let _ = input.send_data(Transcript::user_final("a question").into()).await;
+            let _ = input
+                .send_data(Transcript::user_final("a question").into())
+                .await;
         };
         let drain = async move {
             let mut got = None;
@@ -122,13 +141,18 @@ fn forwards_non_agent_frames_untouched() {
 fn interrupt_forwards_through_the_chunker() {
     // The chunker owns no engine, so an Interrupt just resets its offset and
     // forwards downstream — it must not be dropped or panic.
-    let (ends, driver) = PipelineBuilder::new().stage(SentenceChunker::new()).build().start();
+    let (ends, driver) = PipelineBuilder::new()
+        .stage(SentenceChunker::new())
+        .build()
+        .start();
     let input = ends.input;
     let mut output = ends.output;
 
     block_on(async {
         let feed = async move {
-            let _ = input.send_system(Direction::Down, SystemFrame::Interrupt).await;
+            let _ = input
+                .send_system(Direction::Down, SystemFrame::Interrupt)
+                .await;
         };
         let drain = async move {
             let mut saw_interrupt = false;
@@ -140,6 +164,9 @@ fn interrupt_forwards_through_the_chunker() {
             saw_interrupt
         };
         let (_, saw_interrupt, _) = futures::join!(feed, drain, driver);
-        assert!(saw_interrupt, "the chunker forwards the Interrupt downstream");
+        assert!(
+            saw_interrupt,
+            "the chunker forwards the Interrupt downstream"
+        );
     });
 }
