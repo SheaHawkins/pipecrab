@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[package.metadata.pipecrab]
+layer = "trait"
+
 [dependencies]
 pipecrab-core    = { workspace = true }
 pipecrab-runtime = { workspace = true }

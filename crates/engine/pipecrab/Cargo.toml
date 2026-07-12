@@ -7,6 +7,11 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# The umbrella facade: re-exports core + runtime. Sits at the same rank as the
+# trait crates (may depend on core/runtime, nothing may depend back on it).
+[package.metadata.pipecrab]
+layer = "facade"
+
 [dependencies]
 pipecrab-core = { workspace = true }
 pipecrab-runtime = { workspace = true }

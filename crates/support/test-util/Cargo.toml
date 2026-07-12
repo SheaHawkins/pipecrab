@@ -1,0 +1,12 @@
+[package]
+name = "pipecrab-test-util"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# Dev-only tooling: exempt from the layering order, but still declared so the
+# `layering` gate can fail closed on any unlabeled crate.
+[package.metadata.pipecrab]
+layer = "support"

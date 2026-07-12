@@ -7,6 +7,11 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+# A top-level consumer (like an end-user app): sits above adapters and may
+# depend on anything.
+[package.metadata.pipecrab]
+layer = "app"
+
 [dependencies]
 pipecrab           = { workspace = true }
 pipecrab-audio     = { workspace = true }

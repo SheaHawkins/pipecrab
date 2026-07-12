@@ -1,17 +1,18 @@
 [workspace]
 resolver = "2"
+# Crates are grouped by architectural role, not flattened. The grouping is
+# cosmetic to Cargo (deps resolve by name), but it makes the layering visible
+# and is enforced by the `layering` test in crates/support/arch:
+#   engine/   — the pipecrab framework; depends only downward (core < runtime
+#               < trait crates < facade).
+#   adapters/ — bridges an external engine or device to a capability trait
+#               (e.g. cpal, or a future sherpa-onnx model crate).
+#   support/  — dev-only tooling; never published, never a production dep.
 members = [
-    "crates/pipecrab-core",
-    "crates/pipecrab-runtime",
-    "crates/pipecrab",
-    "crates/pipecrab-audio",
-    "crates/pipecrab-audio-cpal",
-    "crates/pipecrab-lm",
-    "crates/pipecrab-stt",
-    "crates/pipecrab-tts",
-    "crates/pipecrab-vad",
-    "crates/test-util",
-    "examples/echo",
+    "crates/engine/*",
+    "crates/adapters/*",
+    "crates/support/*",
+    "examples/*",
 ]
 
 [workspace.package]
@@ -25,14 +26,14 @@ repository = "https://github.com/SheaHawkins/pipecrab"
 # Internal path deps carry a `version` alongside the `path`: the `path` drives
 # local workspace builds, and `cargo publish` rewrites each into a plain
 # crates.io `version` dependency. A path-only dep would block publishing.
-pipecrab            = { path = "crates/pipecrab", version = "0.2.0" }
-pipecrab-core       = { path = "crates/pipecrab-core", version = "0.2.0" }
-pipecrab-runtime    = { path = "crates/pipecrab-runtime", version = "0.2.0" }
-pipecrab-audio      = { path = "crates/pipecrab-audio", version = "0.2.0" }
-pipecrab-audio-cpal = { path = "crates/pipecrab-audio-cpal", version = "0.2.0" }
-pipecrab-lm         = { path = "crates/pipecrab-lm", version = "0.2.0" }
-pipecrab-stt        = { path = "crates/pipecrab-stt", version = "0.2.0" }
-pipecrab-tts        = { path = "crates/pipecrab-tts", version = "0.2.0" }
-pipecrab-vad        = { path = "crates/pipecrab-vad", version = "0.2.0" }
+pipecrab            = { path = "crates/engine/pipecrab", version = "0.2.0" }
+pipecrab-core       = { path = "crates/engine/pipecrab-core", version = "0.2.0" }
+pipecrab-runtime    = { path = "crates/engine/pipecrab-runtime", version = "0.2.0" }
+pipecrab-audio      = { path = "crates/engine/pipecrab-audio", version = "0.2.0" }
+pipecrab-audio-cpal = { path = "crates/adapters/pipecrab-audio-cpal", version = "0.2.0" }
+pipecrab-lm         = { path = "crates/engine/pipecrab-lm", version = "0.2.0" }
+pipecrab-stt        = { path = "crates/engine/pipecrab-stt", version = "0.2.0" }
+pipecrab-tts        = { path = "crates/engine/pipecrab-tts", version = "0.2.0" }
+pipecrab-vad        = { path = "crates/engine/pipecrab-vad", version = "0.2.0" }
 # Dev-only; `publish = false`, so it never needs a version.
-pipecrab-test-util  = { path = "crates/test-util" }
+pipecrab-test-util  = { path = "crates/support/test-util" }

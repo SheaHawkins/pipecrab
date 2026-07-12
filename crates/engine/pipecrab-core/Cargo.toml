@@ -7,6 +7,11 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# Architectural layer for the `layering` gate (crates/support/arch). A package
+# may depend only on strictly lower layers: core < runtime < {trait, facade}.
+[package.metadata.pipecrab]
+layer = "core"
+
 [dependencies]
 
 [dev-dependencies]

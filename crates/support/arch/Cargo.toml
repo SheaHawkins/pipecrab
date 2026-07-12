@@ -1,0 +1,15 @@
+[package]
+name = "pipecrab-arch"
+description = "Architecture tests for the pipecrab workspace (layering gate). Not published."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# This crate is itself dev-only tooling, so it carries no production rank.
+[package.metadata.pipecrab]
+layer = "support"
+
+[dev-dependencies]
+cargo_metadata = "0.18"

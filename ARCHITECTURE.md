@@ -10,7 +10,21 @@ We differ from pipecat in a few ways:
 
 ## Crates
 
-Dependencies point downward only — backend → trait crate → core.
+Crates are grouped by role under `crates/`, and dependencies point downward
+only — adapter → trait crate → runtime → core:
+
+- `crates/engine/*` — the pipecrab framework (core, runtime, the facade, and
+  the capability trait crates).
+- `crates/adapters/*` — crates that bridge an external *engine* (a model
+  runtime like sherpa-onnx) or a device (cpal) to a capability trait.
+- `crates/support/*` — dev-only tooling; never published (`pipecrab-arch`
+  holds the layering gate; `pipecrab-test-util` holds shared test helpers).
+
+The folder grouping is cosmetic to Cargo — it resolves deps by name — so the
+downward-only rule is enforced, not merely suggested, by the `layering` test in
+`crates/support/arch` (see "Layering gate" below). Note "engine" is overloaded:
+the `engine/` **folder** is the framework, whereas an "engine" in prose is the
+external model runtime an adapter wraps.
 
 - `pipecrab-core` — sans-IO: frames, `Processor`, `Decision`. No async, no I/O.
 - `pipecrab-runtime` — async orchestration: `Stage`, `Pipeline`, `Inbound`/`Outbound`, `offload`. No executor baked in.
@@ -19,7 +33,35 @@ Dependencies point downward only — backend → trait crate → core.
 - `pipecrab-audio-cpal` — cpal backend behind those traits.
 - `pipecrab-stt` — `Transcriber` trait + `SttStage` adapter.
 - `pipecrab-vad` — two-tier VAD: the `VoiceActivityDetector` trait (audio in, speech edges out) that `VadStage` gates on, plus the `SpeechScorer` raw-model tier and the `Debounced` adapter that lifts a scorer into a detector. See "VAD gate" below.
-- `pipecrab-stt-sherpa`, `pipecrab-vad-sherpa` — engine crates: implements the corresponding traits using the engine specified (`sherpa-onnx`)
+- `pipecrab-stt-sherpa`, `pipecrab-vad-sherpa` — adapter crates: implement the corresponding traits by wrapping an external engine (`sherpa-onnx`). These live under `crates/adapters/` alongside `pipecrab-audio-cpal`.
+
+## Layering gate
+
+The dependency direction above is an enforced invariant, not a convention.
+Every crate declares its layer in its own manifest:
+
+```toml
+[package.metadata.pipecrab]
+layer = "runtime"   # core < runtime < {trait, facade} < adapter < app
+```
+
+`crates/support/arch/tests/layering.rs` reads the resolved package graph
+(`cargo metadata`) and fails `cargo test --workspace` if any crate's normal or
+build dependency points to an equal-or-higher layer. Two properties make it
+low-maintenance:
+
+- **Layer is declared, not inferred from the folder.** Moving a crate between
+  folders changes nothing; the manifest is the source of truth, so the fine
+  ordering (core < runtime < trait) survives the coarse two-folder split.
+- **It fails closed.** A workspace member with no declared layer is an error, so
+  a new crate can't slip through unlabeled — it forces a one-line decision at
+  creation. `support` is a valid layer that opts a dev-only crate out of the
+  ordering.
+
+Dev-dependencies are exempt (a test may reach for anything). The acyclic
+guarantee Cargo already provides is a partial backstop — an engine crate
+depending on an adapter that routes back to it is a hard cycle error — but the
+gate covers the acyclic cases Cargo permits.
 
 ## Crating strategy
 
