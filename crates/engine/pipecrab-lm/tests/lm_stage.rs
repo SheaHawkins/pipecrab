@@ -142,8 +142,10 @@ impl LanguageModel for ScriptedLm {
             });
             Ok(stream.boxed())
         } else {
-            let items: Vec<Result<TokenOut, LmError>> =
-                deltas.into_iter().map(|delta| Ok(TokenOut { delta })).collect();
+            let items: Vec<Result<TokenOut, LmError>> = deltas
+                .into_iter()
+                .map(|delta| Ok(TokenOut { delta }))
+                .collect();
             Ok(futures::stream::iter(items).boxed())
         }
     }
@@ -171,8 +173,15 @@ fn user_final(text: &str) -> DataFrame {
 /// Extract the single `Generate` a final user turn must emit, asserting it is
 /// consumed rather than forwarded.
 fn take_generate(d: Decision<Generate>) -> Generate {
-    assert_eq!(d.disposition, Disposition::Drop, "a final user turn is consumed");
-    d.effects.into_iter().next().expect("a final user turn emits one Generate")
+    assert_eq!(
+        d.disposition,
+        Disposition::Drop,
+        "a final user turn is consumed"
+    );
+    d.effects
+        .into_iter()
+        .next()
+        .expect("a final user turn emits one Generate")
 }
 
 /// The role sequence of a recorded conversation.
@@ -211,19 +220,27 @@ fn final_user_transcript_streams_append_only_partials_then_final() {
 
         let (_, agent, _) = futures::join!(feed, drain, driver);
 
-        let (partials, finals): (Vec<_>, Vec<_>) =
-            agent.into_iter().partition(|t| matches!(t.finality, Finality::Partial { .. }));
+        let (partials, finals): (Vec<_>, Vec<_>) = agent
+            .into_iter()
+            .partition(|t| matches!(t.finality, Finality::Partial { .. }));
 
         // Each delta extends the reply, and every partial is fully stable
         // (LM output is append-only: stable == text.len()).
         let texts: Vec<&str> = partials.iter().map(|t| &*t.text).collect();
         assert_eq!(texts, ["Hel", "Hello", "Hello there"]);
         for t in &partials {
-            let Finality::Partial { stable } = t.finality else { unreachable!() };
+            let Finality::Partial { stable } = t.finality else {
+                unreachable!()
+            };
             assert_eq!(stable, t.text.len(), "an LM partial is fully stable");
         }
         for w in texts.windows(2) {
-            assert!(w[1].starts_with(w[0]), "partial {:?} must extend {:?}", w[1], w[0]);
+            assert!(
+                w[1].starts_with(w[0]),
+                "partial {:?} must extend {:?}",
+                w[1],
+                w[0]
+            );
         }
 
         // Exactly one final, carrying the whole reply.
@@ -248,8 +265,13 @@ fn barge_in_stops_the_reply_within_one_delta_and_cancels() {
             let _ = input.send_data(user_final("hi")).await;
             // Wait until the first delta is out and the engine has parked, then
             // barge in — the interrupt must land on a parked generation.
-            reached_rx.next().await.expect("the model emits one delta then parks");
-            let _ = input.send_system(Direction::Down, SystemFrame::Interrupt).await;
+            reached_rx
+                .next()
+                .await
+                .expect("the model emits one delta then parks");
+            let _ = input
+                .send_system(Direction::Down, SystemFrame::Interrupt)
+                .await;
             // Returning drops `input`, cascading shutdown through the pipeline.
         };
 
@@ -269,10 +291,20 @@ fn barge_in_stops_the_reply_within_one_delta_and_cancels() {
         };
 
         let (_, (partials, finals), _) = futures::join!(feed, drain, driver);
-        assert_eq!(partials, 1, "only the one delta emitted before the barge-in");
+        assert_eq!(
+            partials, 1,
+            "only the one delta emitted before the barge-in"
+        );
         assert_eq!(finals, 0, "emission stops within one delta: no final");
-        assert_eq!(probe.cancels(), 1, "the barge-in must reach the engine's cancel()");
-        assert!(block_tx.is_canceled(), "the in-flight perform must have been dropped");
+        assert_eq!(
+            probe.cancels(),
+            1,
+            "the barge-in must reach the engine's cancel()"
+        );
+        assert!(
+            block_tx.is_canceled(),
+            "the in-flight perform must have been dropped"
+        );
     });
 }
 
@@ -297,7 +329,12 @@ fn assistant_turn_is_recorded_across_generations() {
         assert_eq!(roles(&seen[0]), [ChatRole::System, ChatRole::User]);
         assert_eq!(
             roles(&seen[1]),
-            [ChatRole::System, ChatRole::User, ChatRole::Assistant, ChatRole::User],
+            [
+                ChatRole::System,
+                ChatRole::User,
+                ChatRole::Assistant,
+                ChatRole::User
+            ],
             "turn 1's reply is recorded before turn 2 generates",
         );
         assert_eq!(&*seen[1].messages[2].content, "sure");
@@ -352,12 +389,19 @@ fn user_partials_are_consumed_and_non_user_frames_forward() {
     // prefill yet.
     let partial = stage.decide_data(&Transcript::user_partial("typ", 0).into());
     assert_eq!(partial.disposition, Disposition::Drop);
-    assert!(partial.effects.is_empty(), "a user partial emits nothing in v1");
+    assert!(
+        partial.effects.is_empty(),
+        "a user partial emits nothing in v1"
+    );
 
     // A final user transcript is consumed and triggers exactly one generation.
     let final_user = stage.decide_data(&user_final("done"));
     assert_eq!(final_user.disposition, Disposition::Drop);
-    assert_eq!(final_user.effects.len(), 1, "a final user turn emits one Generate");
+    assert_eq!(
+        final_user.effects.len(),
+        1,
+        "a final user turn emits one Generate"
+    );
 
     // An agent transcript (our own output looping back) and any other frame pass
     // through untouched.

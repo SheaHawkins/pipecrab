@@ -68,7 +68,10 @@ mod desktop {
 
     impl EchoStage {
         fn new(delay_chunks: usize) -> Self {
-            Self { delay_chunks, backlog: VecDeque::new() }
+            Self {
+                delay_chunks,
+                backlog: VecDeque::new(),
+            }
         }
     }
 
@@ -108,7 +111,10 @@ mod desktop {
     }
 
     pub fn run() -> Result<(), Box<dyn Error>> {
-        let Args { delay_ms, seconds: max_seconds } = parse_args()?;
+        let Args {
+            delay_ms,
+            seconds: max_seconds,
+        } = parse_args()?;
 
         // One config, shared by both ends; defaults to the system default
         // input/output devices with ~20 ms chunks.
@@ -139,14 +145,21 @@ mod desktop {
         let max_chunks = max_seconds.map(|s| (s * 1000 / chunk_ms) as usize);
 
         println!("echo: in  = {} @ {} Hz mono", source.device_name(), rate);
-        println!("echo: out = {} @ {} Hz mono", sink.device_name(), sink.format().sample_rate);
+        println!(
+            "echo: out = {} @ {} Hz mono",
+            sink.device_name(),
+            sink.format().sample_rate
+        );
         println!("echo: {chunk_frames} frames/chunk (~{chunk_ms} ms), delay {delay_ms} ms ({delay_chunks} chunks)");
         match max_chunks {
             Some(_) => println!("echo: running for {} s", max_seconds.unwrap()),
             None => println!("echo: running until Ctrl-C — use headphones!"),
         }
 
-        let (ends, driver) = PipelineBuilder::new().stage(EchoStage::new(delay_chunks)).build().start();
+        let (ends, driver) = PipelineBuilder::new()
+            .stage(EchoStage::new(delay_chunks))
+            .build()
+            .start();
         let input = ends.input;
         let output = ends.output;
 
@@ -219,7 +232,11 @@ mod desktop {
             match arg.as_str() {
                 "--delay-ms" => delay_ms = parse_value(&mut args, "--delay-ms")?,
                 "--seconds" => seconds = Some(parse_value(&mut args, "--seconds")?),
-                other => return Err(format!("unknown argument {other:?} (expected --delay-ms or --seconds)")),
+                other => {
+                    return Err(format!(
+                        "unknown argument {other:?} (expected --delay-ms or --seconds)"
+                    ))
+                }
             }
         }
         Ok(Args { delay_ms, seconds })
@@ -229,6 +246,7 @@ mod desktop {
     /// non-negative integer.
     fn parse_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<u64, String> {
         let raw = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
-        raw.parse().map_err(|_| format!("{flag} expects a non-negative integer, got {raw:?}"))
+        raw.parse()
+            .map_err(|_| format!("{flag} expects a non-negative integer, got {raw:?}"))
     }
 }

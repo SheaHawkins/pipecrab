@@ -49,12 +49,18 @@ pub struct Decision<E> {
 impl<E> Decision<E> {
     /// Forward the input, emit nothing. Allocates nothing.
     pub fn forward() -> Self {
-        Self { disposition: Disposition::Forward, effects: Vec::new() }
+        Self {
+            disposition: Disposition::Forward,
+            effects: Vec::new(),
+        }
     }
 
     /// Drop the input, emit nothing. Allocates nothing.
     pub fn drop() -> Self {
-        Self { disposition: Disposition::Drop, effects: Vec::new() }
+        Self {
+            disposition: Disposition::Drop,
+            effects: Vec::new(),
+        }
     }
 
     /// Append an effect, leaving the disposition unchanged. Chainable.

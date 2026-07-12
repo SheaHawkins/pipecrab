@@ -22,7 +22,10 @@ impl MockSource {
     /// A source that yields each of `chunks` in order (restamped with `format`),
     /// then `None`.
     pub fn new(format: AudioFormat, chunks: impl IntoIterator<Item = Arc<[f32]>>) -> Self {
-        let queue = chunks.into_iter().map(|samples| AudioChunk::new(samples, format)).collect();
+        let queue = chunks
+            .into_iter()
+            .map(|samples| AudioChunk::new(samples, format))
+            .collect();
         Self { format, queue }
     }
 
@@ -35,7 +38,9 @@ impl MockSource {
         let mut queue = VecDeque::with_capacity(chunks);
         for c in 0..chunks {
             let start = (c * chunk_frames) as u32;
-            let samples: Arc<[f32]> = (0..chunk_frames).map(|i| (start + i as u32) as f32).collect();
+            let samples: Arc<[f32]> = (0..chunk_frames)
+                .map(|i| (start + i as u32) as f32)
+                .collect();
             queue.push_back(AudioChunk::new(samples, format));
         }
         Self { format, queue }
@@ -64,7 +69,10 @@ pub struct MockSink {
 impl MockSink {
     /// A sink expecting chunks in `format`, with nothing recorded yet.
     pub fn new(format: AudioFormat) -> Self {
-        Self { format, received: Vec::new() }
+        Self {
+            format,
+            received: Vec::new(),
+        }
     }
 
     /// The chunks played so far, in arrival order.
@@ -74,7 +82,10 @@ impl MockSink {
 
     /// Every received sample, flattened into one buffer in arrival order.
     pub fn samples(&self) -> Vec<f32> {
-        self.received.iter().flat_map(|c| c.samples.iter().copied()).collect()
+        self.received
+            .iter()
+            .flat_map(|c| c.samples.iter().copied())
+            .collect()
     }
 }
 

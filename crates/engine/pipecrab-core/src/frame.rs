@@ -29,7 +29,10 @@ pub struct AudioFormat {
 impl AudioFormat {
     /// Construct a format from a `sample_rate` and `channels` count.
     pub fn new(sample_rate: u32, channels: u16) -> Self {
-        Self { sample_rate, channels }
+        Self {
+            sample_rate,
+            channels,
+        }
     }
 }
 
@@ -166,12 +169,20 @@ impl Transcript {
             text.is_char_boundary(stable),
             "stable byte index {stable} is not on a char boundary of {text:?}"
         );
-        Self { text, role: Role::User, finality: Finality::Partial { stable } }
+        Self {
+            text,
+            role: Role::User,
+            finality: Finality::Partial { stable },
+        }
     }
 
     /// A completed user utterance.
     pub fn user_final(text: impl Into<Arc<str>>) -> Self {
-        Self { text: text.into(), role: Role::User, finality: Finality::Final }
+        Self {
+            text: text.into(),
+            role: Role::User,
+            finality: Finality::Final,
+        }
     }
 
     /// An in-progress agent (LM) transcript. LM output is append-only, so the
@@ -179,12 +190,20 @@ impl Transcript {
     pub fn agent_partial(text: impl Into<Arc<str>>) -> Self {
         let text = text.into();
         let stable = text.len();
-        Self { text, role: Role::Agent, finality: Finality::Partial { stable } }
+        Self {
+            text,
+            role: Role::Agent,
+            finality: Finality::Partial { stable },
+        }
     }
 
     /// A completed agent generation.
     pub fn agent_final(text: impl Into<Arc<str>>) -> Self {
-        Self { text: text.into(), role: Role::Agent, finality: Finality::Final }
+        Self {
+            text: text.into(),
+            role: Role::Agent,
+            finality: Finality::Final,
+        }
     }
 }
 
@@ -299,7 +318,12 @@ mod tests {
         // LM partials are append-only: the whole text is stable.
         let ap = Transcript::agent_partial("hi there");
         assert_eq!(ap.role, Role::Agent);
-        assert_eq!(ap.finality, Finality::Partial { stable: "hi there".len() });
+        assert_eq!(
+            ap.finality,
+            Finality::Partial {
+                stable: "hi there".len()
+            }
+        );
 
         let af = Transcript::agent_final("done");
         assert_eq!(af.role, Role::Agent);

@@ -48,7 +48,10 @@ fn echo_passthrough_preserves_ramp() {
     // Dropping `input` at scope end closes the head and cascades shutdown.
     let pump_in = async move {
         let mut source = source;
-        input.send_system(Direction::Down, SystemFrame::Start).await.unwrap();
+        input
+            .send_system(Direction::Down, SystemFrame::Start)
+            .await
+            .unwrap();
         while let Ok(Some(chunk)) = source.next_chunk().await {
             input.send_data(DataFrame::Audio(chunk)).await.unwrap();
         }
@@ -72,6 +75,14 @@ fn echo_passthrough_preserves_ramp() {
     let (_, _, sink) = block_on(async { futures::join!(driver, pump_in, pump_out) });
 
     let expected: Vec<f32> = (0..total).map(|i| i as f32).collect();
-    assert_eq!(sink.samples(), expected, "passthrough must preserve the ramp exactly");
-    assert_eq!(sink.chunks().len(), chunks, "each chunk arrives as its own frame");
+    assert_eq!(
+        sink.samples(),
+        expected,
+        "passthrough must preserve the ramp exactly"
+    );
+    assert_eq!(
+        sink.chunks().len(),
+        chunks,
+        "each chunk arrives as its own frame"
+    );
 }

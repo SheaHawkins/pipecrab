@@ -13,7 +13,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use futures::executor::block_on;
 use pipecrab_core::AudioFormat;
-use pipecrab_vad::{DebounceConfig, Debounced, SpeechScorer, VadError, VadEvent, VoiceActivityDetector};
+use pipecrab_vad::{
+    DebounceConfig, Debounced, SpeechScorer, VadError, VadEvent, VoiceActivityDetector,
+};
 
 /// A hardware-free scorer: returns a scripted probability per `score` call and
 /// records the length of every window it was handed, so windowing is verifiable.
@@ -51,7 +53,11 @@ impl SpeechScorer for MockScorer {
 }
 
 fn config(threshold: f32, start: u32, stop: u32) -> DebounceConfig {
-    DebounceConfig { threshold, start_windows: start, stop_windows: stop }
+    DebounceConfig {
+        threshold,
+        start_windows: start,
+        stop_windows: stop,
+    }
 }
 
 #[test]
@@ -65,7 +71,11 @@ fn windows_odd_chunks_and_carries_the_remainder_across_calls() {
 
         // 3 samples: remainder 3, no complete window yet.
         assert!(vad.process(&[0.0; 3]).await.unwrap().is_empty());
-        assert_eq!(*scored.lock().unwrap(), Vec::<usize>::new(), "no window from 3 < 4 samples");
+        assert_eq!(
+            *scored.lock().unwrap(),
+            Vec::<usize>::new(),
+            "no window from 3 < 4 samples"
+        );
 
         // +3 -> remainder 6 -> one window of 4, remainder 2.
         vad.process(&[0.0; 3]).await.unwrap();
@@ -75,7 +85,11 @@ fn windows_odd_chunks_and_carries_the_remainder_across_calls() {
         vad.process(&[0.0; 1]).await.unwrap();
 
         // Three windows extracted across the calls, each exactly window_len.
-        assert_eq!(*scored.lock().unwrap(), vec![4, 4, 4], "every window is exactly window_len");
+        assert_eq!(
+            *scored.lock().unwrap(),
+            vec![4, 4, 4],
+            "every window is exactly window_len"
+        );
     });
 }
 
@@ -85,11 +99,18 @@ fn threshold_is_inclusive_at_the_boundary() {
         // start_windows = 1, so a single speech window fires SpeechStarted. A
         // probability exactly at the threshold counts as speech (>=).
         let at = Debounced::with_config(MockScorer::new(2, vec![0.5]), config(0.5, 1, 1));
-        assert_eq!(at.process(&[0.0; 2]).await.unwrap(), vec![VadEvent::SpeechStarted], "0.5 >= 0.5");
+        assert_eq!(
+            at.process(&[0.0; 2]).await.unwrap(),
+            vec![VadEvent::SpeechStarted],
+            "0.5 >= 0.5"
+        );
 
         // Just below the threshold is silence: no edge.
         let below = Debounced::with_config(MockScorer::new(2, vec![0.499]), config(0.5, 1, 1));
-        assert!(below.process(&[0.0; 2]).await.unwrap().is_empty(), "0.499 < 0.5 is not speech");
+        assert!(
+            below.process(&[0.0; 2]).await.unwrap().is_empty(),
+            "0.499 < 0.5 is not speech"
+        );
     });
 }
 
@@ -129,7 +150,10 @@ fn reset_clears_both_the_accumulator_and_the_observe_state() {
         let vad = Debounced::with_config(scorer, config(0.5, 1, 1));
 
         // Leave a 2-sample remainder and move the state into speech.
-        assert_eq!(vad.process(&[0.0; 6]).await.unwrap(), vec![VadEvent::SpeechStarted]);
+        assert_eq!(
+            vad.process(&[0.0; 6]).await.unwrap(),
+            vec![VadEvent::SpeechStarted]
+        );
         // The window scored was exactly 4; a 2-sample remainder is carried.
         assert_eq!(*scored.lock().unwrap(), vec![4]);
 
@@ -137,8 +161,15 @@ fn reset_clears_both_the_accumulator_and_the_observe_state() {
 
         // Accumulator cleared: the carried 2 samples are gone, so 2 fresh samples
         // do NOT complete a window (they would have, 2 + 2 = 4, without the reset).
-        assert!(vad.process(&[0.0; 2]).await.unwrap().is_empty(), "the remainder was cleared");
-        assert_eq!(*scored.lock().unwrap(), vec![4], "no new window scored after reset");
+        assert!(
+            vad.process(&[0.0; 2]).await.unwrap().is_empty(),
+            "the remainder was cleared"
+        );
+        assert_eq!(
+            *scored.lock().unwrap(),
+            vec![4],
+            "no new window scored after reset"
+        );
 
         // Observe state cleared: we are idle again, so the next speech window
         // re-fires SpeechStarted rather than staying silent.

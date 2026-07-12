@@ -40,9 +40,14 @@ impl CpalSink {
         // The interface is `Send` but a `cpal::Stream` is not, so build and park the
         // stream on its own thread, keeping only the `Send` ring end here.
         let config = config.clone();
-        let ((ring, name), thread) =
-            crate::stream::spawn_stream(move || build_playback(&config).map(|(s, r, n)| (s, (r, n))))?;
-        Ok(Self { name, ring, _thread: thread })
+        let ((ring, name), thread) = crate::stream::spawn_stream(move || {
+            build_playback(&config).map(|(s, r, n)| (s, (r, n)))
+        })?;
+        Ok(Self {
+            name,
+            ring,
+            _thread: thread,
+        })
     }
 
     /// The name of the output device audio is being played to.
@@ -84,20 +89,36 @@ fn build_playback(config: &CpalConfig) -> Result<(cpal::Stream, PlaybackRing, St
     // Only one match arm runs, so moving `consumer`/`signal` into each is fine.
     let stream = match sample_format {
         SampleFormat::F32 => build_playback_stream::<f32>(
-            &device, &stream_config, consumer, signal.clone(), channels,
+            &device,
+            &stream_config,
+            consumer,
+            signal.clone(),
+            channels,
         ),
         SampleFormat::I16 => build_playback_stream::<i16>(
-            &device, &stream_config, consumer, signal.clone(), channels,
+            &device,
+            &stream_config,
+            consumer,
+            signal.clone(),
+            channels,
         ),
         SampleFormat::U16 => build_playback_stream::<u16>(
-            &device, &stream_config, consumer, signal.clone(), channels,
+            &device,
+            &stream_config,
+            consumer,
+            signal.clone(),
+            channels,
         ),
         other => {
-            return Err(AudioError::Device(format!("unsupported output sample format: {other:?}")))
+            return Err(AudioError::Device(format!(
+                "unsupported output sample format: {other:?}"
+            )))
         }
     }
     .map_err(|e| AudioError::Device(format!("build output stream: {e}")))?;
-    stream.play().map_err(|e| AudioError::Device(format!("start output stream: {e}")))?;
+    stream
+        .play()
+        .map_err(|e| AudioError::Device(format!("start output stream: {e}")))?;
 
     let ring = PlaybackRing::new(producer, signal, AudioFormat::new(sample_rate, 1));
     Ok((stream, ring, name))
@@ -114,7 +135,10 @@ pub fn output_device_names() -> Result<Vec<String>, AudioError> {
 }
 
 /// Resolve a [`DeviceSelection`] against the host's output devices.
-fn find_output_device(host: &cpal::Host, selection: &DeviceSelection) -> Result<cpal::Device, AudioError> {
+fn find_output_device(
+    host: &cpal::Host,
+    selection: &DeviceSelection,
+) -> Result<cpal::Device, AudioError> {
     match selection {
         DeviceSelection::Default => host
             .default_output_device()

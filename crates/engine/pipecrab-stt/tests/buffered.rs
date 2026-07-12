@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use futures::channel::oneshot;
 use futures::executor::block_on;
 use pipecrab_core::AudioFormat;
-use pipecrab_stt::{Buffered, SttError, SttEvent, StreamingTranscriber, Transcriber};
+use pipecrab_stt::{Buffered, StreamingTranscriber, SttError, SttEvent, Transcriber};
 
 /// A hardware-free one-shot transcriber: reports the sample count it was handed
 /// and declares its configured format.
@@ -49,17 +49,27 @@ impl Transcriber for GatedTranscriber {
     async fn transcribe(&self, _samples: &[f32]) -> Result<String, SttError> {
         // Take the receiver out before awaiting so the mutex guard never crosses
         // the `.await`.
-        let rx = self.gate.lock().unwrap().take().expect("transcribe called more than once");
+        let rx = self
+            .gate
+            .lock()
+            .unwrap()
+            .take()
+            .expect("transcribe called more than once");
         let _ = rx.await;
         Ok("gated".to_string())
     }
 }
 
-const FMT: AudioFormat = AudioFormat { sample_rate: 16_000, channels: 1 };
+const FMT: AudioFormat = AudioFormat {
+    sample_rate: 16_000,
+    channels: 1,
+};
 
 #[test]
 fn input_format_delegates_to_the_inner_transcriber() {
-    let engine = Buffered::new(CountingTranscriber { format: AudioFormat::new(48_000, 2) });
+    let engine = Buffered::new(CountingTranscriber {
+        format: AudioFormat::new(48_000, 2),
+    });
     assert_eq!(engine.input_format(), AudioFormat::new(48_000, 2));
 }
 
@@ -89,7 +99,10 @@ fn begin_utterance_rejects_a_second_begin() {
 
         // A second begin without closing the first is a protocol violation:
         // reject it rather than silently dropping the 9 accumulated samples.
-        assert!(matches!(engine.begin_utterance().await, Err(SttError::Engine(_))));
+        assert!(matches!(
+            engine.begin_utterance().await,
+            Err(SttError::Engine(_))
+        ));
 
         // The original utterance is untouched and still finalizes over its 9.
         let events = engine.end_utterance().await.unwrap();
@@ -108,8 +121,14 @@ fn feed_and_end_without_begin_are_protocol_errors() {
         // violation rather than silently accepting stray audio — this is how an
         // upstream contract breach (audio ahead of any SpeechStarted) becomes a
         // loud, recoverable engine error at the stage.
-        assert!(matches!(engine.feed(&[0.0; 4]).await, Err(SttError::Engine(_))));
-        assert!(matches!(engine.end_utterance().await, Err(SttError::Engine(_))));
+        assert!(matches!(
+            engine.feed(&[0.0; 4]).await,
+            Err(SttError::Engine(_))
+        ));
+        assert!(matches!(
+            engine.end_utterance().await,
+            Err(SttError::Engine(_))
+        ));
     });
 }
 
@@ -124,8 +143,14 @@ fn cancel_discards_the_pending_utterance() {
 
         // After cancel there is no active utterance: feed and end both reject
         // until a new begin.
-        assert!(matches!(engine.feed(&[0.0; 4]).await, Err(SttError::Engine(_))));
-        assert!(matches!(engine.end_utterance().await, Err(SttError::Engine(_))));
+        assert!(matches!(
+            engine.feed(&[0.0; 4]).await,
+            Err(SttError::Engine(_))
+        ));
+        assert!(matches!(
+            engine.end_utterance().await,
+            Err(SttError::Engine(_))
+        ));
 
         // A fresh utterance starts clean — only the new samples count.
         engine.begin_utterance().await.unwrap();
@@ -143,7 +168,10 @@ fn cancel_is_idempotent() {
         engine.feed(&[0.0; 4]).await.unwrap();
         engine.cancel();
         engine.cancel(); // second cancel is a no-op, not a panic
-        assert!(matches!(engine.end_utterance().await, Err(SttError::Engine(_))));
+        assert!(matches!(
+            engine.end_utterance().await,
+            Err(SttError::Engine(_))
+        ));
     });
 }
 
@@ -151,7 +179,9 @@ fn cancel_is_idempotent() {
 fn cancel_discards_an_in_flight_result() {
     block_on(async {
         let (tx, rx) = oneshot::channel::<()>();
-        let engine = Buffered::new(GatedTranscriber { gate: Mutex::new(Some(rx)) });
+        let engine = Buffered::new(GatedTranscriber {
+            gate: Mutex::new(Some(rx)),
+        });
         engine.begin_utterance().await.unwrap();
         engine.feed(&[0.0; 4]).await.unwrap();
 

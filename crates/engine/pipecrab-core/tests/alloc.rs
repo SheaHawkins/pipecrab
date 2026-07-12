@@ -6,7 +6,9 @@ use pipecrab_test_util::allocs;
 use std::hint::black_box;
 
 // --- a tiny processor to exercise the hot path ---
-enum Cmd { Speak }
+enum Cmd {
+    Speak,
+}
 #[derive(Default)]
 struct Say;
 impl Processor for Say {
@@ -43,5 +45,8 @@ fn transcript_path_within_budget() {
         black_box(s.decide_data(black_box(&frame)));
     });
     // Cmd is a ZST (single unit variant), so Vec push allocates nothing.
-    assert_eq!(n, 0, "Transcript decide with a ZST effect should not allocate, got {n}");
+    assert_eq!(
+        n, 0,
+        "Transcript decide with a ZST effect should not allocate, got {n}"
+    );
 }

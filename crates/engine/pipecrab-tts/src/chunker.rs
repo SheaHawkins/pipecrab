@@ -96,7 +96,11 @@ impl Processor for SentenceChunker {
 
     fn decide_data(&mut self, frame: &DataFrame) -> Decision<EmitSentence> {
         let (finality, text) = match frame {
-            DataFrame::Transcript(Transcript { role: Role::Agent, finality, text }) => {
+            DataFrame::Transcript(Transcript {
+                role: Role::Agent,
+                finality,
+                text,
+            }) => {
                 // Agent partials are append-only, so within a generation the
                 // offset never outruns the text. If it does, a new generation
                 // arrived without the Final/Interrupt that resets us — corrupt
@@ -132,7 +136,10 @@ impl Processor for SentenceChunker {
             }
         }
         // Consume the raw agent frame; the per-sentence finals replace it.
-        Decision { disposition: Disposition::Drop, effects }
+        Decision {
+            disposition: Disposition::Drop,
+            effects,
+        }
     }
 
     fn decide_system(&mut self, _dir: Direction, frame: &SystemFrame) -> Decision<EmitSentence> {
@@ -147,7 +154,11 @@ impl Processor for SentenceChunker {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl Stage for SentenceChunker {
-    async fn perform(&self, EmitSentence(text): EmitSentence, out: &Outbound) -> Result<(), StageError> {
+    async fn perform(
+        &self,
+        EmitSentence(text): EmitSentence,
+        out: &Outbound,
+    ) -> Result<(), StageError> {
         // Ignore the send error: it only happens once the sink has gone away
         // during shutdown, matching the runtime's own forward path.
         let _ = out.send_data(Transcript::agent_final(text).into()).await;
