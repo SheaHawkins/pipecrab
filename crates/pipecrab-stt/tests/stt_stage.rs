@@ -189,16 +189,22 @@ fn happy_path_translates_edges_and_chunks_to_the_utterance_protocol() {
 }
 
 #[test]
-fn decide_data_touches_no_state_so_repeated_edges_repeat_effects() {
-    // Statelessness made concrete: the stage keeps no `in_speech` bit, so a
-    // second SpeechStarted emits a second `begin` (the old idempotence latch is
-    // gone). It trusts the gate's alternation contract rather than policing it;
-    // a genuine violation surfaces from the engine, not here.
+fn stateless_stage_does_not_dedup_a_duplicate_begin() {
+    // This pins statelessness — it is NOT a blessing of double-begins. A second
+    // SpeechStarted violates the gate's alternation contract; the point here is
+    // only that the stage keeps no `in_speech` latch, so it does not *absorb*
+    // (dedup) the duplicate — it emits a second `begin` and leaves the violation
+    // for the engine to reject. That rejection is proven end-to-end in
+    // `duplicate_speech_started_surfaces_a_recoverable_engine_error`.
     let mut stage = SttStage::new(Mock::silent());
     let first = stage.decide_data(&DataFrame::SpeechStarted);
     let second = stage.decide_data(&DataFrame::SpeechStarted);
     assert_eq!(summarize(&first.effects), vec!["begin"]);
-    assert_eq!(summarize(&second.effects), vec!["begin"], "no latch: the effect is emitted again");
+    assert_eq!(
+        summarize(&second.effects),
+        vec!["begin"],
+        "no latch: the effect is emitted again, not deduped",
+    );
 }
 
 #[test]
@@ -383,6 +389,44 @@ fn audio_before_speech_started_surfaces_a_recoverable_engine_error() {
             message.contains("without an active utterance"),
             "unexpected message: {message}",
         );
+    });
+}
+
+#[test]
+fn duplicate_speech_started_surfaces_a_recoverable_engine_error() {
+    block_on(async {
+        // The mirror of the feed-before-begin case, and the end-to-end proof that
+        // the "protocol trust, not defense" stance does not swallow a double
+        // begin. The stage keeps no latch, so a duplicate SpeechStarted flows
+        // through as a second `begin`; a real `Buffered` already has an utterance
+        // open, so it rejects — loud and recoverable, not silently absorbed (a
+        // resetting engine would otherwise discard the first utterance's audio).
+        let stage = SttStage::new(Buffered::new(OneShot));
+        let (ends, driver) = PipelineBuilder::new().stage(stage).build().start();
+        let input = ends.input;
+        let mut output = ends.output;
+
+        let feed = async move {
+            let _ = input.send_system(Direction::Down, SystemFrame::Start).await;
+            let _ = input.send_data(DataFrame::SpeechStarted).await;
+            let _ = input.send_data(DataFrame::SpeechStarted).await; // contract violation
+        };
+
+        let drain = async move {
+            let mut error = None;
+            while let Some(received) = output.recv().await {
+                if let Received::Sys(Direction::Up, SystemFrame::Error { message, fatal }) = received
+                {
+                    error = Some((message, fatal));
+                }
+            }
+            error
+        };
+
+        let (_, error, _) = futures::join!(feed, drain, driver);
+        let (message, fatal) = error.expect("a duplicate begin should surface an Error frame");
+        assert!(!fatal, "a protocol violation is recoverable, not fatal");
+        assert!(message.contains("already active"), "unexpected message: {message}");
     });
 }
 
