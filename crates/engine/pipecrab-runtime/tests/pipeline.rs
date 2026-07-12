@@ -259,6 +259,30 @@ fn nested_pipeline_forwards_through_both_levels() {
     });
 }
 
+struct DistinctEffect;
+
+struct DistinctEffectStage;
+
+impl Processor for DistinctEffectStage {
+    type Effect = DistinctEffect;
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl Stage for DistinctEffectStage {
+    async fn perform(&self, _effect: DistinctEffect, _out: &Outbound) -> Result<(), StageError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn pipeline_composes_stages_with_distinct_effect_types() {
+    let _pipeline = PipelineBuilder::new()
+        .stage(PassThrough)
+        .stage(DistinctEffectStage)
+        .build();
+}
+
 /// On native targets the pipeline driver must be `Send`, so it can be handed to
 /// a multi-threaded executor (`tokio::spawn`). On wasm32 it is `!Send` and is
 /// driven by `spawn_local`; this assertion is native-only by construction.
