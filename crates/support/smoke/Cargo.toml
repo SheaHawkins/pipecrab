@@ -1,0 +1,18 @@
+[package]
+name = "pipecrab-smoke"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.pipecrab]
+layer = "support"
+
+[dev-dependencies]
+async-trait = "0.1"
+futures = "0.3"
+pipecrab-core.workspace = true
+pipecrab-runtime.workspace = true
+pipecrab-tts.workspace = true
+pipecrab-vad.workspace = true

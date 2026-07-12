@@ -686,6 +686,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pipecrab-smoke"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "pipecrab-core",
+ "pipecrab-runtime",
+ "pipecrab-tts",
+ "pipecrab-vad",
+]
+
+[[package]]
 name = "pipecrab-stt"
 version = "0.2.0"
 dependencies = [

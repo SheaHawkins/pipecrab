@@ -97,8 +97,9 @@ impl From<&str> for StageError {
 /// off-thread with [`offload`](fn@crate::offload) and `await` the result, so an
 /// interrupt can still preempt `perform` promptly.
 ///
-/// The trait is dyn-compatible (via `async_trait`), so a pipeline can hold its
-/// stages as `Box<dyn Stage<Effect = _>>`.
+/// The trait is dyn-compatible (via `async_trait`). A pipeline erases the
+/// associated effect type at insertion and stores only an object-safe runner,
+/// allowing stages with different effect types to compose.
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait Stage: Processor + MaybeSendSync

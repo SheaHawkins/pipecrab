@@ -32,7 +32,7 @@ use futures::channel::mpsc;
 use futures::stream::{FuturesUnordered, StreamExt};
 use pipecrab_core::{DataFrame, Decision, Direction, Processor, SystemFrame};
 
-use crate::{Inbound, MaybeSend, Outbound, Stage, StageError};
+use crate::{Inbound, MaybeSend, MaybeSendSync, Outbound, Stage, StageError};
 
 /// The boxed pipeline driver future returned by [`Pipeline::start`].
 ///
@@ -72,13 +72,47 @@ pub struct PipelineEnds {
     pub output: Inbound,
 }
 
-/// Builds a [`Pipeline`] from an ordered list of stages sharing one `Effect`.
-pub struct PipelineBuilder<E> {
-    stages: Vec<Box<dyn Stage<Effect = E>>>,
+/// Type-erased runner for a stage stored in a pipeline.
+///
+/// Effects remain strongly typed inside each concrete [`Stage`]; the pipeline
+/// only needs to own and run the stage, so its storage does not expose that
+/// associated type.
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+trait ErasedStage: MaybeSendSync {
+    async fn run(self: Box<Self>, inbound: Inbound, out: Outbound);
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<S> ErasedStage for S
+where
+    S: Stage + 'static,
+    S::Effect: MaybeSend,
+{
+    async fn run(self: Box<Self>, inbound: Inbound, out: Outbound) {
+        Stage::run(self, inbound, out).await;
+    }
+}
+
+/// Adapts an already boxed stage to the pipeline's erased runner.
+struct BoxedStage<E: MaybeSend>(Box<dyn Stage<Effect = E>>);
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<E: MaybeSend + 'static> ErasedStage for BoxedStage<E> {
+    async fn run(self: Box<Self>, inbound: Inbound, out: Outbound) {
+        self.0.run(inbound, out).await;
+    }
+}
+
+/// Builds a [`Pipeline`] from an ordered list of stages.
+pub struct PipelineBuilder {
+    stages: Vec<Box<dyn ErasedStage>>,
     capacity: usize,
 }
 
-impl<E: MaybeSend + 'static> PipelineBuilder<E> {
+impl PipelineBuilder {
     /// A new, empty builder with the default lane capacity.
     pub fn new() -> Self {
         Self { stages: Vec::new(), capacity: DEFAULT_CAPACITY }
@@ -93,14 +127,18 @@ impl<E: MaybeSend + 'static> PipelineBuilder<E> {
 
     /// Append a stage, boxing it. Stages run in the order added, head first. A
     /// [`Pipeline`] is itself a stage, so it may be passed here to nest.
-    pub fn stage(mut self, stage: impl Stage<Effect = E> + 'static) -> Self {
+    pub fn stage<S>(mut self, stage: S) -> Self
+    where
+        S: Stage + 'static,
+        S::Effect: MaybeSend,
+    {
         self.stages.push(Box::new(stage));
         self
     }
 
     /// Append an already-boxed stage.
-    pub fn boxed(mut self, stage: Box<dyn Stage<Effect = E>>) -> Self {
-        self.stages.push(stage);
+    pub fn boxed<E: MaybeSend + 'static>(mut self, stage: Box<dyn Stage<Effect = E>>) -> Self {
+        self.stages.push(Box::new(BoxedStage(stage)));
         self
     }
 
@@ -109,13 +147,13 @@ impl<E: MaybeSend + 'static> PipelineBuilder<E> {
     /// # Panics
     ///
     /// Panics if no stages were added — a pipeline needs at least one stage.
-    pub fn build(self) -> Pipeline<E> {
+    pub fn build(self) -> Pipeline {
         assert!(!self.stages.is_empty(), "a pipeline needs at least one stage");
         Pipeline { stages: self.stages, capacity: self.capacity }
     }
 }
 
-impl<E: MaybeSend + 'static> Default for PipelineBuilder<E> {
+impl Default for PipelineBuilder {
     fn default() -> Self {
         Self::new()
     }
@@ -125,12 +163,12 @@ impl<E: MaybeSend + 'static> Default for PipelineBuilder<E> {
 /// the top level) or by a parent pipeline's [`run`](Stage::run) (when nested).
 ///
 /// [`start`]: Pipeline::start
-pub struct Pipeline<E> {
-    stages: Vec<Box<dyn Stage<Effect = E>>>,
+pub struct Pipeline {
+    stages: Vec<Box<dyn ErasedStage>>,
     capacity: usize,
 }
 
-impl<E: MaybeSend + 'static> Pipeline<E> {
+impl Pipeline {
     /// Wire fresh external [`PipelineEnds`] and return them with the driving
     /// future. The caller drives the future (e.g. `block_on`) and uses the ends
     /// to feed the head and read the tail.
@@ -138,7 +176,7 @@ impl<E: MaybeSend + 'static> Pipeline<E> {
         let capacity = self.capacity;
         let (input, head_in) = link(capacity);
         let (tail_out, output) = link(capacity);
-        let driver = Box::new(self).run(head_in, tail_out);
+        let driver = Stage::run(Box::new(self), head_in, tail_out);
         (PipelineEnds { input, output }, driver)
     }
 }
@@ -147,22 +185,22 @@ impl<E: MaybeSend + 'static> Pipeline<E> {
 // children. It is never treated as a leaf, so `decide_*` and `perform` are never
 // reached in correct use — they panic as tripwires for misuse (e.g. a custom
 // driver that calls the wrong method). `run` is the one legitimate entry point.
-impl<E> Processor for Pipeline<E> {
-    type Effect = E;
+impl Processor for Pipeline {
+    type Effect = ();
 
-    fn decide_data(&mut self, _frame: &DataFrame) -> Decision<E> {
+    fn decide_data(&mut self, _frame: &DataFrame) -> Decision<()> {
         unreachable!("a Pipeline is driven by Stage::run, not decide_data")
     }
 
-    fn decide_system(&mut self, _dir: Direction, _frame: &SystemFrame) -> Decision<E> {
+    fn decide_system(&mut self, _dir: Direction, _frame: &SystemFrame) -> Decision<()> {
         unreachable!("a Pipeline is driven by Stage::run, not decide_system")
     }
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl<E: MaybeSend + 'static> Stage for Pipeline<E> {
-    async fn perform(&self, _effect: E, _out: &Outbound) -> Result<(), StageError> {
+impl Stage for Pipeline {
+    async fn perform(&self, _effect: (), _out: &Outbound) -> Result<(), StageError> {
         unreachable!("a Pipeline is driven by Stage::run, not perform")
     }
 
@@ -186,7 +224,7 @@ impl<E: MaybeSend + 'static> Stage for Pipeline<E> {
                 current_in = Some(next_in);
                 this_out
             };
-            tasks.push(stage.run(stage_in, stage_out));
+            tasks.push(ErasedStage::run(stage, stage_in, stage_out));
         }
 
         while tasks.next().await.is_some() {}
