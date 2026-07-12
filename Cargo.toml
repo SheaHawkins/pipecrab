@@ -15,7 +15,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT"
@@ -25,14 +25,14 @@ repository = "https://github.com/SheaHawkins/pipecrab"
 # Internal path deps carry a `version` alongside the `path`: the `path` drives
 # local workspace builds, and `cargo publish` rewrites each into a plain
 # crates.io `version` dependency. A path-only dep would block publishing.
-pipecrab            = { path = "crates/pipecrab", version = "0.1.0" }
-pipecrab-core       = { path = "crates/pipecrab-core", version = "0.1.0" }
-pipecrab-runtime    = { path = "crates/pipecrab-runtime", version = "0.1.0" }
-pipecrab-audio      = { path = "crates/pipecrab-audio", version = "0.1.0" }
-pipecrab-audio-cpal = { path = "crates/pipecrab-audio-cpal", version = "0.1.0" }
-pipecrab-lm         = { path = "crates/pipecrab-lm", version = "0.1.0" }
-pipecrab-stt        = { path = "crates/pipecrab-stt", version = "0.1.0" }
-pipecrab-tts        = { path = "crates/pipecrab-tts", version = "0.1.0" }
-pipecrab-vad        = { path = "crates/pipecrab-vad", version = "0.1.0" }
+pipecrab            = { path = "crates/pipecrab", version = "0.2.0" }
+pipecrab-core       = { path = "crates/pipecrab-core", version = "0.2.0" }
+pipecrab-runtime    = { path = "crates/pipecrab-runtime", version = "0.2.0" }
+pipecrab-audio      = { path = "crates/pipecrab-audio", version = "0.2.0" }
+pipecrab-audio-cpal = { path = "crates/pipecrab-audio-cpal", version = "0.2.0" }
+pipecrab-lm         = { path = "crates/pipecrab-lm", version = "0.2.0" }
+pipecrab-stt        = { path = "crates/pipecrab-stt", version = "0.2.0" }
+pipecrab-tts        = { path = "crates/pipecrab-tts", version = "0.2.0" }
+pipecrab-vad        = { path = "crates/pipecrab-vad", version = "0.2.0" }
 # Dev-only; `publish = false`, so it never needs a version.
 pipecrab-test-util  = { path = "crates/test-util" }

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-stt-v0.1.0...pipecrab-stt-v0.2.0) - 2026-07-12
+
+### Other
+
+- *(stt)* add a test for rejecting double begins
+- *(stt)* Remove in_speech state, ringbuffer from stt
+- Stt stage, move Speech events to Data lane ([#32](https://github.com/SheaHawkins/pipecrab/pull/32))
+- Streaming transcriber ([#30](https://github.com/SheaHawkins/pipecrab/pull/30))
+- Partial Transcripts ([#29](https://github.com/SheaHawkins/pipecrab/pull/29))
+- Remove legacy engine crates ([#27](https://github.com/SheaHawkins/pipecrab/pull/27))
+
 ## [0.1.0](https://github.com/SheaHawkins/pipecrab/releases/tag/pipecrab-stt-v0.1.0) - 2026-07-08
 
 ### Other

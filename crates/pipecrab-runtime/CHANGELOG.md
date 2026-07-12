@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-runtime-v0.1.0...pipecrab-runtime-v0.2.0) - 2026-07-12
+
+### Other
+
+- Partial Transcripts ([#29](https://github.com/SheaHawkins/pipecrab/pull/29))
+- release v0.1.0 ([#21](https://github.com/SheaHawkins/pipecrab/pull/21))
+
 ## [0.1.0](https://github.com/SheaHawkins/pipecrab/releases/tag/pipecrab-runtime-v0.1.0) - 2026-07-08
 
 ### Other
