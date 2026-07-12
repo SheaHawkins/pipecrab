@@ -36,15 +36,22 @@ use crate::{SttError, Transcriber};
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait StreamingTranscriber: MaybeSendSync {
+    /// The one format this engine accepts. The stage caches it and enforces it
+    /// *before* feeding — see the crate-level [format authority](crate) note.
+    /// Sync and infallible: known at construction, so callable from a stage's
+    /// `decide_*` under the control-call carve-out.
+    fn input_format(&self) -> AudioFormat;
+
     /// Open an utterance. Only one is active per engine instance, so the caller
     /// must close the previous one — via [`end_utterance`](Self::end_utterance)
     /// or [`cancel`](Self::cancel) — before opening another; calling this while
     /// an utterance is already active is a protocol violation and an engine
     /// rejects it rather than silently discarding the in-progress utterance.
     ///
-    /// Rejects a format the engine cannot take
-    /// ([`SttError::UnsupportedFormat`]); does not resample.
-    async fn begin_utterance(&self, format: AudioFormat) -> Result<(), SttError>;
+    /// No format parameter: samples fed to this utterance are interpreted as
+    /// [`input_format()`](Self::input_format), which the stage has already
+    /// enforced.
+    async fn begin_utterance(&self) -> Result<(), SttError>;
 
     /// Feed one window of samples; returns whatever events are ready so far.
     /// Cheap message-pass to the engine's worker.
@@ -89,19 +96,14 @@ pub enum SttEvent {
 /// accumulates and returns `[]`, and the entire transcript arrives as a single
 /// [`SttEvent::Final`] from [`end_utterance`](StreamingTranscriber::end_utterance).
 ///
-/// # Two honest limitations
+/// # One honest limitation
 ///
-/// * **Format validation is deferred.** The wrapped [`Transcriber`] only
-///   validates a format when it actually transcribes, so
-///   [`begin_utterance`](StreamingTranscriber::begin_utterance) merely records
-///   the format; an unsupported one surfaces as
-///   [`SttError::UnsupportedFormat`] from `end_utterance`, not `begin_utterance`.
-/// * **Cancel cannot stop inference mid-flight.**
-///   [`cancel`](StreamingTranscriber::cancel) clears the buffer and marks any
-///   in-flight transcription stale so its result is discarded when it returns,
-///   but the underlying one-shot inference — offloaded and detached — still runs
-///   to completion off-thread. True mid-inference cancel requires a native
-///   streaming engine.
+/// **Cancel cannot stop inference mid-flight.**
+/// [`cancel`](StreamingTranscriber::cancel) clears the buffer and marks any
+/// in-flight transcription stale so its result is discarded when it returns,
+/// but the underlying one-shot inference — offloaded and detached — still runs
+/// to completion off-thread. True mid-inference cancel requires a native
+/// streaming engine.
 pub struct Buffered<T: Transcriber> {
     inner: T,
     state: Mutex<BufferedState>,
@@ -111,8 +113,10 @@ pub struct Buffered<T: Transcriber> {
 /// `&self`. The lock is never held across an `.await`, so it stays uncontended
 /// and `cancel`'s critical section never blocks.
 struct BufferedState {
-    /// Format recorded by `begin_utterance`; `None` when no utterance is active.
-    format: Option<AudioFormat>,
+    /// Whether an utterance is open — set by `begin_utterance`, cleared by
+    /// `end_utterance`/`cancel`. It only gates the protocol; the format itself
+    /// is no longer tracked (the stage enforces it before a sample arrives).
+    active: bool,
     /// Accumulated interleaved samples for the active utterance.
     buffer: Vec<f32>,
     /// Bumped by `cancel`. `end_utterance` snapshots it before awaiting and
@@ -125,7 +129,7 @@ impl<T: Transcriber> Buffered<T> {
     pub fn new(transcriber: T) -> Self {
         Self {
             inner: transcriber,
-            state: Mutex::new(BufferedState { format: None, buffer: Vec::new(), generation: 0 }),
+            state: Mutex::new(BufferedState { active: false, buffer: Vec::new(), generation: 0 }),
         }
     }
 }
@@ -133,26 +137,28 @@ impl<T: Transcriber> Buffered<T> {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl<T: Transcriber> StreamingTranscriber for Buffered<T> {
-    async fn begin_utterance(&self, format: AudioFormat) -> Result<(), SttError> {
+    fn input_format(&self) -> AudioFormat {
+        self.inner.input_format()
+    }
+
+    async fn begin_utterance(&self) -> Result<(), SttError> {
         let mut st = self.state.lock().expect("Buffered state mutex poisoned");
         // One active utterance per instance: refuse a second begin rather than
         // silently dropping the in-progress one. The caller must `end_utterance`
         // or `cancel` to close it first.
-        if st.format.is_some() {
+        if st.active {
             return Err(SttError::Engine(
                 "Buffered::begin_utterance called while an utterance is already active".into(),
             ));
         }
-        // No upfront format check: the wrapped one-shot engine only validates at
-        // transcribe time, so rejection is deferred to `end_utterance`.
-        st.format = Some(format);
+        st.active = true;
         st.buffer.clear();
         Ok(())
     }
 
     async fn feed(&self, samples: &[f32]) -> Result<Vec<SttEvent>, SttError> {
         let mut st = self.state.lock().expect("Buffered state mutex poisoned");
-        if st.format.is_none() {
+        if !st.active {
             return Err(SttError::Engine(
                 "Buffered::feed called without an active utterance".into(),
             ));
@@ -165,18 +171,21 @@ impl<T: Transcriber> StreamingTranscriber for Buffered<T> {
     async fn end_utterance(&self) -> Result<Vec<SttEvent>, SttError> {
         // Snapshot the utterance under the lock, then release it before the
         // awaited inference — the guard must not cross the `.await`.
-        let (samples, format, generation) = {
+        let (samples, generation) = {
             let mut st = self.state.lock().expect("Buffered state mutex poisoned");
-            let format = st.format.take().ok_or_else(|| {
-                SttError::Engine("Buffered::end_utterance called without a begin_utterance".into())
-            })?;
-            (std::mem::take(&mut st.buffer), format, st.generation)
+            if !st.active {
+                return Err(SttError::Engine(
+                    "Buffered::end_utterance called without a begin_utterance".into(),
+                ));
+            }
+            st.active = false;
+            (std::mem::take(&mut st.buffer), st.generation)
         };
 
         // One-shot inference over the whole utterance. The wrapped engine owns
         // where this runs; if a barge-in drops this future, that offloaded work
         // detaches and its result is lost.
-        let text = self.inner.transcribe(&samples, format).await?;
+        let text = self.inner.transcribe(&samples).await?;
 
         // If `cancel` bumped the generation while we were awaiting, the utterance
         // was abandoned: discard the now-stale transcript.
@@ -195,7 +204,7 @@ impl<T: Transcriber> StreamingTranscriber for Buffered<T> {
         // effectively non-blocking. Clear the pending audio and bump the
         // generation so any in-flight `end_utterance` discards its result.
         let mut st = self.state.lock().expect("Buffered state mutex poisoned");
-        st.format = None;
+        st.active = false;
         st.buffer.clear();
         st.generation = st.generation.wrapping_add(1);
     }

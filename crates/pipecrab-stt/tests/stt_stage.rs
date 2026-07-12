@@ -1,14 +1,17 @@
-//! `SttStage` v2 adapts a `StreamingTranscriber` into a stage, gated by the VAD's
-//! `SpeechStarted` / `SpeechStopped` edges and fronted by a pre-roll ring that
-//! keeps an utterance's onset.
+//! `SttStage` is a **stateless** adapter from a `StreamingTranscriber` to a
+//! stage, driven by the VAD gate's `SpeechStarted` / `SpeechStopped` edges. Under
+//! the gate contract the edges bracket the utterance audio — `SpeechStarted`
+//! precedes every chunk, `SpeechStopped` follows the last — so the stage just
+//! translates: edge → begin/end, chunk → feed.
 //!
 //! The edges ride the data lane, so they are handled in `decide_data` alongside
 //! audio; only `Interrupt` remains a `decide_system` frame. The behavior table is
-//! defined in terms of that synchronous `decide_*` output, so most tests drive
-//! `decide_data` / `decide_system` directly and assert on the emitted effects —
-//! fully deterministic, no lane-ordering races. Two async tests cover the parts
-//! that only exist past the decide step: the `SttEvent` → `Transcript` mapping in
-//! `perform`, and barge-in through the real run loop.
+//! defined in terms of that synchronous `decide_*` output, so the deterministic
+//! tests drive `decide_data` / `decide_system` directly and assert on the emitted
+//! effects — no lane-ordering races. The remaining tests use the real run loop
+//! for the parts that only exist past the decide step: the `SttEvent` →
+//! `Transcript` mapping in `perform`, the fatal format teardown, a surfaced
+//! protocol violation, and barge-in.
 //!
 //! Deterministic and tokio-free (`block_on`), so it rides the default
 //! `cargo test --workspace` path.
@@ -25,14 +28,17 @@ use pipecrab_core::{
 };
 use pipecrab_runtime::{link, PipelineBuilder, Received, Stage};
 use pipecrab_stt::{
-    SttConfig, SttEffect, SttError, SttEvent, SttStage, StreamingTranscriber,
+    Buffered, SttEffect, SttError, SttEvent, SttStage, StreamingTranscriber, Transcriber,
 };
+
+/// The format the mocks declare; the stage caches it and enforces it.
+const FMT: AudioFormat = AudioFormat { sample_rate: 16_000, channels: 1 };
 
 /// What a [`Mock`] recorded, shared with the test via an `Arc<Mutex<_>>`.
 #[derive(Default)]
 struct Log {
-    /// Formats passed to `begin_utterance`, in order.
-    begins: Vec<AudioFormat>,
+    /// Number of `begin_utterance` calls.
+    begins: usize,
     /// Sample count of each `feed`, in order.
     feeds: Vec<usize>,
     /// Number of `end_utterance` calls.
@@ -52,9 +58,9 @@ enum Note {
     Fed(usize),
 }
 
-/// A hardware-free [`StreamingTranscriber`]: records every call, emits a partial
-/// per feed and a final on end, and optionally parks its first `feed` so a
-/// barge-in can drop it in flight.
+/// A hardware-free [`StreamingTranscriber`]: declares [`FMT`], records every
+/// call, emits a partial per feed and a final on end, and optionally parks its
+/// first `feed` so a barge-in can drop it in flight.
 struct Mock {
     log: Arc<Mutex<Log>>,
     notes: mpsc::UnboundedSender<Note>,
@@ -79,8 +85,12 @@ impl Mock {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl StreamingTranscriber for Mock {
-    async fn begin_utterance(&self, format: AudioFormat) -> Result<(), SttError> {
-        self.log.lock().unwrap().begins.push(format);
+    fn input_format(&self) -> AudioFormat {
+        FMT
+    }
+
+    async fn begin_utterance(&self) -> Result<(), SttError> {
+        self.log.lock().unwrap().begins += 1;
         Ok(())
     }
 
@@ -116,6 +126,23 @@ impl StreamingTranscriber for Mock {
     }
 }
 
+/// A hardware-free one-shot [`Transcriber`]: declares [`FMT`] and echoes its
+/// sample count. Wrapped in [`Buffered`] to exercise the stage against a *real*
+/// adapter that surfaces protocol violations.
+struct OneShot;
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl Transcriber for OneShot {
+    fn input_format(&self) -> AudioFormat {
+        FMT
+    }
+
+    async fn transcribe(&self, samples: &[f32]) -> Result<String, SttError> {
+        Ok(format!("heard {} samples", samples.len()))
+    }
+}
+
 /// An `Audio` data frame of `n` zeroed interleaved samples in the given format.
 fn audio(sample_rate: u32, channels: u16, n: usize) -> DataFrame {
     let chunk = AudioChunk::new(Arc::from(vec![0.0f32; n]), AudioFormat::new(sample_rate, channels));
@@ -127,145 +154,88 @@ fn summarize(effects: &[SttEffect]) -> Vec<String> {
     effects
         .iter()
         .map(|e| match e {
-            SttEffect::Begin(f) => format!("begin {}/{}", f.sample_rate, f.channels),
+            SttEffect::Begin => "begin".to_string(),
             SttEffect::Feed(c) => format!("feed {}", c.samples.len()),
             SttEffect::End => "end".to_string(),
+            SttEffect::RejectFormat { got } => {
+                format!("reject {}/{}", got.sample_rate, got.channels)
+            }
         })
         .collect()
 }
 
-/// A config with an explicit pre-roll budget in milliseconds.
-fn config_ms(ms: u64) -> SttConfig {
-    SttConfig { preroll: std::time::Duration::from_millis(ms) }
-}
-
 #[test]
-fn preroll_evicts_by_duration_and_feeds_in_arrival_order_before_live() {
-    // 1000 Hz mono makes 1 sample == 1 ms, so a 100 ms budget holds ~100 samples.
-    let mut stage = SttStage::with_config(Mock::silent(), config_ms(100));
+fn happy_path_translates_edges_and_chunks_to_the_utterance_protocol() {
+    // The gate contract: SpeechStarted, then the utterance's chunks, then
+    // SpeechStopped. The stage translates that one-for-one: begin, a feed per
+    // chunk in arrival order, end. No state, no pre-roll — the gate already
+    // bracketed the onset audio in behind the edge.
+    let mut stage = SttStage::new(Mock::silent());
 
-    // Mixed chunk sizes stream in while idle. Running the eviction by hand:
-    //   +20        -> [20]        (20 ms)
-    //   +50        -> [20,50]     (70 ms)
-    //   +40 (110)  -> evict 20    -> [50,40]    (90 ms)
-    //   +30 (120)  -> evict 50    -> [40,30]    (70 ms)
-    // so only the last two chunks — 40 then 30 — survive, in arrival order.
-    for n in [20usize, 50, 40, 30] {
-        let d = stage.decide_data(&audio(1000, 1, n));
-        assert_eq!(d.disposition, Disposition::Drop, "idle audio is consumed into the ring");
-        assert!(d.effects.is_empty(), "idle audio emits nothing until speech starts");
-    }
-
-    // SpeechStarted drains the ring: begin, then the survivors in arrival order.
     let started = stage.decide_data(&DataFrame::SpeechStarted);
     assert_eq!(started.disposition, Disposition::Forward, "the edge is forwarded downstream");
-    assert_eq!(summarize(&started.effects), vec!["begin 1000/1", "feed 40", "feed 30"]);
+    assert_eq!(summarize(&started.effects), vec!["begin"]);
 
-    // A live chunk now feeds straight through — after the pre-roll, not before.
-    let live = stage.decide_data(&audio(1000, 1, 15));
-    assert_eq!(live.disposition, Disposition::Drop);
-    assert_eq!(summarize(&live.effects), vec!["feed 15"], "no second begin; pre-roll already fed");
+    // Three conforming chunks each feed straight through, unconditionally.
+    for n in [10usize, 20, 30] {
+        let live = stage.decide_data(&audio(16_000, 1, n));
+        assert_eq!(live.disposition, Disposition::Drop, "consumed audio does not travel on");
+        assert_eq!(summarize(&live.effects), vec![format!("feed {n}")]);
+    }
+
+    let stopped = stage.decide_data(&DataFrame::SpeechStopped);
+    assert_eq!(stopped.disposition, Disposition::Forward, "the edge is forwarded downstream");
+    assert_eq!(summarize(&stopped.effects), vec!["end"]);
 }
 
 #[test]
-fn empty_ring_speech_started_stays_idle() {
-    // A real VAD emits SpeechStarted on the data lane *after* the onset audio, so
-    // the ring is never empty here. If a malformed source sends the edge with no
-    // preceding audio, the stage must not open a beginless utterance — it stays
-    // idle (no format to begin with) and only forwards the edge.
+fn decide_data_touches_no_state_so_repeated_edges_repeat_effects() {
+    // Statelessness made concrete: the stage keeps no `in_speech` bit, so a
+    // second SpeechStarted emits a second `begin` (the old idempotence latch is
+    // gone). It trusts the gate's alternation contract rather than policing it;
+    // a genuine violation surfaces from the engine, not here.
     let mut stage = SttStage::new(Mock::silent());
-
-    let started = stage.decide_data(&DataFrame::SpeechStarted);
-    assert_eq!(started.disposition, Disposition::Forward, "the edge still forwards");
-    assert!(started.effects.is_empty(), "an empty ring opens nothing");
-
-    // Since we never entered speech, a following chunk is treated as fresh
-    // pre-roll (buffered, not fed), not as live audio for a torn utterance.
-    let audio_after = stage.decide_data(&audio(16_000, 1, 8));
-    assert_eq!(audio_after.disposition, Disposition::Drop);
-    assert!(audio_after.effects.is_empty(), "the chunk goes to the ring, not the engine");
-
-    // A subsequent edge — now with that pre-roll present — opens cleanly.
-    let restarted = stage.decide_data(&DataFrame::SpeechStarted);
-    assert_eq!(summarize(&restarted.effects), vec!["begin 16000/1", "feed 8"]);
-
-    // And a SpeechStopped with no open utterance is itself a forwarded no-op.
-    let mut idle = SttStage::new(Mock::silent());
-    let stopped = idle.decide_data(&DataFrame::SpeechStopped);
-    assert_eq!(stopped.disposition, Disposition::Forward);
-    assert!(stopped.effects.is_empty(), "nothing to end when not in speech");
-}
-
-#[test]
-fn duplicate_speech_edges_are_idempotent_both_ways() {
-    let mut stage = SttStage::new(Mock::silent());
-    stage.decide_data(&audio(16_000, 1, 4)); // one chunk of pre-roll
-
-    // First SpeechStarted opens the utterance...
     let first = stage.decide_data(&DataFrame::SpeechStarted);
-    assert_eq!(summarize(&first.effects), vec!["begin 16000/1", "feed 4"]);
-    // ...a duplicate one is a no-op: forwarded, but no second begin_utterance.
-    let dup_start = stage.decide_data(&DataFrame::SpeechStarted);
-    assert_eq!(dup_start.disposition, Disposition::Forward);
-    assert!(dup_start.effects.is_empty(), "a repeated start must not begin a second utterance");
-
-    // First SpeechStopped closes it...
-    let stop = stage.decide_data(&DataFrame::SpeechStopped);
-    assert_eq!(summarize(&stop.effects), vec!["end"]);
-    // ...a duplicate one is a no-op: forwarded, no second end_utterance.
-    let dup_stop = stage.decide_data(&DataFrame::SpeechStopped);
-    assert_eq!(dup_stop.disposition, Disposition::Forward);
-    assert!(dup_stop.effects.is_empty(), "a repeated stop must not end a second time");
+    let second = stage.decide_data(&DataFrame::SpeechStarted);
+    assert_eq!(summarize(&first.effects), vec!["begin"]);
+    assert_eq!(summarize(&second.effects), vec!["begin"], "no latch: the effect is emitted again");
 }
 
 #[test]
-fn format_change_while_idle_clears_the_ring() {
-    let mut stage = SttStage::new(Mock::silent());
-
-    // Two chunks accumulate in 16 kHz mono...
-    stage.decide_data(&audio(16_000, 1, 10));
-    stage.decide_data(&audio(16_000, 1, 10));
-    // ...then a chunk in a different format arrives. The ring assumes one uniform
-    // format, so it drops the stale contents and restarts in the new one.
-    stage.decide_data(&audio(48_000, 2, 8));
-
-    let started = stage.decide_data(&DataFrame::SpeechStarted);
-    assert_eq!(
-        summarize(&started.effects),
-        vec!["begin 48000/2", "feed 8"],
-        "only the post-change chunk survives, and begin uses its format",
-    );
-}
-
-#[test]
-fn interrupt_cancels_resets_and_keeps_the_ring() {
+fn nonconforming_chunk_cancels_and_emits_reject() {
+    // The synchronous half of the fatal path: a mismatch cancels the engine
+    // (hygiene) and emits RejectFormat. The fatal teardown itself is a perform
+    // concern, pinned by the run-loop tests below.
     let mock = Mock::silent();
     let log = mock.log.clone();
     let mut stage = SttStage::new(mock);
 
-    // A chunk of pre-roll accumulates while idle.
-    stage.decide_data(&audio(16_000, 1, 12));
+    let rejected = stage.decide_data(&audio(48_000, 2, 8));
+    assert_eq!(rejected.disposition, Disposition::Drop, "the nonconforming chunk is consumed");
+    assert_eq!(summarize(&rejected.effects), vec!["reject 48000/2"]);
+    assert_eq!(log.lock().unwrap().cancels, 1, "the engine is cancelled before the reject");
+}
 
-    // An interrupt fires the cancel control-call, forwards, and emits nothing.
-    let interrupt = stage.decide_system(Direction::Down, &SystemFrame::Interrupt);
-    assert_eq!(interrupt.disposition, Disposition::Forward);
-    assert!(interrupt.effects.is_empty(), "interrupt cancels via a control-call, not an effect");
-    assert_eq!(log.lock().unwrap().cancels, 1, "the engine's cancel flag was flipped");
+#[test]
+fn interrupt_cancels_unconditionally() {
+    let mock = Mock::silent();
+    let log = mock.log.clone();
+    let mut stage = SttStage::new(mock);
 
-    // The ring survived the interrupt (it only accumulates while idle), so the
-    // next SpeechStarted still replays that pre-roll.
-    let started = stage.decide_data(&DataFrame::SpeechStarted);
-    assert_eq!(summarize(&started.effects), vec!["begin 16000/1", "feed 12"]);
+    // While idle: an interrupt still fires the cancel control-call, forwards, and
+    // emits nothing. It is idempotent, so cancelling with no open utterance is a
+    // harmless no-op.
+    let idle = stage.decide_system(Direction::Down, &SystemFrame::Interrupt);
+    assert_eq!(idle.disposition, Disposition::Forward);
+    assert!(idle.effects.is_empty(), "interrupt cancels via a control-call, not an effect");
+    assert_eq!(log.lock().unwrap().cancels, 1);
 
-    // A mid-speech interrupt resets the in-speech state cleanly: audio that
-    // follows is buffered as fresh pre-roll again, not fed to a torn utterance.
-    stage.decide_system(Direction::Down, &SystemFrame::Interrupt);
-    assert_eq!(log.lock().unwrap().cancels, 2);
-    let idle_again = stage.decide_data(&audio(16_000, 1, 7));
-    assert_eq!(idle_again.disposition, Disposition::Drop);
-    assert!(idle_again.effects.is_empty(), "after interrupt the stage is idle: audio goes to the ring");
-    let restarted = stage.decide_data(&DataFrame::SpeechStarted);
-    assert_eq!(summarize(&restarted.effects), vec!["begin 16000/1", "feed 7"], "clean restart");
+    // Mid-utterance (after a begin): the same unconditional cancel.
+    stage.decide_data(&DataFrame::SpeechStarted);
+    let mid = stage.decide_system(Direction::Down, &SystemFrame::Interrupt);
+    assert_eq!(mid.disposition, Disposition::Forward);
+    assert!(mid.effects.is_empty());
+    assert_eq!(log.lock().unwrap().cancels, 2, "cancel is unconditional, idle or mid-utterance");
 }
 
 #[test]
@@ -273,11 +243,10 @@ fn events_map_to_user_transcripts() {
     block_on(async {
         let stage = SttStage::new(Mock::silent());
         let (out, mut inbound) = link(8);
-        let fmt = AudioFormat::new(16_000, 1);
 
         // Drive the three effects perform interprets, in utterance order.
-        stage.perform(SttEffect::Begin(fmt), &out).await.unwrap();
-        let chunk = AudioChunk::new(Arc::from(&[0.0f32; 4][..]), fmt);
+        stage.perform(SttEffect::Begin, &out).await.unwrap();
+        let chunk = AudioChunk::new(Arc::from(&[0.0f32; 4][..]), FMT);
         stage.perform(SttEffect::Feed(chunk), &out).await.unwrap();
         stage.perform(SttEffect::End, &out).await.unwrap();
 
@@ -305,13 +274,123 @@ fn events_map_to_user_transcripts() {
 }
 
 #[test]
+fn first_nonconforming_chunk_completes_with_a_fatal_error() {
+    block_on(async {
+        // The engine declares 16 kHz mono; the very first chunk is 48 kHz stereo.
+        let mock = Mock::silent();
+        let log = mock.log.clone();
+        let (ends, driver) = PipelineBuilder::new().stage(SttStage::new(mock)).build().start();
+        let input = ends.input;
+        let mut output = ends.output;
+
+        let feed = async move {
+            let _ = input.send_system(Direction::Down, SystemFrame::Start).await;
+            let _ = input.send_data(audio(48_000, 2, 4)).await;
+        };
+
+        let drain = async move {
+            let mut error = None;
+            while let Some(received) = output.recv().await {
+                if let Received::Sys(Direction::Up, SystemFrame::Error { message, fatal }) = received
+                {
+                    error = Some((message, fatal));
+                }
+            }
+            error
+        };
+
+        let (_, error, _) = futures::join!(feed, drain, driver);
+        let (message, fatal) = error.expect("a format mismatch should surface an Error frame");
+        assert!(fatal, "a format mismatch is fatal: the stage can never conform the audio");
+        assert!(message.contains("SttStage requires"), "unexpected message: {message}");
+        assert_eq!(log.lock().unwrap().cancels, 1, "the engine was cancelled before the reject");
+    });
+}
+
+#[test]
+fn mismatch_mid_utterance_cancels_and_tears_down_fatally() {
+    block_on(async {
+        // Open a real utterance, then feed a nonconforming chunk: the mismatch is
+        // still fatal, and the engine is cancelled first so no worker is left
+        // mid-utterance.
+        let mock = Mock::silent();
+        let log = mock.log.clone();
+        let (ends, driver) = PipelineBuilder::new().stage(SttStage::new(mock)).build().start();
+        let input = ends.input;
+        let mut output = ends.output;
+
+        let feed = async move {
+            let _ = input.send_system(Direction::Down, SystemFrame::Start).await;
+            let _ = input.send_data(DataFrame::SpeechStarted).await;
+            let _ = input.send_data(audio(16_000, 1, 8)).await; // conforming
+            let _ = input.send_data(audio(48_000, 2, 8)).await; // mismatch
+        };
+
+        let drain = async move {
+            let mut error = None;
+            while let Some(received) = output.recv().await {
+                if let Received::Sys(Direction::Up, SystemFrame::Error { message, fatal }) = received
+                {
+                    error = Some((message, fatal));
+                }
+            }
+            error
+        };
+
+        let (_, error, _) = futures::join!(feed, drain, driver);
+        let (message, fatal) = error.expect("a mid-utterance mismatch should surface an Error frame");
+        assert!(fatal, "a format mismatch is fatal wherever it arrives");
+        assert!(message.contains("SttStage requires"), "unexpected message: {message}");
+        let log = log.lock().unwrap();
+        assert_eq!(log.begins, 1, "the utterance opened before the mismatch");
+        assert_eq!(log.cancels, 1, "the mismatch cancelled the open utterance");
+    });
+}
+
+#[test]
+fn audio_before_speech_started_surfaces_a_recoverable_engine_error() {
+    block_on(async {
+        // The stage trusts the gate contract rather than policing it. If a
+        // malformed upstream sends audio ahead of any SpeechStarted, the stage
+        // feeds it and the engine — here a real `Buffered`, with no open
+        // utterance — surfaces a feed-without-begin protocol error. It is loud
+        // and recoverable, not silently absorbed.
+        let stage = SttStage::new(Buffered::new(OneShot));
+        let (ends, driver) = PipelineBuilder::new().stage(stage).build().start();
+        let input = ends.input;
+        let mut output = ends.output;
+
+        let feed = async move {
+            let _ = input.send_system(Direction::Down, SystemFrame::Start).await;
+            let _ = input.send_data(audio(16_000, 1, 4)).await;
+        };
+
+        let drain = async move {
+            let mut error = None;
+            while let Some(received) = output.recv().await {
+                if let Received::Sys(Direction::Up, SystemFrame::Error { message, fatal }) = received
+                {
+                    error = Some((message, fatal));
+                }
+            }
+            error
+        };
+
+        let (_, error, _) = futures::join!(feed, drain, driver);
+        let (message, fatal) = error.expect("the protocol violation should surface an Error frame");
+        assert!(!fatal, "an engine protocol error is recoverable, not fatal");
+        assert!(
+            message.contains("without an active utterance"),
+            "unexpected message: {message}",
+        );
+    });
+}
+
+#[test]
 fn barge_in_drops_the_in_flight_feed_and_cancels() {
     // The run loop's job here is what no decide-level test can show: an Interrupt
     // arriving mid-`feed` drops that in-flight `perform` and the stage cancels the
-    // engine from `decide_system`. (That the *next* utterance then runs clean —
-    // no torn state — is pinned deterministically by
-    // `interrupt_cancels_resets_and_keeps_the_ring`; replaying a second utterance
-    // through the pipeline here would race the interrupt's data-lane flush.)
+    // engine from `decide_system`.
     block_on(async {
         // The first feed parks on `park_rx`; keeping `park_tx` alive means it only
         // unparks when the interrupt drops its future.
@@ -328,12 +407,11 @@ fn barge_in_drops_the_in_flight_feed_and_cancels() {
         let feed = async move {
             let _park_tx = park_tx; // keep the feed parked until the interrupt drops it
             let _ = input.send_system(Direction::Down, SystemFrame::Start).await;
-            // A pre-roll chunk, then the edge — both on the data lane, so the run
-            // loop processes them in order: the chunk lands in the ring, then
-            // SpeechStarted drains it and emits `[Begin, Feed(4)]`. That first feed
+            // Under the gate contract the edge leads: SpeechStarted opens the
+            // utterance (`begin`), then the chunk feeds — and that first feed
             // parks.
-            let _ = input.send_data(audio(16_000, 1, 4)).await;
             let _ = input.send_data(DataFrame::SpeechStarted).await;
+            let _ = input.send_data(audio(16_000, 1, 4)).await;
             // Wait until that feed is actually in flight before barging in, so the
             // interrupt lands on a parked perform rather than racing ahead of it.
             assert_eq!(notes_rx.next().await, Some(Note::FeedStarted));
@@ -357,7 +435,7 @@ fn barge_in_drops_the_in_flight_feed_and_cancels() {
 
         let log = log.lock().unwrap();
         assert_eq!(log.cancels, 1, "the barge-in flipped the engine's cancel flag once");
-        assert_eq!(log.begins.len(), 1, "the utterance opened before the feed parked");
+        assert_eq!(log.begins, 1, "the utterance opened before the feed parked");
         assert!(log.feeds.is_empty(), "the feed was dropped before it recorded anything");
         assert_eq!(log.ends, 0, "a cancelled utterance is never ended");
         assert_eq!(finals, 0, "the dropped feed produced no transcript");

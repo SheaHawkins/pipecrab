@@ -1,7 +1,8 @@
 //! `Buffered` adapts a one-shot `Transcriber` to the `StreamingTranscriber`
 //! protocol: it accumulates `feed`s (emitting no partials) and produces a single
-//! `Final` on `end_utterance`. These tests pin that behavior plus the two honest
-//! limitations — deferred format rejection and stale-result discard on cancel.
+//! `Final` on `end_utterance`. These tests pin that behavior, its one honest
+//! limitation (stale-result discard on cancel), and that it reports the wrapped
+//! engine's `input_format`.
 //!
 //! Deterministic and tokio-free (`block_on`), so it rides the default
 //! `cargo test --workspace` path.
@@ -15,7 +16,7 @@ use pipecrab_core::AudioFormat;
 use pipecrab_stt::{Buffered, SttError, SttEvent, StreamingTranscriber, Transcriber};
 
 /// A hardware-free one-shot transcriber: reports the sample count it was handed
-/// and accepts only its configured format.
+/// and declares its configured format.
 struct CountingTranscriber {
     format: AudioFormat,
 }
@@ -23,10 +24,11 @@ struct CountingTranscriber {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl Transcriber for CountingTranscriber {
-    async fn transcribe(&self, samples: &[f32], format: AudioFormat) -> Result<String, SttError> {
-        if format != self.format {
-            return Err(SttError::UnsupportedFormat { expected: self.format, got: format });
-        }
+    fn input_format(&self) -> AudioFormat {
+        self.format
+    }
+
+    async fn transcribe(&self, samples: &[f32]) -> Result<String, SttError> {
         Ok(format!("heard {} samples", samples.len()))
     }
 }
@@ -40,7 +42,11 @@ struct GatedTranscriber {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl Transcriber for GatedTranscriber {
-    async fn transcribe(&self, _samples: &[f32], _format: AudioFormat) -> Result<String, SttError> {
+    fn input_format(&self) -> AudioFormat {
+        FMT
+    }
+
+    async fn transcribe(&self, _samples: &[f32]) -> Result<String, SttError> {
         // Take the receiver out before awaiting so the mutex guard never crosses
         // the `.await`.
         let rx = self.gate.lock().unwrap().take().expect("transcribe called more than once");
@@ -52,10 +58,16 @@ impl Transcriber for GatedTranscriber {
 const FMT: AudioFormat = AudioFormat { sample_rate: 16_000, channels: 1 };
 
 #[test]
+fn input_format_delegates_to_the_inner_transcriber() {
+    let engine = Buffered::new(CountingTranscriber { format: AudioFormat::new(48_000, 2) });
+    assert_eq!(engine.input_format(), AudioFormat::new(48_000, 2));
+}
+
+#[test]
 fn accumulates_windows_and_finalizes_once() {
     block_on(async {
         let engine = Buffered::new(CountingTranscriber { format: FMT });
-        engine.begin_utterance(FMT).await.unwrap();
+        engine.begin_utterance().await.unwrap();
 
         // Two windows accumulate; neither yields an event.
         assert_eq!(engine.feed(&[0.0; 3]).await.unwrap(), vec![]);
@@ -72,38 +84,32 @@ fn begin_utterance_rejects_a_second_begin() {
     block_on(async {
         let engine = Buffered::new(CountingTranscriber { format: FMT });
 
-        engine.begin_utterance(FMT).await.unwrap();
+        engine.begin_utterance().await.unwrap();
         engine.feed(&[0.0; 9]).await.unwrap();
 
         // A second begin without closing the first is a protocol violation:
         // reject it rather than silently dropping the 9 accumulated samples.
-        assert!(matches!(engine.begin_utterance(FMT).await, Err(SttError::Engine(_))));
+        assert!(matches!(engine.begin_utterance().await, Err(SttError::Engine(_))));
 
         // The original utterance is untouched and still finalizes over its 9.
         let events = engine.end_utterance().await.unwrap();
         assert_eq!(events, vec![SttEvent::Final("heard 9 samples".into())]);
 
         // Once closed, a fresh begin is accepted again.
-        engine.begin_utterance(FMT).await.unwrap();
+        engine.begin_utterance().await.unwrap();
     });
 }
 
 #[test]
-fn unsupported_format_surfaces_from_end_not_begin() {
+fn feed_and_end_without_begin_are_protocol_errors() {
     block_on(async {
         let engine = Buffered::new(CountingTranscriber { format: FMT });
-        // begin accepts any format — validation is deferred to the one-shot engine.
-        let wrong = AudioFormat::new(48_000, 2);
-        engine.begin_utterance(wrong).await.expect("begin does not validate the format");
-        engine.feed(&[0.0; 4]).await.unwrap();
-
-        match engine.end_utterance().await {
-            Err(SttError::UnsupportedFormat { expected, got }) => {
-                assert_eq!(expected, FMT);
-                assert_eq!(got, wrong);
-            }
-            other => panic!("expected a deferred format rejection, got {other:?}"),
-        }
+        // With no active utterance, feed and end both surface the protocol
+        // violation rather than silently accepting stray audio — this is how an
+        // upstream contract breach (audio ahead of any SpeechStarted) becomes a
+        // loud, recoverable engine error at the stage.
+        assert!(matches!(engine.feed(&[0.0; 4]).await, Err(SttError::Engine(_))));
+        assert!(matches!(engine.end_utterance().await, Err(SttError::Engine(_))));
     });
 }
 
@@ -111,7 +117,7 @@ fn unsupported_format_surfaces_from_end_not_begin() {
 fn cancel_discards_the_pending_utterance() {
     block_on(async {
         let engine = Buffered::new(CountingTranscriber { format: FMT });
-        engine.begin_utterance(FMT).await.unwrap();
+        engine.begin_utterance().await.unwrap();
         engine.feed(&[0.0; 4]).await.unwrap();
 
         engine.cancel();
@@ -122,7 +128,7 @@ fn cancel_discards_the_pending_utterance() {
         assert!(matches!(engine.end_utterance().await, Err(SttError::Engine(_))));
 
         // A fresh utterance starts clean — only the new samples count.
-        engine.begin_utterance(FMT).await.unwrap();
+        engine.begin_utterance().await.unwrap();
         engine.feed(&[0.0; 1]).await.unwrap();
         let events = engine.end_utterance().await.unwrap();
         assert_eq!(events, vec![SttEvent::Final("heard 1 samples".into())]);
@@ -133,7 +139,7 @@ fn cancel_discards_the_pending_utterance() {
 fn cancel_is_idempotent() {
     block_on(async {
         let engine = Buffered::new(CountingTranscriber { format: FMT });
-        engine.begin_utterance(FMT).await.unwrap();
+        engine.begin_utterance().await.unwrap();
         engine.feed(&[0.0; 4]).await.unwrap();
         engine.cancel();
         engine.cancel(); // second cancel is a no-op, not a panic
@@ -146,7 +152,7 @@ fn cancel_discards_an_in_flight_result() {
     block_on(async {
         let (tx, rx) = oneshot::channel::<()>();
         let engine = Buffered::new(GatedTranscriber { gate: Mutex::new(Some(rx)) });
-        engine.begin_utterance(FMT).await.unwrap();
+        engine.begin_utterance().await.unwrap();
         engine.feed(&[0.0; 4]).await.unwrap();
 
         // Drive end_utterance (which parks on the gate) concurrently with a
