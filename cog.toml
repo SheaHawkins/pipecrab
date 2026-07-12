@@ -1,0 +1,7 @@
+# Conventional-commit enforcement for cocogitto (https://cocogitto.io), run by
+# .github/workflows/conventional-commits.yml on every pull request.
+#
+# The allowed commit types are cocogitto's Angular defaults, which are exactly
+# the set documented in AGENTS.md: build, chore, ci, docs, feat, fix, perf,
+# refactor, revert, style, test. Any other type fails `cog check` -- including
+# merge commits, which are not allowed (history stays linear: squash or rebase).
