@@ -1,0 +1,57 @@
+name: Conventional Commits
+
+# Enforces conventionalcommits.org on every pull request, at both places a
+# commit message can enter `main`:
+#   * pr-title       — for squash merges, where the PR title becomes the commit.
+#   * commit-messages — for merge/rebase, where each PR commit lands as-is.
+# The allowed types are kept in sync with AGENTS.md and cog.toml. Mark both jobs
+# as required status checks on `main` (Settings -> Branches) to actually block a
+# non-conforming merge.
+
+on:
+  pull_request:
+    # `edited` re-runs the checks when the PR title (or body) changes.
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Lint PR title against the conventional-commit spec
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Keep in sync with AGENTS.md and cog.toml.
+          types: |
+            build
+            chore
+            ci
+            docs
+            feat
+            fix
+            perf
+            refactor
+            revert
+            style
+            test
+
+  commit-messages:
+    name: Validate commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history + the real PR head (not the synthetic merge commit) so
+          # the base..head range below resolves to exactly this PR's commits.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: cog check
+        uses: cocogitto/cocogitto-action@v4
+        with:
+          command: check
+          args: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
