@@ -1,28 +1,13 @@
-//! [`Debounced`]: lifts a raw [`SpeechScorer`] into a full
-//! [`VoiceActivityDetector`], the sibling of `pipecrab-stt`'s `Buffered`.
+//! Adapts a raw [`SpeechScorer`] into a [`VoiceActivityDetector`].
 //!
-//! A [`SpeechScorer`] answers only "how likely is *this* window speech?" for one
-//! exact-length window at a time. [`Debounced`] absorbs, in one place, the three
-//! things that stand between that and the edge-emitting
-//! [`VoiceActivityDetector`] contract:
+//! [`Debounced`] supplies the policy a scorer lacks:
 //!
-//! * **Windowing** — arbitrary-length chunks are accumulated into exact
-//!   [`window_len()`](SpeechScorer::window_len) windows, with the remainder
-//!   carried across calls.
-//! * **Threshold** — a probability is a speech/not-speech bit only once compared
-//!   against [`DebounceConfig::threshold`].
-//! * **Hangover** — a run of consecutive agreeing windows must accrue before the
-//!   state flips ([`start_windows`](DebounceConfig::start_windows) /
-//!   [`stop_windows`](DebounceConfig::stop_windows)), so a stray window does not
-//!   chatter start/stop pairs.
+//! * It buffers arbitrary input into [`SpeechScorer::window_len`] windows.
+//! * It compares probabilities with [`DebounceConfig::threshold`].
+//! * It requires consecutive windows before changing state.
 //!
-//! # Only for scorers — double hysteresis is impossible by construction
-//!
-//! [`Debounced`] is the adapter for *raw scorers only*. A segmenter-class engine
-//! (sherpa's VAD) owns its own debounce — its min-speech / min-silence config
-//! *is* one — and implements [`VoiceActivityDetector`] directly, never through
-//! this adapter. Because a segmenter is never wrapped by `Debounced`, no engine
-//! is ever debounced twice: double hysteresis cannot arise by construction.
+//! Segmenting engines that already debounce should implement
+//! [`VoiceActivityDetector`] directly.
 
 use std::sync::Mutex;
 
@@ -34,14 +19,11 @@ use crate::{SpeechScorer, VadError, VadEvent, VoiceActivityDetector};
 /// Threshold and hangover for [`Debounced`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DebounceConfig {
-    /// Probability at or above which a window counts as speech. The default is
-    /// `0.5`, silero's conventional midpoint.
+    /// Probability at or above which a window counts as speech.
     pub threshold: f32,
-    /// Consecutive speech windows required to declare speech *started*. Small so
-    /// onset is responsive.
+    /// Consecutive speech windows required to start speech.
     pub start_windows: u32,
-    /// Consecutive non-speech windows required to declare speech *stopped*.
-    /// Larger, so a brief pause mid-utterance does not clip it.
+    /// Consecutive non-speech windows required to stop speech.
     pub stop_windows: u32,
 }
 
@@ -56,9 +38,7 @@ impl Default for DebounceConfig {
     }
 }
 
-/// The current run of the edge detector: are we in speech, and how many
-/// consecutive windows have disagreed with that so far. Ported verbatim from the
-/// stage's former `VadState`.
+/// Current speech state and consecutive disagreeing windows.
 struct ObserveState {
     in_speech: bool,
     against: u32,
@@ -97,8 +77,7 @@ impl ObserveState {
     }
 }
 
-/// The mutable session state, behind a [`Mutex`] because the trait methods take
-/// `&self`. The lock is never held across an `.await`.
+/// Mutable session state. The lock is never held across an await point.
 struct DebouncedState {
     /// Samples that did not fill a whole window; carried to the next call.
     remainder: Vec<f32>,
@@ -106,9 +85,7 @@ struct DebouncedState {
     observe: ObserveState,
 }
 
-/// Lifts a [`SpeechScorer`] into a [`VoiceActivityDetector`] by windowing its
-/// input, thresholding its probabilities, and debouncing the result into edges.
-/// The sibling of `pipecrab-stt`'s `Buffered`; see the module docs.
+/// Windows scorer input and debounces its probabilities into speech edges.
 pub struct Debounced<S: SpeechScorer> {
     scorer: S,
     config: DebounceConfig,

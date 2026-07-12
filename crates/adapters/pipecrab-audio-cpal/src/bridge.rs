@@ -1,14 +1,8 @@
-//! A backend-agnostic, lock-free real-time ↔ async bridge over an [`rtrb`] ring
-//! of `f32` samples.
+//! A lock-free bridge between real-time callbacks and asynchronous audio I/O.
 //!
-//! The ring carries `f32` samples one way; a [`Signal`] carries wakeups and a
-//! "the stream died" flag the other way. A real-time audio callback owns the RT
-//! end — the ring's *producer* for capture, its *consumer* for playback — and
-//! only ever pushes/pops samples and calls [`Signal::wake`]/[`Signal::fail`],
-//! never blocking or allocating. [`CaptureRing`] / [`PlaybackRing`] own the
-//! async end. Nothing here touches cpal (only `rtrb` + `futures`), so it is a
-//! reusable building block for any callback-driven backend, and unit-testable
-//! without audio hardware.
+//! An [`rtrb`] ring carries samples; [`Signal`] carries wakeups and failure.
+//! Callbacks only move samples and signal the async side. This module does not
+//! depend on cpal, so it can be tested without hardware.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -20,12 +14,10 @@ use rtrb::{Consumer, Producer};
 
 use pipecrab_audio::{AudioChunk, AudioError, AudioFormat};
 
-/// Wake + close signal shared between an RT callback and the async side.
+/// A wake and close signal shared across the real-time boundary.
 ///
-/// The async side [`register`](Self::register)s its task waker; the RT side
-/// [`wake`](Self::wake)s after moving samples, or [`fail`](Self::fail)s when the
-/// stream errors — which both flips the closed flag *and* wakes, so a parked
-/// task can never hang after a device failure.
+/// [`Signal::fail`] closes and wakes atomically from the caller's perspective,
+/// preventing a parked task from hanging after device failure.
 pub(crate) struct Signal {
     waker: AtomicWaker,
     closed: AtomicBool,
@@ -39,18 +31,17 @@ impl Signal {
         })
     }
 
-    /// Async side: arm the waker to be notified of the next `wake`/`fail`.
+    /// Registers the async task for the next wake or failure.
     pub(crate) fn register(&self, waker: &Waker) {
         self.waker.register(waker);
     }
 
-    /// RT side: notify the async task that progress may be possible.
+    /// Notifies the async task that progress may be possible.
     pub(crate) fn wake(&self) {
         self.waker.wake();
     }
 
-    /// RT side: mark the stream failed and wake, so a parked task resolves to an
-    /// error instead of hanging forever.
+    /// Marks the stream closed and wakes the async task.
     pub(crate) fn fail(&self) {
         self.closed.store(true, Ordering::Release);
         self.waker.wake();
@@ -61,8 +52,7 @@ impl Signal {
     }
 }
 
-/// The async/consumer half of the capture bridge: pops fixed-size mono chunks
-/// out of the ring the input callback fills.
+/// Consumes fixed-size mono chunks from the capture ring.
 pub(crate) struct CaptureRing {
     consumer: Consumer<f32>,
     signal: Arc<Signal>,
@@ -140,8 +130,7 @@ impl CaptureRing {
     }
 }
 
-/// The async/producer half of the playback bridge: pushes a chunk's samples into
-/// the ring the output callback drains, applying backpressure when it is full.
+/// Produces playback samples with backpressure when the ring is full.
 pub(crate) struct PlaybackRing {
     producer: Producer<f32>,
     signal: Arc<Signal>,

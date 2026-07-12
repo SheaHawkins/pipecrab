@@ -1,5 +1,4 @@
-//! [`SttStage`]: the stateless protocol adapter from any [`StreamingTranscriber`]
-//! to a pipeline [`Stage`], driven by the VAD's speech edges.
+//! Adapts a [`StreamingTranscriber`] into a pipeline [`Stage`].
 
 use async_trait::async_trait;
 use pipecrab_core::{
@@ -9,43 +8,29 @@ use pipecrab_runtime::{Outbound, Stage, StageError};
 
 use crate::{StreamingTranscriber, SttError, SttEvent};
 
-/// Adapts any [`StreamingTranscriber`] into a pipeline [`Stage`] as a **stateless
-/// protocol adapter**.
+/// Maps speech edges and audio to the [`StreamingTranscriber`] protocol.
 ///
-/// So the stage is a pure translation: `SpeechStarted` → open the utterance,
-/// each `Audio` chunk → feed it, `SpeechStopped` → close it and drain the final.
+/// `SpeechStarted` opens an utterance, each `Audio` chunk feeds it, and
+/// `SpeechStopped` closes it.
 /// The engine's [`SttEvent`]s are forwarded downstream as [`Transcript`]s.
 ///
 /// # Format authority
 ///
-/// The engine *declares* the one format it accepts via
-/// [`input_format`](StreamingTranscriber::input_format); the stage caches it in
-/// [`new`](Self::new) and enforces it. A nonconforming chunk is a wiring bug,
-/// and the stage rejects it **fatally** (a resample stage upstream is the fix)
-/// rather than running deaf. See the crate-level [format authority](crate) note.
+/// The stage caches [`StreamingTranscriber::input_format`] and rejects a
+/// mismatched chunk fatally.
 ///
 /// # Protocol trust, not defense
 ///
-/// Edge alternation and edges-bracket-audio are the gate's *documented
-/// invariants*. The stage trusts them: it does not track whether an utterance is
-/// open, so a `Feed` before a `Begin` (or a double `Begin`) is not silently
-/// absorbed — the engine's own protocol errors ([`Buffered`](crate::Buffered)
-/// produces them; native adapters will too) surface as recoverable
-/// [`Engine`](SttError::Engine) stage errors, loud and attributable.
+/// The stage trusts the VAD edge-ordering contract. Protocol violations surface
+/// as recoverable [`SttError::Engine`] errors.
 ///
 /// # State and the decide/perform split
 ///
-/// Following the [`Processor`]/[`Stage`] split, `decide_*` is synchronous and
-/// `perform` drives the awaited engine calls. Here `decide_data` touches **no**
-/// mutable state — the `&mut self` goes unused. The engine itself is a
-//  worker-handle (see [`StreamingTranscriber`]), so a barge-in that
-/// drops an in-flight [`feed`](StreamingTranscriber::feed) leaves no torn state,
-/// and the [`Interrupt`](SystemFrame::Interrupt) cancel is a *control call*
-/// invoked right where the interrupt is decided.
+/// The stage is stateless. [`SystemFrame::Interrupt`] invokes
+/// [`StreamingTranscriber::cancel`].
 pub struct SttStage<S: StreamingTranscriber> {
     transcriber: S,
-    /// The one format the engine accepts, cached from
-    /// [`input_format`](StreamingTranscriber::input_format) in [`new`](Self::new).
+    /// The cached [`StreamingTranscriber::input_format`].
     expected: AudioFormat,
 }
 
@@ -60,14 +45,13 @@ impl<S: StreamingTranscriber> SttStage<S> {
     }
 }
 
-/// One step of the utterance protocol: [`SttStage`]'s [`Processor::Effect`].
-/// Emitted by `decide_*`, interpreted by `perform`.
+/// One [`StreamingTranscriber`] protocol operation.
 pub enum SttEffect {
     /// Open an utterance in the engine.
     Begin,
     /// Feed one window of audio to the open utterance and forward any events.
     Feed(AudioChunk),
-    /// Close the utterance, draining its remaining events (including the final).
+    /// Close the utterance and drain remaining events.
     End,
     /// A chunk's format did not match the engine's; fail fatally.
     RejectFormat {
@@ -153,9 +137,7 @@ impl<S: StreamingTranscriber> Stage for SttStage<S> {
     }
 }
 
-/// Forward each engine event downstream as a [`Transcript`]. `Endpoint` is a v1
-/// no-op — the engine's own end-of-utterance signal has no frame to map to yet
-/// (a future `TurnEnded` is out of scope), so it is ignored. TODO: turns
+/// Forwards transcript events and ignores endpoint events.
 async fn forward_events(events: Vec<SttEvent>, out: &Outbound) {
     for event in events {
         let transcript = match event {

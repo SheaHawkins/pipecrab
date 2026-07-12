@@ -1,20 +1,4 @@
-//! `SttStage` is a **stateless** adapter from a `StreamingTranscriber` to a
-//! stage, driven by the VAD gate's `SpeechStarted` / `SpeechStopped` edges. Under
-//! the gate contract the edges bracket the utterance audio — `SpeechStarted`
-//! precedes every chunk, `SpeechStopped` follows the last — so the stage just
-//! translates: edge → begin/end, chunk → feed.
-//!
-//! The edges ride the data lane, so they are handled in `decide_data` alongside
-//! audio; only `Interrupt` remains a `decide_system` frame. The behavior table is
-//! defined in terms of that synchronous `decide_*` output, so the deterministic
-//! tests drive `decide_data` / `decide_system` directly and assert on the emitted
-//! effects — no lane-ordering races. The remaining tests use the real run loop
-//! for the parts that only exist past the decide step: the `SttEvent` →
-//! `Transcript` mapping in `perform`, the fatal format teardown, a surfaced
-//! protocol violation, and barge-in.
-//!
-//! Deterministic and tokio-free (`block_on`), so it rides the default
-//! `cargo test --workspace` path.
+//! Tests for [`SttStage`](pipecrab_stt::SttStage).
 
 use std::sync::{Arc, Mutex};
 
@@ -37,7 +21,7 @@ const FMT: AudioFormat = AudioFormat {
     channels: 1,
 };
 
-/// What a [`Mock`] recorded, shared with the test via an `Arc<Mutex<_>>`.
+/// Calls recorded by [`Mock`].
 #[derive(Default)]
 struct Log {
     /// Number of `begin_utterance` calls.
@@ -50,9 +34,7 @@ struct Log {
     cancels: usize,
 }
 
-/// A milestone the [`Mock`] reports to a pipeline test so it can advance the
-/// input script only once the engine has reached a known point — the antidote to
-/// the sys-before-data lane priority reordering the frames.
+/// A pipeline-test milestone reported by [`Mock`].
 #[derive(Debug, PartialEq, Eq)]
 enum Note {
     /// The gated first `feed` has started and is now parked.
@@ -61,19 +43,16 @@ enum Note {
     Fed(usize),
 }
 
-/// A hardware-free [`StreamingTranscriber`]: declares [`FMT`], records every
-/// call, emits a partial per feed and a final on end, and optionally parks its
-/// first `feed` so a barge-in can drop it in flight.
+/// Records calls and emits a partial per feed and a final on end.
 struct Mock {
     log: Arc<Mutex<Log>>,
     notes: mpsc::UnboundedSender<Note>,
-    /// If present, the first `feed` awaits this (never fired) and is unparked
-    /// only by the interrupt dropping its future.
+    /// Parks the first `feed` until its future is dropped.
     park: Mutex<Option<oneshot::Receiver<()>>>,
 }
 
 impl Mock {
-    /// A mock whose notes go nowhere — for the synchronous decide/perform tests.
+    /// Creates a mock that discards milestones.
     fn silent() -> Self {
         let (notes, _rx) = mpsc::unbounded();
         Self {
@@ -83,7 +62,7 @@ impl Mock {
         }
     }
 
-    /// A mock that reports milestones on `notes`; `park` gates its first feed.
+    /// Creates a mock that reports milestones and optionally parks its first feed.
     fn reporting(notes: mpsc::UnboundedSender<Note>, park: Option<oneshot::Receiver<()>>) -> Self {
         Self {
             log: Arc::new(Mutex::new(Log::default())),
@@ -142,9 +121,7 @@ impl StreamingTranscriber for Mock {
     }
 }
 
-/// A hardware-free one-shot [`Transcriber`]: declares [`FMT`] and echoes its
-/// sample count. Wrapped in [`Buffered`] to exercise the stage against a *real*
-/// adapter that surfaces protocol violations.
+/// A one-shot transcriber that reports its sample count.
 struct OneShot;
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -159,7 +136,7 @@ impl Transcriber for OneShot {
     }
 }
 
-/// An `Audio` data frame of `n` zeroed interleaved samples in the given format.
+/// Creates an audio frame with `n` zeroed samples.
 fn audio(sample_rate: u32, channels: u16, n: usize) -> DataFrame {
     let chunk = AudioChunk::new(
         Arc::from(vec![0.0f32; n]),

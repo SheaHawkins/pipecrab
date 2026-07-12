@@ -1,10 +1,10 @@
-//! pipecrab-core: Sans-IO
+//! Sans-I/O frame types and stage decisions.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-/// Frame types and the [`CustomFrame`] extension trait.
+/// Pipeline frames and the [`CustomFrame`] extension trait.
 pub mod frame;
-/// The [`Processor`] trait: synchronous, sans-IO stage logic.
+/// Synchronous, sans-I/O stage logic through [`Processor`].
 pub mod processor;
 
 pub use frame::{

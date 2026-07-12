@@ -1,30 +1,15 @@
-//! [`Pipeline`]: a sequence of [`Stage`]s that is itself a [`Stage`].
-//!
-//! A pipeline *is* a stage ([`impl Stage for Pipeline`](Pipeline#impl-Stage-for-Pipeline)),
-//! so pipelines nest: add one to another builder with
-//! [`PipelineBuilder::stage`]. It reuses the same [`Inbound`] / [`Outbound`]
-//! abstraction every stage connects through — no bespoke channel types in the
-//! public surface.
+//! A sequence of [`Stage`]s that is itself a stage.
 //!
 //! # Topology (v1)
 //!
-//! Both lanes form a linear downstream chain, wired at [`run`](Stage::run)
-//! time: the `inbound` handed to the pipeline feeds stage 0, each stage's
-//! output feeds the next via [`link`], and the tail's output is the pipeline's
-//! `out`. The `sys` lane is threaded through every stage the same way, so a
-//! control frame visits each stage in turn, and closing the input cascades
-//! shutdown from head to tail.
+//! Both lanes form a linear downstream chain wired by [`Stage::run`].
 //!
-//! Upstream routing of `Up`-travelling system frames *through* the stages is
-//! not yet wired: a [`Stage::perform`] error surfaces on the tail's output,
-//! tagged [`Direction::Up`](pipecrab_core::Direction::Up). That is a deliberate
-//! v1 limitation.
+//! Upstream system frames are exposed at the tail rather than routed back
+//! through preceding stages.
 //!
 //! # Driving it
 //!
-//! [`Pipeline::start`] wires fresh external [`PipelineEnds`] and hands back the
-//! driving future. The caller drives it — `block_on` natively, `spawn_local` in
-//! the browser; there is no spawning and no executor trait.
+//! [`Pipeline::start`] returns endpoints and a future for the caller to drive.
 
 use async_trait::async_trait;
 use futures::channel::mpsc;
@@ -34,25 +19,17 @@ use pipecrab_core::{DataFrame, Decision, Direction, Processor, SystemFrame};
 
 use crate::{Inbound, MaybeSend, MaybeSendSync, Outbound, Stage, StageError};
 
-/// The boxed pipeline driver future returned by [`Pipeline::start`].
-///
-/// `Send` on native targets, so the driver can be handed to a multi-threaded
-/// executor (`tokio::spawn`); `!Send` on `wasm32`, where it is `spawn_local`-ed.
+/// The boxed driver future returned by [`Pipeline::start`].
 #[cfg(not(target_arch = "wasm32"))]
 pub type DriverFuture = futures::future::BoxFuture<'static, ()>;
 /// The boxed pipeline driver future returned by [`Pipeline::start`].
 #[cfg(target_arch = "wasm32")]
 pub type DriverFuture = futures::future::LocalBoxFuture<'static, ()>;
 
-/// Default buffer depth for each lane channel: how many frames may queue on a
-/// lane before a send awaits (backpressure). Arbitrary-but-reasonable, not a
-/// convention; tune it with [`PipelineBuilder::capacity`].
+/// Default capacity of each lane.
 const DEFAULT_CAPACITY: usize = 16;
 
-/// Create a linked [`Outbound`] / [`Inbound`] pair sharing one data channel and
-/// one system channel: frames sent on the `Outbound` are received on the
-/// `Inbound`. This is the single wiring primitive — pipelines use it between
-/// adjacent stages and at their external ends.
+/// Creates linked [`Outbound`] and [`Inbound`] endpoints with two typed lanes.
 pub fn link(capacity: usize) -> (Outbound, Inbound) {
     let capacity = capacity.max(1);
     let (data_tx, data_rx) = mpsc::channel::<DataFrame>(capacity);
@@ -69,11 +46,9 @@ pub fn link(capacity: usize) -> (Outbound, Inbound) {
     )
 }
 
-/// The external endpoints of a running [`Pipeline`]: send in via `input`, read
-/// out via `output` — the same [`Outbound`] / [`Inbound`] every stage uses.
+/// The external endpoints of a running [`Pipeline`].
 ///
-/// Returned by [`Pipeline::start`]. Dropping `input` closes the head's inbound
-/// lanes, which cascades shutdown downstream and lets the driver finish.
+/// Dropping `input` closes the pipeline and allows its driver to finish.
 pub struct PipelineEnds {
     /// Send data and system frames into the head of the pipeline.
     pub input: Outbound,
@@ -81,11 +56,7 @@ pub struct PipelineEnds {
     pub output: Inbound,
 }
 
-/// Type-erased runner for a stage stored in a pipeline.
-///
-/// Effects remain strongly typed inside each concrete [`Stage`]; the pipeline
-/// only needs to own and run the stage, so its storage does not expose that
-/// associated type.
+/// Type-erased runner for a stored stage.
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 trait ErasedStage: MaybeSendSync {
@@ -130,15 +101,13 @@ impl PipelineBuilder {
         }
     }
 
-    /// Override the per-lane buffer depth — how many frames may queue on a lane
-    /// before a send awaits (backpressure). Clamped to at least 1.
+    /// Sets each lane's capacity, clamped to at least one.
     pub fn capacity(mut self, capacity: usize) -> Self {
         self.capacity = capacity.max(1);
         self
     }
 
-    /// Append a stage, boxing it. Stages run in the order added, head first. A
-    /// [`Pipeline`] is itself a stage, so it may be passed here to nest.
+    /// Appends a stage. Stages run in insertion order.
     pub fn stage<S>(mut self, stage: S) -> Self
     where
         S: Stage + 'static,
@@ -177,8 +146,7 @@ impl Default for PipelineBuilder {
     }
 }
 
-/// A sequence of stages, itself a [`Stage`]. Wired and driven by [`start`] (at
-/// the top level) or by a parent pipeline's [`run`](Stage::run) (when nested).
+/// A sequence of stages that implements [`Stage`].
 ///
 /// [`start`]: Pipeline::start
 pub struct Pipeline {
@@ -187,9 +155,7 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    /// Wire fresh external [`PipelineEnds`] and return them with the driving
-    /// future. The caller drives the future (e.g. `block_on`) and uses the ends
-    /// to feed the head and read the tail.
+    /// Returns fresh endpoints and the future that drives the pipeline.
     pub fn start(self) -> (PipelineEnds, DriverFuture) {
         let capacity = self.capacity;
         let (input, head_in) = link(capacity);
@@ -222,8 +188,7 @@ impl Stage for Pipeline {
         unreachable!("a Pipeline is driven by Stage::run, not perform")
     }
 
-    /// Wire the children between `inbound` and `out` and drive every child's
-    /// `run` cooperatively as one future via [`FuturesUnordered`].
+    /// Wires and drives every child stage.
     async fn run(self: Box<Self>, inbound: Inbound, out: Outbound) {
         let Pipeline { stages, capacity } = *self;
         let n = stages.len();

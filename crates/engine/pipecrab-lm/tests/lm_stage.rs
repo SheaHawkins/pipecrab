@@ -1,16 +1,4 @@
-//! `LmStage` adapts a `LanguageModel` into a stage: on a final user `Transcript`
-//! it appends the turn to the running conversation and streams a generated reply
-//! back as agent transcripts — append-only partials, then a final — recording the
-//! assistant turn only once it completes.
-//!
-//! The append-only streaming and barge-in integration go through the real
-//! pipeline; the conversation-recording invariants are pinned at the `decide`/
-//! `perform` level, where the (private) conversation is observed indirectly via
-//! the scripted mock's record of what each later generation was asked to generate
-//! from.
-//!
-//! Deterministic and tokio-free (`block_on`), so it rides the default
-//! `cargo test --workspace` path.
+//! Integration tests for [`LmStage`](pipecrab_lm::LmStage).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -32,7 +20,7 @@ use pipecrab_runtime::{link, PipelineBuilder, Received, Stage};
 
 // --- A scripted LanguageModel mock. ------------------------------------------
 
-/// What a [`ScriptedLm`] observed, shared with the test via an `Arc`.
+/// Calls observed by [`ScriptedLm`].
 #[derive(Default)]
 struct LmProbe {
     cancels: AtomicUsize,
@@ -45,9 +33,7 @@ impl LmProbe {
         self.cancels.load(Ordering::SeqCst)
     }
 
-    /// A snapshot of the conversations passed to `generate`, in call order.
-    /// Inspecting a later call's conversation is how a test sees what earlier
-    /// turns were recorded.
+    /// Returns conversations passed to `generate` in call order.
     fn seen(&self) -> Vec<Conversation> {
         self.seen.lock().unwrap().clone()
     }
@@ -57,14 +43,11 @@ impl LmProbe {
 enum Step {
     /// Emit this delta, then advance to [`Step::Park`].
     Emit(Arc<str>, mpsc::Sender<()>, oneshot::Receiver<()>),
-    /// Signal the test that the stream has parked, then wait to be released — a
-    /// barge-in drops this future (cancelling `block`) before it resolves.
+    /// Signals that the stream parked, then waits for release.
     Park(mpsc::Sender<()>, oneshot::Receiver<()>),
 }
 
-/// A hardware-free [`LanguageModel`]: yields scripted deltas, records every call,
-/// and — when built with [`parking`](ScriptedLm::parking) — parks its first
-/// generation after one delta so a barge-in can drop it in flight.
+/// A [`LanguageModel`] that records calls and yields scripted deltas.
 struct ScriptedLm {
     deltas: Vec<Arc<str>>,
     /// `Some` until the first (parking) generation consumes it; later generations
@@ -89,9 +72,7 @@ impl ScriptedLm {
         (me, probe)
     }
 
-    /// A model whose **first** generation yields one delta, signals on `reached`,
-    /// then parks on `block` (a barge-in drops the future here); every later
-    /// generation finishes normally.
+    /// Parks the first generation after one delta; later calls finish normally.
     fn parking<I, S>(
         deltas: I,
         reached: mpsc::Sender<()>,

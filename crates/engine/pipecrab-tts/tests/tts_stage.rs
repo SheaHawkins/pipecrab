@@ -1,10 +1,4 @@
-//! `TtsStage` adapts a `Synthesizer` into a stage: a final agent `Transcript`
-//! in, a stream of `Audio` frames out, and a barge-in that stops emission within
-//! one chunk while cancelling the engine.
-//!
-//! Deterministic and tokio-free (`block_on`), so it rides the default
-//! `cargo test --workspace` path — real browser/native synthesis is exercised
-//! separately by the engine crates.
+//! Tests for [`TtsStage`](pipecrab_tts::TtsStage).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -18,19 +12,14 @@ use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Direction, SystemFrame, 
 use pipecrab_runtime::{PipelineBuilder, Received};
 use pipecrab_tts::{Synthesizer, TtsAudioStream, TtsError};
 
-/// The one chunk our mock emits per synthesis; a distinct sample value makes it
-/// identifiable at the output.
+/// Creates the mock's identifiable audio chunk.
 fn chunk() -> AudioChunk {
     AudioChunk::new(Arc::from(&[0.25f32][..]), AudioFormat::new(24_000, 1))
 }
 
 // --- A synthesizer whose stream emits one chunk, then parks. -----------------
 
-/// Emits a single [`AudioChunk`], then signals `emitted` and parks on `block`
-/// forever. The park models an engine still producing when the barge-in lands:
-/// the run loop must drop the in-flight `perform` (dropping the stream, so
-/// `block`'s sender is cancelled) rather than wait for a second chunk. `cancel`
-/// flips `cancelled`, proving the control call reached the engine.
+/// Emits one chunk, signals the test, and parks until cancelled.
 struct ParkingSynth {
     emitted: mpsc::Sender<()>,
     block: Mutex<Option<oneshot::Receiver<()>>>,

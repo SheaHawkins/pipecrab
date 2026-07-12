@@ -1,15 +1,12 @@
-//! `echo` — capture your voice and play it straight back through a pipecrab
-//! pipeline, so you can *hear* audio ride the pipeline end to end.
+//! Captures microphone audio and plays it back through a pipeline.
 //!
 //! ```text
 //!   CpalSource ──▶ pump_in ──▶ [ EchoStage ] ──▶ pump_out ──▶ CpalSink
 //!   (mic, RT)     (async)      (pipeline)         (async)      (speaker, RT)
 //! ```
 //!
-//! The two pumps and the pipeline run as one future on a single thread
-//! (`futures::executor::block_on(join!(..))`, tokio-free); cpal runs the device
-//! callbacks on its own real-time OS threads, bridged to us by the backend's
-//! lock-free ring buffers.
+//! The pumps and pipeline share one async task. cpal callbacks run on dedicated
+//! real-time threads connected through lock-free ring buffers.
 //!
 //! # Running it
 //!
@@ -19,9 +16,7 @@
 //! $ cargo run -p echo -- --seconds 5      # run for 5 s, then shut down cleanly
 //! ```
 //!
-//! Use **headphones** — over speakers the mic re-captures the playback and you
-//! get a feedback howl. On macOS the first run triggers a microphone-permission
-//! prompt. Without `--seconds` it runs until you press Ctrl-C.
+//! Use headphones to prevent feedback. Without `--seconds`, press Ctrl-C to stop.
 
 // The audio backend only exists on desktop targets; gate `main` to match.
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
@@ -52,15 +47,10 @@ mod desktop {
     use pipecrab_audio::{AudioChunk, AudioSink, AudioSource};
     use pipecrab_audio_cpal::{CpalConfig, CpalSink, CpalSource};
 
-    /// Forwards `DataFrame::Audio` downstream, optionally delayed by a fixed
-    /// backlog of chunks so playback is an audible echo instead of a live
-    /// monitor.
+    /// Forwards audio immediately or after a fixed chunk backlog.
     ///
-    /// With `delay_chunks == 0` it is a pure pass-through (default
-    /// [`Processor::decide_data`] behaviour). With a delay it holds each chunk
-    /// in a queue and, once the queue is full, emits the oldest one — mutating
-    /// the queue in `decide_data` and doing the send in `perform`, per the
-    /// [`Processor`]/[`Stage`] split.
+    /// [`Processor::decide_data`] owns the queue; [`Stage::perform`] sends each
+    /// deferred chunk without mutating stage state.
     struct EchoStage {
         delay_chunks: usize,
         backlog: VecDeque<AudioChunk>,
@@ -222,8 +212,7 @@ mod desktop {
         seconds: Option<u64>,
     }
 
-    /// Parse the process arguments, erroring on an unknown flag or a
-    /// missing/invalid value rather than silently ignoring it.
+    /// Parses arguments and rejects unknown flags or invalid values.
     fn parse_args() -> Result<Args, String> {
         let mut delay_ms = 0;
         let mut seconds = None;
@@ -242,8 +231,7 @@ mod desktop {
         Ok(Args { delay_ms, seconds })
     }
 
-    /// Take the next argument as a `u64`, erroring if it is missing or not a
-    /// non-negative integer.
+    /// Parses the next argument as a `u64` value for `flag`.
     fn parse_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<u64, String> {
         let raw = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
         raw.parse()

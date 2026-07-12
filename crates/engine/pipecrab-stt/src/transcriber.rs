@@ -1,57 +1,31 @@
-//! The [`Transcriber`] trait and its [`SttError`].
+//! One-shot speech transcription.
 
 use async_trait::async_trait;
 use pipecrab_core::AudioFormat;
 use pipecrab_runtime::MaybeSendSync;
 
-/// The swappable speech-to-text capability: `f32` samples in, a transcript out.
+/// Transcribes `f32` PCM samples to text.
 ///
-/// This is the durable interface. A native engine (`ort`) and a browser engine
-/// (Transformers.js in a Web Worker) both implement this one trait, so
-/// [`SttStage`](crate::SttStage) — and the pipeline above it — never names a
-/// concrete model. The offload decision lives in the *impl* (native offloads to
-/// a worker thread; wasm awaits a Web Worker), so the stage stays engine-neutral
-/// and just `.await`s [`transcribe`](Transcriber::transcribe).
-///
-/// `?Send` matches pipecrab's single-threaded execution model, so one
-/// implementation runs unchanged on a current-thread executor and on `wasm32`,
-/// where `Send` bounds cannot be satisfied.
+/// Implementations own their worker or offloading strategy.
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait Transcriber: MaybeSendSync {
-    /// The one format this engine accepts. The stage caches it and enforces it
-    /// *before* feeding — see the crate-level [format authority](crate) note.
-    /// Sync and infallible: it is known at construction, so it is callable from
-    /// a stage's `decide_*` under the control-call carve-out.
+    /// The format this engine accepts.
     fn input_format(&self) -> AudioFormat;
 
     /// Transcribe `samples` (interleaved `f32` PCM) to text.
     ///
-    /// Samples are interpreted as [`input_format()`](Self::input_format): a bare
-    /// `&[f32]` carries no sample rate, so no runtime detection is possible.
-    /// Feeding a mismatch is a wiring bug the stage rejects fatally before a
-    /// sample reaches here, so this method never has to.
+    /// Samples use [`Self::input_format`]. The stage rejects mismatches before
+    /// calling this method.
     ///
-    /// Takes `&self`: like every
-    /// [`Stage::perform`](pipecrab_runtime::Stage::perform), transcription must
-    /// not mutate observable state, so the run loop can drop an in-flight call on
-    /// a barge-in interrupt without tearing anything.
+    /// The returned future must be safe to drop at an await point.
     async fn transcribe(&self, samples: &[f32]) -> Result<String, SttError>;
 }
 
-/// Why a [`Transcriber::transcribe`] call failed.
-///
-/// Mirrors the message-plus-kind shape of the pipeline's other error types so
-/// the conversion at the stage boundary
-/// (`impl From<SttError> for StageError`) is direct. There is deliberately no
-/// format-mismatch variant: samples are interpreted as
-/// [`input_format()`](Transcriber::input_format) and the stage enforces that
-/// format fatally, so an engine never sees nonconforming audio to reject.
+/// An error from [`Transcriber::transcribe`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SttError {
-    /// The transcription engine itself failed — an inference error, a worker
-    /// that crashed, a model that never loaded. Carries a human-readable
-    /// description.
+    /// A transcription engine failure.
     Engine(String),
 }
 

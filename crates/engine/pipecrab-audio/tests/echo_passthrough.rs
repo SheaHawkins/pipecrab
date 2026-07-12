@@ -1,11 +1,4 @@
-//! Passthrough integration test: a mock ramp source feeds a one-stage pipeline
-//! whose `EchoStage` forwards `DataFrame::Audio` unchanged, into a mock sink.
-//! The samples that come out must equal the ramp that went in — proving audio
-//! rides the pipeline as a first-party typed frame, matched exhaustively with no
-//! downcast.
-//!
-//! Tokio-free: driven by `futures::executor::block_on`, consistent with the
-//! runtime.
+//! Verifies that typed audio frames pass through a pipeline unchanged.
 
 use futures::executor::block_on;
 use pipecrab_audio::mock::{MockSink, MockSource};
@@ -13,9 +6,7 @@ use pipecrab_audio::{AudioFormat, AudioSink, AudioSource};
 use pipecrab_core::{DataFrame, Direction, Processor, SystemFrame};
 use pipecrab_runtime::{maybe_async_trait, Outbound, PipelineBuilder, Received, Stage, StageError};
 
-/// Forwards every frame unchanged: an all-default [`Processor`] is already a
-/// transparent passthrough, so `decide_*` are left at their defaults (which
-/// emit no effects) and `perform` is therefore never reached.
+/// Uses the [`Processor`] defaults to forward every frame.
 struct EchoStage;
 
 impl Processor for EchoStage {

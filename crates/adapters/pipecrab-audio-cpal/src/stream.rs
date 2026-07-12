@@ -1,12 +1,8 @@
-//! Keeping a `!Send` cpal `Stream` alive on its own thread.
+//! Owns each `!Send` cpal stream on a dedicated thread.
 //!
-//! The audio interface is `MaybeSend`, so a [`CpalSource`](crate::CpalSource) /
-//! [`CpalSink`](crate::CpalSink) must be `Send` — that is what lets a server
-//! spawn one capture/playback pump per session. But `cpal::Stream` is `!Send`,
-//! so it cannot be a field. Instead a dedicated thread builds the stream, starts
-//! it, and parks holding it alive; the constructor keeps only the ring end
-//! (which *is* `Send`) plus a [`StreamThread`] handle. Dropping the handle tells
-//! the thread to drop the stream and joins it.
+//! The public audio interfaces are `Send`, but `cpal::Stream` is not. The owning
+//! thread builds, runs, and drops the stream; the source or sink retains a
+//! [`StreamThread`] and a `Send` ring endpoint.
 
 use std::sync::mpsc;
 use std::thread;
@@ -30,15 +26,11 @@ impl Drop for StreamThread {
     }
 }
 
-/// Build a cpal stream on a dedicated thread and keep it alive there.
+/// Builds and retains a cpal stream on a dedicated thread.
 ///
-/// `build` runs on the new thread — cpal's `Host`/`Device`/`Stream` are `!Send`
-/// and so must be created (and later dropped) there, never moved across the
-/// boundary. It returns the started stream paired with a `Send` handle (`T`: the
-/// ring end plus device name) to hand back to the caller. This function blocks
-/// until `build` reports success or failure, so construction is still
-/// synchronous from the caller's view; on success the stream then stays parked
-/// on the thread until the returned [`StreamThread`] is dropped.
+/// `build` creates the `!Send` objects on that thread and returns a `Send`
+/// handle. This function blocks until setup completes. Dropping the returned
+/// [`StreamThread`] stops the stream and joins its thread.
 pub(crate) fn spawn_stream<T, F>(build: F) -> Result<(T, StreamThread), AudioError>
 where
     T: Send + 'static,

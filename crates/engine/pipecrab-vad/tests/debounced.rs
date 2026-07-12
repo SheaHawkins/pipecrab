@@ -1,11 +1,4 @@
-//! `Debounced` lifts a raw `SpeechScorer` (per-window probabilities) into a
-//! `VoiceActivityDetector` (speech edges). It owns the windowing (arbitrary
-//! chunks → exact windows, remainder carried across calls), the threshold, and
-//! the hangover. These tests pin all three plus `reset` and the alternation
-//! invariant, using a `MockScorer` of scripted probabilities.
-//!
-//! Deterministic and tokio-free (`block_on`), so it rides the default
-//! `cargo test --workspace` path.
+//! Tests for the [`Debounced`](pipecrab_vad::Debounced) detector.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -17,8 +10,7 @@ use pipecrab_vad::{
     DebounceConfig, Debounced, SpeechScorer, VadError, VadEvent, VoiceActivityDetector,
 };
 
-/// A hardware-free scorer: returns a scripted probability per `score` call and
-/// records the length of every window it was handed, so windowing is verifiable.
+/// Returns scripted probabilities and records window lengths.
 struct MockScorer {
     probs: Mutex<VecDeque<f32>>,
     window_len: usize,

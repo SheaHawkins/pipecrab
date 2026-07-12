@@ -1,18 +1,13 @@
-//! The [`Stage`] trait: the async, effecting half of a pipeline stage, and the
-//! preemptible run loop ([`Stage::run`]) that drives one.
+//! The asynchronous half of a pipeline stage and its preemptible run loop.
 //!
-//! A stage is a [`Processor`](pipecrab_core::Processor) — synchronous,
-//! state-owning `decide_*` — plus an
-//! async [`Stage::perform`] that interprets the effects `decide_*` emitted and
-//! does the actual I/O. The split is the core invariant: `decide_*` takes
-//! `&mut self` and is the *only* place state changes; `perform` takes `&self`
-//! and must never mutate state, so the run loop can drop an in-flight `perform`
-//! future on an interrupt without leaving torn state behind.
+//! A [`Stage`] combines a sans-I/O [`Processor`](pipecrab_core::Processor) with
+//! [`Stage::perform`]. The processor owns mutable state and emits effects;
+//! `perform` executes those effects through `&self`. This split lets the run
+//! loop cancel in-flight I/O without leaving stage state half-updated.
 //!
-//! [`Stage::run`] ties a stage to an [`Inbound`] and an [`Outbound`] and drives
-//! it. Its default body is the leaf run loop; a composite stage (a
-//! [`Pipeline`](crate::Pipeline)) overrides it to drive its children — which is
-//! why a pipeline is itself a `Stage` and can nest.
+//! [`Stage::run`] connects a stage to [`Inbound`] and [`Outbound`]. Its default
+//! drives a leaf stage; composites such as [`Pipeline`](crate::Pipeline)
+//! override it to drive children.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -26,17 +21,12 @@ use pipecrab_core::{DataFrame, Direction, Disposition, Processor, SystemFrame};
 
 use crate::{Inbound, MaybeSend, MaybeSendSync, Outbound, Received};
 
-/// Why a [`Stage::perform`] call failed.
+/// An error from [`Stage::perform`].
 ///
-/// `perform` is the fallible, I/O-doing half of a stage. The run loop surfaces
-/// a returned error as a `SystemFrame::Error` travelling upstream; `fatal`
-/// decides whether the pipeline should tear down rather than carry on.
-///
-/// Mirrors the shape of `SystemFrame::Error` (a message plus a `fatal` flag) so
-/// the conversion at the run-loop boundary is direct.
+/// The run loop sends it upstream as [`SystemFrame::Error`].
 #[derive(Debug, Clone)]
 pub struct StageError {
-    /// Human-readable description of what went wrong.
+    /// Human-readable description.
     pub message: Arc<str>,
     /// Whether the failure is unrecoverable and the pipeline should shut down.
     pub fatal: bool,
@@ -85,69 +75,45 @@ impl From<&str> for StageError {
     }
 }
 
-/// The async, effecting half of a pipeline stage.
+/// The asynchronous, effecting half of a pipeline stage.
 ///
-/// `Stage` extends [`Processor`]: `decide_data` / `decide_system` (synchronous,
-/// `&mut self`) own all state mutation and emit [`Effect`](Processor::Effect)
-/// values; [`perform`](Stage::perform) interprets one effect, does its I/O, and
-/// pushes any resulting frames through `out`.
+/// [`Processor`] owns state and emits effects. [`Stage::perform`] executes one
+/// effect and emits resulting frames. Keeping fallible I/O out of
+/// [`Processor::decide_data`] and [`Processor::decide_system`] makes every state
+/// transition synchronous and uninterruptible.
 ///
-/// [`run`](Stage::run) drives the stage given an [`Inbound`] and an
-/// [`Outbound`]. Its default is the preemptible leaf loop; a composite stage
-/// overrides it (see [`Pipeline`](crate::Pipeline)), which is what lets a
-/// pipeline be a `Stage` and nest inside another.
+/// [`Stage::run`] provides the preemptible leaf loop. Composite stages such as
+/// [`Pipeline`](crate::Pipeline) override it.
 ///
 /// # `?Send` is deliberate
 ///
-/// pipecrab commits to a single-threaded execution model, so the returned
-/// futures are **not** required to be `Send`. One `Stage` definition then runs
-/// unchanged both on a tokio current-thread runtime and in the browser
-/// (`wasm32`), where `Send` bounds are impossible to satisfy. CPU-bound or
-/// blocking work must not run inline on the orchestrator thread — push it
-/// off-thread with [`offload`](fn@crate::offload) and `await` the result, so an
-/// interrupt can still preempt `perform` promptly.
+/// Futures are `Send` on native targets and local on `wasm32`. Use
+/// [`offload`](fn@crate::offload) for blocking or CPU-bound work.
 ///
-/// The trait is dyn-compatible (via `async_trait`). A pipeline erases the
-/// associated effect type at insertion and stores only an object-safe runner,
-/// allowing stages with different effect types to compose.
+/// Pipelines erase each stage's effect type when storing heterogeneous stages.
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait Stage: Processor + MaybeSendSync
 where
     Self::Effect: MaybeSend,
 {
-    /// Interpret one effect emitted by `decide_*` and carry out its I/O, sending
-    /// any resulting frames through `out`.
+    /// Executes one effect and sends resulting frames through `out`.
     ///
-    /// Takes `&self`: `perform` must not mutate stage state. The run loop races
-    /// this future against the system lane, so a barge-in `Interrupt` can drop
-    /// it mid-flight; because only `decide_*` ever mutated state, dropping the
-    /// future leaves the stage intact. Barge-in is only as responsive as
-    /// `perform` yields, so never block the thread inline — [`offload`] heavy
-    /// work and `await` it.
+    /// This method must not mutate stage state. It may be dropped at an await
+    /// point when an interrupt arrives. Use [`offload`] for blocking work.
     ///
     /// [`offload`]: fn@crate::offload
     async fn perform(&self, effect: Self::Effect, out: &Outbound) -> Result<(), StageError>;
 
-    /// Drive this stage to completion: consume frames from `inbound`, emit
-    /// through `out`, return once `inbound` closes (or on `Stop` / a fatal
-    /// error).
+    /// Runs until input closes, a stop frame arrives, or an effect fails fatally.
     ///
-    /// The default is the preemptible run loop. System frames are drained
-    /// before data (via [`Inbound::recv`]). While a data frame's effects run in
-    /// `perform`, the system lane is raced against them: an `Interrupt` drops
-    /// the in-flight `perform` immediately; any other system frame is *stashed*
-    /// and handled once `perform` is dropped — we cannot call the `&mut self`
-    /// `decide_system` while `perform` borrows `&self`, so the stash defers it
-    /// until that borrow ends.
+    /// The default loop prioritizes system frames. An interrupt drops in-flight
+    /// effects; other system frames wait until the current effects finish.
     ///
-    /// After an `Interrupt` is handled, the queued data backlog is flushed via
-    /// [`Inbound::flush_data`]: droppable frames are discarded, but
-    /// transport-audio survivors are kept and re-processed ahead of the next
-    /// inbound read, so a barge-in utterance is not clipped.
+    /// After an interrupt, [`Inbound::flush_data`] discards queued derived data
+    /// and reprocesses surviving transport audio first.
     ///
-    /// A composite stage overrides this; the default body is never invoked for
-    /// one (see [`Pipeline`](crate::Pipeline)).
+    /// Composite stages override this method; see [`Pipeline`](crate::Pipeline).
     async fn run(self: Box<Self>, inbound: Inbound, out: Outbound) {
         let mut stage = self;
         let mut inbound = inbound;
@@ -236,9 +202,7 @@ where
     }
 }
 
-/// Run a system frame through the stage: `decide_system`, forward on `Forward`,
-/// then perform its effects. Returns `true` if the stage should stop (the frame
-/// was a `Stop`, or an effect failed fatally).
+/// Handles a system frame and returns whether the stage should stop.
 async fn handle_system<S: Stage + ?Sized>(
     stage: &mut S,
     dir: Direction,

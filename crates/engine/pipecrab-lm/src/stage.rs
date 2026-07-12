@@ -1,5 +1,4 @@
-//! [`LmStage`]: the generic adapter from any [`LanguageModel`] to a pipeline
-//! [`Stage`], tracking the running [`Conversation`].
+//! Adapts a [`LanguageModel`] into a pipeline [`Stage`].
 
 use std::sync::Mutex;
 
@@ -12,46 +11,23 @@ use pipecrab_runtime::{Outbound, Stage, StageError};
 
 use crate::{Conversation, GenParams, LanguageModel, LmError, Message, TokenOut};
 
-/// Adapts any [`LanguageModel`] into a pipeline [`Stage`]: it accumulates the
-/// running [`Conversation`], and on a **final user** [`Transcript`] it appends
-/// the user's turn and generates a reply, streaming it downstream as agent
-/// [`Transcript`]s — partials as the deltas arrive, then a final.
+/// Converts final user [`Transcript`]s into streamed agent transcripts.
 ///
-/// The system prompt is injected at construction and is the first message of the
-/// conversation; every completed user utterance and generated reply is appended,
-/// so successive generations see the whole history.
+/// The stage retains the system prompt and completed turns in a [`Conversation`].
 ///
 /// # State and the decide/perform split
 ///
-/// The [`Conversation`] is the stage's state. Following the
-/// [`Processor`]/[`Stage`] split, `decide_data` (sync, `&mut self`) appends the
-/// user turn and emits a [`Generate`] effect; `perform` (`&self`) snapshots the
-/// conversation, runs the generation, and — only *after* the final delta — locks
-/// again to append the assistant turn. Because the conversation lives behind a
-/// [`Mutex`] and is mutated only in synchronous critical sections (the
-/// Mutex-after-await idiom), a barge-in that drops an in-flight `perform` leaves
-/// no half-written turn.
+/// [`Processor::decide_data`] appends a user turn. [`Stage::perform`] snapshots
+/// the conversation and appends the assistant turn only after generation ends.
 ///
 /// # Barge-in
 ///
-/// Each `.await` in `perform` — pulling the next delta and forwarding it — is a
-/// point the run loop can drop `perform` at, so a barge-in
-/// [`Interrupt`](SystemFrame::Interrupt) stops the reply within one delta. The
-/// [`Interrupt`](SystemFrame::Interrupt) also reaches [`decide_system`], which
-/// issues the [`cancel`](LanguageModel::cancel) control call so the engine's
-/// worker stops decoding too.
+/// [`SystemFrame::Interrupt`] drops the current effect and calls
+/// [`LanguageModel::cancel`].
 ///
 /// # Known v1 limitation
 ///
-/// An interrupted generation is **not recorded in the conversation at all**, even
-/// though the user may have heard part of it: the assistant turn is appended only
-/// after the final delta, so a dropped `perform` records nothing. Correct repair
-/// needs a *played-up-to* marker from the audio sink (how much of the reply was
-/// actually voiced before the barge-in) to record the truncated turn — that
-/// marker does not exist yet, so it is out of scope here.
-///
-/// [`decide_data`]: Processor::decide_data
-/// [`decide_system`]: Processor::decide_system
+/// Interrupted generations are not added to the conversation.
 pub struct LmStage<M: LanguageModel> {
     model: M,
     params: GenParams,
@@ -82,9 +58,7 @@ impl<M: LanguageModel> LmStage<M> {
     }
 }
 
-/// Run a generation over the current conversation: [`LmStage`]'s
-/// [`Processor::Effect`]. A unit — the conversation to generate from is read from
-/// the stage's own state in `perform`, not carried in the effect.
+/// Tells [`LmStage`] to generate from its current conversation.
 pub struct Generate;
 
 impl<M: LanguageModel> Processor for LmStage<M> {

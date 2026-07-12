@@ -1,6 +1,4 @@
-//! The [`LanguageModel`] trait, its [`LmError`], the chat-context types
-//! ([`ChatRole`], [`Message`], [`Conversation`], [`GenParams`]), and the
-//! [`TokenStream`] alias.
+//! Language-model types and the [`LanguageModel`] trait.
 
 use std::sync::Arc;
 
@@ -9,16 +7,10 @@ use pipecrab_runtime::MaybeSendSync;
 
 /// A role in the language model's chat context.
 ///
-/// Deliberately distinct from core's transcript
-/// [`Role`](pipecrab_core::Role): the LM context needs a [`System`](ChatRole::System)
-/// role that a conversation transcript has no notion of, and overloading the
-/// frame's two-valued `Role` to carry it would be dishonest. The stage maps
-/// between them (a [`Role::User`](pipecrab_core::Role::User) transcript becomes a
-/// [`User`](ChatRole::User) message; a generated reply becomes an
-/// [`Assistant`](ChatRole::Assistant) message).
+/// Unlike [`pipecrab_core::Role`], this includes [`ChatRole::System`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChatRole {
-    /// The system prompt: instructions that frame the whole conversation.
+    /// The system prompt.
     System,
     /// A turn from the user.
     User,
@@ -36,7 +28,7 @@ pub struct Message {
 }
 
 impl Message {
-    /// A [`System`](ChatRole::System) message — the framing prompt.
+    /// Creates a system message.
     pub fn system(content: impl Into<Arc<str>>) -> Self {
         Self {
             role: ChatRole::System,
@@ -44,7 +36,7 @@ impl Message {
         }
     }
 
-    /// A [`User`](ChatRole::User) message.
+    /// Creates a user message.
     pub fn user(content: impl Into<Arc<str>>) -> Self {
         Self {
             role: ChatRole::User,
@@ -52,7 +44,7 @@ impl Message {
         }
     }
 
-    /// An [`Assistant`](ChatRole::Assistant) message — a generated reply.
+    /// Creates an assistant message.
     pub fn assistant(content: impl Into<Arc<str>>) -> Self {
         Self {
             role: ChatRole::Assistant,
@@ -61,26 +53,21 @@ impl Message {
     }
 }
 
-/// The chat context handed to [`LanguageModel::generate`]: an ordered list of
-/// [`Message`]s, oldest first. The system prompt, if any, is the first message.
+/// Messages passed to [`LanguageModel::generate`], oldest first.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Conversation {
     /// The turns so far, in order.
     pub messages: Vec<Message>,
 }
 
-/// Knobs for one [`generate`](LanguageModel::generate) call. All optional; an
-/// engine applies its own default for any left `None`.
+/// Optional parameters for one [`LanguageModel::generate`] call.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GenParams {
     /// Upper bound on generated tokens, if any.
     pub max_tokens: Option<u32>,
     /// Sampling temperature, if any.
     pub temperature: Option<f32>,
-    /// An optional grammar / JSON-schema constraint the engine interprets (e.g.
-    /// GBNF). Opaque to the pipeline: the trait carries it, the engine enforces
-    /// it, and a dispatcher *above* the trait parses the constrained output — the
-    /// language model itself has no notion of tools or dispatch.
+    /// An engine-specific grammar or schema constraint.
     pub grammar: Option<Arc<str>>,
 }
 
@@ -91,81 +78,40 @@ pub struct TokenOut {
     pub delta: Arc<str>,
 }
 
-/// The output of a [`LanguageModel::generate`] call: a boxed stream of
-/// [`TokenOut`] results, delivered delta by delta.
-///
-/// `BoxStream` on native and `LocalBoxStream` on `wasm32`, behind one cfg'd alias
-/// — the same `Send`-where-it-exists split as
-/// [`MaybeSend`](pipecrab_runtime::MaybeSend): the pipeline is one logical task
-/// that stays `Send` for a work-stealing executor natively, while on `wasm32`
-/// (one thread, `!Send` JS handles) that bound must vanish.
+/// A stream of generated text deltas.
 #[cfg(not(target_arch = "wasm32"))]
 pub type TokenStream = futures::stream::BoxStream<'static, Result<TokenOut, LmError>>;
-/// The output of a [`LanguageModel::generate`] call: a boxed stream of
-/// [`TokenOut`] results, delivered delta by delta.
+/// A stream of generated text deltas.
 #[cfg(target_arch = "wasm32")]
 pub type TokenStream = futures::stream::LocalBoxStream<'static, Result<TokenOut, LmError>>;
 
-/// The swappable language-model capability: a chat context in, generated text out
-/// incrementally.
+/// Generates text incrementally from a chat context.
 ///
-/// This is the durable interface. A native engine (e.g. a llama.cpp context) and
-/// a browser engine (in a Web Worker) both implement this one trait, so
-/// [`LmStage`](crate::LmStage) — and the pipeline above it — never names a
-/// concrete model.
-///
-/// # Engines are worker-handles
-///
-/// An implementor is expected to be a thin *handle* to a long-lived worker that
-/// owns the model's mutable decode state: a dedicated thread on native (a
-/// llama.cpp context is `!Send`, so the worker pattern is mandatory there), a Web
-/// Worker on `wasm32`. That is why [`generate`](Self::generate) takes `&self` —
-/// it hands the context to the worker and returns its token stream — and why the
-/// worker outlives any single call.
+/// Implementations should be handles to workers that own mutable model state;
+/// trait methods use `&self` so stage effects remain safe to cancel.
 ///
 /// # Streaming is a barge-in requirement
 ///
-/// [`generate`](Self::generate) yields text a delta at a time rather than one
-/// buffer at the end: every item of the returned [`TokenStream`] is a preemption
-/// point the run loop can drop an in-flight generation at, so a user barging in
-/// stops the reply within one delta instead of after the whole turn. Dropping the
-/// stream is how the *stage* stops pulling; [`cancel`](Self::cancel) is how the
-/// *engine* stops producing.
+/// Each [`TokenStream`] item is a preemption point. Dropping the stream stops
+/// consumption; [`LanguageModel::cancel`] stops engine production.
 ///
-/// [`cancel`](Self::cancel) is a *control call* (see
-/// [`Processor`](pipecrab_core::Processor)'s control-call carve-out): it maps to
-/// the engine's abort callback / an atomic the decode loop checks, so it is
-/// synchronous, non-blocking, and safe to invoke directly from a stage's
-/// `decide_*` where the barge-in is decided.
-///
-/// `?Send` on `wasm32` matches pipecrab's single-threaded execution model, so one
-/// implementation runs unchanged on a current-thread executor and in the browser,
-/// where `Send` bounds cannot be satisfied.
+/// [`LanguageModel::cancel`] is a [`pipecrab_core::Processor`] control call.
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait LanguageModel: MaybeSendSync {
     /// Generate a reply to `convo` under `params`, yielding text deltas.
     ///
-    /// Takes `&self`: like every [`Stage::perform`](pipecrab_runtime::Stage::perform),
-    /// generation must not mutate observable state, so the run loop can drop an
-    /// in-flight call — at any stream item — on a barge-in interrupt without
-    /// tearing anything. Every item of the returned [`TokenStream`] is such a
-    /// preemption point.
+    /// The returned stream must be safe to drop between items.
     async fn generate(
         &self,
         convo: &Conversation,
         params: &GenParams,
     ) -> Result<TokenStream, LmError>;
 
-    /// Control call: abort in-flight generation. Sync, non-blocking, idempotent.
-    ///
-    /// Maps to the engine's abort callback / an atomic the decode loop checks; the
-    /// next [`generate`](Self::generate) starts clean. Safe to call from a stage's
-    /// synchronous `decide_*` — see the trait-level note.
+    /// Aborts in-flight generation synchronously and idempotently.
     fn cancel(&self);
 
-    /// Checkpoint the worker's session state (KV cache and any decode state) to an
-    /// opaque, serialized blob.
+    /// Serializes the worker's session state.
     async fn save_state(&self) -> Result<Vec<u8>, LmError>;
 
     /// Restore worker session state previously produced by
@@ -173,15 +119,10 @@ pub trait LanguageModel: MaybeSendSync {
     async fn load_state(&self, blob: &[u8]) -> Result<(), LmError>;
 }
 
-/// Why a [`LanguageModel`] call failed.
-///
-/// Mirrors the message-plus-kind shape of the pipeline's other error types (e.g.
-/// `pipecrab-tts`'s `TtsError`) so the conversion at the stage boundary
-/// (`impl From<LmError> for StageError`) is direct.
+/// An error from a [`LanguageModel`] call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LmError {
-    /// The generation engine itself failed — an inference error, a worker that
-    /// crashed, a model that never loaded. Carries a human-readable description.
+    /// A generation engine failure.
     Engine(String),
 }
 

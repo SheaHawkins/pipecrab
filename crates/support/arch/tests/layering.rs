@@ -1,5 +1,4 @@
-//! Enforces the workspace's dependency-direction rule against the *resolved*
-//! package graph, not the folder layout.
+//! Enforces dependency direction against Cargo's resolved package graph.
 //!
 //! Every crate declares its architectural layer locally, in its manifest:
 //!
@@ -8,30 +7,23 @@
 //! layer = "runtime"
 //! ```
 //!
-//! The rule: a package may depend only on **strictly lower** layers (normal
-//! and build deps; dev-deps are exempt, since a test may legitimately reach
-//! for anything). The order, lowest first:
+//! Normal and build dependencies may point only to lower layers. Development
+//! dependencies are exempt. The order is:
 //!
 //! ```text
 //! core  <  runtime  <  { trait, facade }  <  adapter  <  app
 //! ```
 //!
-//! `trait` and `facade` share a rank: they never depend on each other, and a
-//! strictly-lower rule forbids same-rank edges, so if that ever changes the
-//! gate will flag it — the signal to split a layer, not to loosen the rule.
+//! `trait` and `facade` share a rank, so dependencies between them are forbidden.
 //!
-//! `support` is exempt from the ordering entirely (dev-only tooling), but it
-//! is still a *declared* layer: the gate **fails closed**, so any workspace
-//! member with no `layer` at all is an error. A new crate therefore can't slip
-//! through unlabeled — it forces a one-line decision at creation time.
+//! `support` is unranked but must still be declared. Missing or unknown layers
+//! fail the gate so every workspace crate receives an explicit classification.
 
 use std::collections::{HashMap, HashSet};
 
 use cargo_metadata::{DependencyKind, MetadataCommand, Package};
 
-/// Ordinal rank of a production layer. `None` means "not part of the ordering"
-/// — either the exempt `support` layer or an unknown/misspelled name, which
-/// the caller distinguishes and reports.
+/// Returns a production layer's ordinal rank.
 fn rank(layer: &str) -> Option<i32> {
     match layer {
         "core" => Some(0),
@@ -43,8 +35,7 @@ fn rank(layer: &str) -> Option<i32> {
     }
 }
 
-/// The set of layer names the gate understands. `support` is valid but
-/// deliberately unranked.
+/// Returns whether the layer name is valid, including unranked `support`.
 fn is_known_layer(layer: &str) -> bool {
     layer == "support" || rank(layer).is_some()
 }

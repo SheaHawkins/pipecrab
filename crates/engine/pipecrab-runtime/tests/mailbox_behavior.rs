@@ -1,11 +1,6 @@
-//! Tests for the priority mailbox.
+//! Tests FIFO lane ordering and system-lane priority.
 //!
-//! Contract: FIFO within a lane; `sys` preempts a backed-up `data` lane; the
-//! sys direction tag is carried through untouched; data lane always yields
-//! `Received::Data`; both lanes closed => `None`. The preemption is exercised
-//! in both directions a system frame travels — an `Interrupt` going down and an
-//! `Error` going up — since fast upstream failure depends on the error jumping
-//! the data backlog.
+//! Both downstream interrupts and upstream errors must overtake queued data.
 
 use futures::channel::mpsc;
 use futures::executor::block_on;

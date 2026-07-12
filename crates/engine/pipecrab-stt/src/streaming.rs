@@ -1,6 +1,4 @@
-//! Streaming transcription: the [`StreamingTranscriber`] protocol for engines
-//! that emit partial hypotheses while audio is still arriving, plus the
-//! [`Buffered`] adapter that fits a one-shot [`Transcriber`] to that protocol.
+//! Streaming transcription and the [`Buffered`] one-shot adapter.
 
 use std::sync::{Arc, Mutex};
 
@@ -10,117 +8,74 @@ use pipecrab_runtime::MaybeSendSync;
 
 use crate::{SttError, Transcriber};
 
-/// A transcription session protocol for engines that emit partial results
-/// while audio is still arriving (e.g. a streaming Zipformer). One active
-/// utterance per engine instance.
+/// A streaming transcription session with one active utterance.
 ///
 /// # Engines are worker-handles
 ///
-/// An implementor is expected to be a thin *handle* to a long-lived worker that
-/// owns the mutable decoder state: a dedicated thread on native, a Web Worker on
-/// `wasm32`. That is why every method takes `&self` — they are cheap
-/// message-passes to the worker, not the inference itself — and why the worker
-/// outlives any single call. A barge-in that drops an in-flight
-/// [`feed`](Self::feed) future does **not** reset the worker; only
-/// [`cancel`](Self::cancel) does.
+/// Implementations should be handles to workers that own decoder state. Dropping
+/// an in-flight [`StreamingTranscriber::feed`] does not reset the worker;
+/// [`StreamingTranscriber::cancel`] does.
 ///
-/// [`cancel`](Self::cancel) is a *control call* (see
-/// [`Processor`](pipecrab_core::Processor)'s control-call carve-out): it flips
-/// an atomic the worker observes on its next step, so it is synchronous,
-/// non-blocking, and safe to invoke from a stage's `decide_*`. The other three
-/// methods are async because they exchange messages with the worker.
-///
-/// `?Send` on `wasm32` matches pipecrab's single-threaded execution model, so
-/// one implementation runs unchanged on a current-thread executor and in the
-/// browser, where `Send` bounds cannot be satisfied.
+/// [`StreamingTranscriber::cancel`] is a [`pipecrab_core::Processor`] control call.
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait StreamingTranscriber: MaybeSendSync {
-    /// The one format this engine accepts. The stage caches it and enforces it
-    /// *before* feeding — see the crate-level [format authority](crate) note.
-    /// Sync and infallible: known at construction, so callable from a stage's
-    /// `decide_*` under the control-call carve-out.
+    /// The format this engine accepts.
     fn input_format(&self) -> AudioFormat;
 
-    /// Open an utterance. Only one is active per engine instance, so the caller
-    /// must close the previous one — via [`end_utterance`](Self::end_utterance)
-    /// or [`cancel`](Self::cancel) — before opening another; calling this while
-    /// an utterance is already active is a protocol violation and an engine
-    /// rejects it rather than silently discarding the in-progress utterance.
+    /// Opens an utterance.
     ///
-    /// No format parameter: samples fed to this utterance are interpreted as
-    /// [`input_format()`](Self::input_format), which the stage has already
-    /// enforced.
+    /// A second call before [`Self::end_utterance`] or [`Self::cancel`] is a
+    /// protocol violation.
     async fn begin_utterance(&self) -> Result<(), SttError>;
 
-    /// Feed one window of samples; returns whatever events are ready so far.
-    /// Cheap message-pass to the engine's worker.
+    /// Feeds one sample window and returns available events.
     async fn feed(&self, samples: &[f32]) -> Result<Vec<SttEvent>, SttError>;
 
-    /// Close the utterance; drains remaining events, including the
-    /// [`Final`](SttEvent::Final).
+    /// Closes the utterance and drains remaining events.
     async fn end_utterance(&self) -> Result<Vec<SttEvent>, SttError>;
 
-    /// Control call: stop in-flight work and discard the active utterance.
-    /// Sync, non-blocking, idempotent. The next
-    /// [`begin_utterance`](Self::begin_utterance) starts clean.
+    /// Stops in-flight work and discards the active utterance.
     fn cancel(&self);
 }
 
 /// An event emitted by a [`StreamingTranscriber`] as an utterance progresses.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SttEvent {
-    /// In-progress hypothesis. `stable` follows the core
-    /// [`Transcript`](pipecrab_core::Transcript) invariant: `text[..stable]` is
-    /// frozen and only the tail beyond it may still change.
+    /// In-progress hypothesis following the [`pipecrab_core::Transcript`] invariant.
     Partial {
-        /// The current best-guess transcript for the utterance so far.
+        /// The current hypothesis.
         text: Arc<str>,
-        /// Byte length of the frozen prefix; on a char boundary and
-        /// `<= text.len()`.
+        /// Byte length of the fixed prefix.
         stable: usize,
     },
     /// The utterance's completed transcript.
     Final(Arc<str>),
-    /// The engine's own end-of-utterance signal, if it does internal
-    /// endpointing. v1: the stage logs and otherwise ignores this (a future
-    /// `TurnEnded` frame is out of scope).
+    /// An engine-detected utterance endpoint.
     Endpoint,
 }
 
-/// Fits a one-shot [`Transcriber`] to the [`StreamingTranscriber`] protocol by
-/// buffering the whole utterance and transcribing it once at the end — the
-/// adapter for chunk-final engines like Moonshine that have no partial output.
+/// Adapts a one-shot [`Transcriber`] to [`StreamingTranscriber`].
 ///
-/// It emits **no** partials: [`feed`](StreamingTranscriber::feed) only
-/// accumulates and returns `[]`, and the entire transcript arrives as a single
-/// [`SttEvent::Final`] from [`end_utterance`](StreamingTranscriber::end_utterance).
+/// [`StreamingTranscriber::feed`] buffers samples without emitting partials.
+/// [`StreamingTranscriber::end_utterance`] emits one [`SttEvent::Final`].
 ///
-/// # One honest limitation
+/// # Cancellation
 ///
-/// **Cancel cannot stop inference mid-flight.**
-/// [`cancel`](StreamingTranscriber::cancel) clears the buffer and marks any
-/// in-flight transcription stale so its result is discarded when it returns,
-/// but the underlying one-shot inference — offloaded and detached — still runs
-/// to completion off-thread. True mid-inference cancel requires a native
-/// streaming engine.
+/// [`StreamingTranscriber::cancel`] discards an in-flight result but cannot stop
+/// the underlying one-shot inference.
 pub struct Buffered<T: Transcriber> {
     inner: T,
     state: Mutex<BufferedState>,
 }
 
-/// The mutable session state, behind a [`Mutex`] because the trait methods take
-/// `&self`. The lock is never held across an `.await`, so it stays uncontended
-/// and `cancel`'s critical section never blocks.
+/// Mutable session state. The lock is never held across an await point.
 struct BufferedState {
-    /// Whether an utterance is open — set by `begin_utterance`, cleared by
-    /// `end_utterance`/`cancel`. It only gates the protocol; the format itself
-    /// is no longer tracked (the stage enforces it before a sample arrives).
+    /// Whether an utterance is open.
     active: bool,
     /// Accumulated interleaved samples for the active utterance.
     buffer: Vec<f32>,
-    /// Bumped by `cancel`. `end_utterance` snapshots it before awaiting and
-    /// discards its result if the value changed while it was in flight.
+    /// Generation counter for discarding stale results after cancellation.
     generation: u64,
 }
 

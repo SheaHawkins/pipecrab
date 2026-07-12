@@ -1,14 +1,4 @@
-//! `VadStage` is a **gate**: it runs a `VoiceActivityDetector` over every
-//! conforming audio chunk and emits speech-only audio bracketed by its edges —
-//! `SpeechStarted`, the utterance's chunks (pre-roll included), then
-//! `SpeechStopped`. While idle it emits nothing; silence dies here.
-//!
-//! These tests drive the stage through the real run loop with a `MockDetector`
-//! that replays a scripted sequence of `VadEvent`s per `process` call, so the
-//! gate algorithm is exercised end-to-end without a model.
-//!
-//! Deterministic and tokio-free (`block_on`), so it rides the default
-//! `cargo test --workspace` path.
+//! Tests for the [`VadStage`](pipecrab_vad::VadStage) gate.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -20,9 +10,7 @@ use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Direction, Processor, Sy
 use pipecrab_runtime::{link, PipelineBuilder, Received, Stage};
 use pipecrab_vad::{GateConfig, VadError, VadEvent, VadStage, VoiceActivityDetector};
 
-/// A hardware-free detector: replays a scripted sequence of edge-batches, one
-/// batch per `process` call, and records `reset` calls. Each `process` returns
-/// the next scripted `Vec<VadEvent>` (or `[]` once the script runs dry).
+/// Replays edge batches and records reset calls.
 struct MockDetector {
     script: Mutex<VecDeque<Vec<VadEvent>>>,
     format: AudioFormat,
@@ -74,10 +62,7 @@ fn audio(n: usize) -> DataFrame {
     DataFrame::Audio(AudioChunk::new(Arc::from(vec![0.0f32; n]), FMT))
 }
 
-/// Drive a script of edge-batches against a matching sequence of audio chunk
-/// sizes and return the ordered frames the pipeline emitted downstream, plus the
-/// detector's reset count. Each chunk of `chunk_sizes` triggers one `process`
-/// call, which returns the same-indexed batch from `script`.
+/// Runs edge batches against audio chunks and returns emitted frames and resets.
 fn run_gate(
     config: GateConfig,
     script: Vec<Vec<VadEvent>>,

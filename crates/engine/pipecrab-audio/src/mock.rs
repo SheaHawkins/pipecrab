@@ -1,9 +1,6 @@
-//! Hardware-free [`AudioSource`] / [`AudioSink`] implementations for tests.
+//! Hardware-free [`AudioSource`] and [`AudioSink`] implementations.
 //!
-//! [`MockSource`] replays a fixed script of chunks — build one straight from a
-//! ramp with [`MockSource::ramp`]. [`MockSink`] records everything it is asked
-//! to play so a test can assert on the samples that came out. No devices, no
-//! threads.
+//! [`MockSource`] replays chunks; [`MockSink`] records them.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -29,11 +26,7 @@ impl MockSource {
         Self { format, queue }
     }
 
-    /// A source whose entire output is the ramp `0.0, 1.0, 2.0, …` — one value
-    /// per sample — split into `chunks` chunks of `chunk_frames` samples each.
-    ///
-    /// The values are exact and monotonic, so a passthrough test can flatten the
-    /// sink's output and compare it to the same ramp.
+    /// Creates a source containing a monotonic sample ramp split into chunks.
     pub fn ramp(format: AudioFormat, chunk_frames: usize, chunks: usize) -> Self {
         let mut queue = VecDeque::with_capacity(chunks);
         for c in 0..chunks {

@@ -1,6 +1,4 @@
-//! [`SentenceChunker`]: splits a streaming agent generation into one final agent
-//! [`Transcript`] per sentence, so [`TtsStage`](crate::TtsStage) can begin
-//! speaking the first sentence before the model has produced the last.
+//! Splits agent output into sentences for low-latency synthesis.
 
 use std::sync::Arc;
 
@@ -10,46 +8,26 @@ use pipecrab_core::{
 };
 use pipecrab_runtime::{Outbound, Stage, StageError};
 
-/// Adapts a streaming agent generation into per-sentence final transcripts.
+/// Converts a streaming agent generation into final transcripts per sentence.
 ///
-/// The language-model stage upstream emits an agent generation as a run of
-/// append-only [`Partial`](Finality::Partial) transcripts (each the full text so
-/// far) followed by one [`Final`](Finality::Final). Feeding that straight to
-/// [`TtsStage`](crate::TtsStage) would delay all speech until the whole reply is
-/// generated. This stage instead watches the growing text and, each time a
-/// sentence completes, emits it as its own agent [`Final`](Finality::Final) — so
-/// synthesis of sentence one starts while the model is still writing sentence
-/// two. This is the "generation for [`Role::Agent`] may be a single sentence"
-/// note on [`Finality::Final`].
+/// It consumes append-only agent partials and emits each completed sentence as
+/// [`Finality::Final`], allowing [`TtsStage`](crate::TtsStage) to start before
+/// the full response is available.
 ///
 /// # What it consumes and emits
 ///
-/// It *consumes* the raw agent stream (dropping the partials and the terminal
-/// final) and *emits* one [`EmitSentence`] effect per completed sentence; every
-/// non-agent frame forwards untouched. A sentence completes at `.`, `!`, or `?`
-/// (with trailing closers like `"`/`)`) followed by whitespace; the terminal
-/// [`Final`](Finality::Final) flushes any trailing text as a last sentence even
-/// without punctuation.
+/// A sentence boundary is `.`, `!`, or `?`, optional closing punctuation, then
+/// whitespace. The generation's final frame flushes remaining text. Other
+/// frames pass through.
 ///
-/// A period is *not* a boundary when the word before it is a known abbreviation
-/// (`Mr`, `Mrs`, `Ms`, `Dr`, `Prof`, `St`, `vs`, …) or a lone initial (`J.`), so
-/// "Dr. Smith" and "U.S." stay intact; `!` and `?` always end a sentence. The
-/// tradeoff is deliberate under-splitting: an abbreviation that genuinely ends a
-/// sentence (`… etc. Next`) is held until the next real boundary or the
-/// generation's [`Final`](Finality::Final).
+/// Known abbreviations and lone initials do not end a sentence. This favors
+/// under-splitting ambiguous periods until a later boundary or final frame.
 ///
 /// # State and barge-in
 ///
-/// The only state is `emitted`: how many bytes of the current generation have
-/// already been turned into sentences. Because agent partials are append-only,
-/// that byte offset stays valid as the text grows; the terminal
-/// [`Final`](Finality::Final) resets it for the next generation. A barge-in
-/// [`Interrupt`](SystemFrame::Interrupt) also resets it, abandoning a
-/// half-emitted generation. Those are the *only* resets: a new generation must
-/// be preceded by one, so an offset that outruns the current text is corrupt
-/// state — a generation abandoned without an [`Interrupt`](SystemFrame::Interrupt)
-/// — and panics rather than silently recovering. All mutation lives in the
-/// synchronous `decide_*`, so nothing tears when an emit is dropped.
+/// The stage tracks the byte offset already emitted. Final frames and
+/// [`SystemFrame::Interrupt`] reset it. An offset beyond the current append-only
+/// text violates the input contract and panics.
 pub struct SentenceChunker {
     /// Bytes of the in-flight generation already emitted as sentences.
     emitted: usize,
@@ -68,16 +46,11 @@ impl Default for SentenceChunker {
     }
 }
 
-/// One completed sentence to forward as a final agent transcript:
-/// [`SentenceChunker`]'s [`Processor::Effect`]. Emitted by `decide_data`,
-/// interpreted by `perform`. Its inner text is private — only the chunker
-/// constructs one.
+/// A completed sentence to emit as a final agent transcript.
 pub struct EmitSentence(Arc<str>);
 
 impl SentenceChunker {
-    /// Drain every complete sentence starting at byte `from` in `text`, pushing
-    /// an [`EmitSentence`] for each, and return the new offset just past the last
-    /// one emitted.
+    /// Drains complete sentences and returns the next unconsumed byte offset.
     fn drain_sentences(from: usize, text: &str, effects: &mut Vec<EmitSentence>) -> usize {
         let mut cut = from;
         while let Some(len) = leading_sentence(&text[cut..]) {
@@ -166,26 +139,16 @@ impl Stage for SentenceChunker {
     }
 }
 
-/// Known abbreviations that carry a trailing period without ending a sentence.
-/// Lowercased; matched case-insensitively against the word before a `.`. Multi-dot
-/// forms (`e.g.`, `U.S.`) need no entry — their pieces are lone initials, which
-/// [`ends_with_abbreviation`] already suppresses.
+/// Lowercase abbreviations whose period does not end a sentence.
 const ABBREVIATIONS: &[&str] = &[
     "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "no", "vol", "fig", "gen",
     "sen", "rep", "gov", "col", "capt", "lt", "sgt", "rev", "hon",
 ];
 
-/// Byte length of the leading complete sentence in `s`, or `None` if `s` holds
-/// no completed sentence yet.
+/// Returns the byte length of the first complete sentence.
 ///
-/// A sentence ends at a `.`/`!`/`?` run (plus trailing closers like `"`/`'`/`)`)
-/// that is *followed by whitespace* — the whitespace is what confirms the
-/// boundary, so a partial that ends mid-token (or mid-number like `3.`) is not
-/// split prematurely. A `.` is skipped when the word before it is a known
-/// abbreviation or a lone initial (see [`ends_with_abbreviation`]); `!` and `?`
-/// always terminate. The returned length spans up to, but not including, that
-/// whitespace. All the matched bytes are ASCII, so the length lands on a char
-/// boundary of the UTF-8 `s`.
+/// The boundary requires trailing whitespace, excludes that whitespace, and
+/// ignores periods after abbreviations or lone initials.
 fn leading_sentence(s: &str) -> Option<usize> {
     let bytes = s.as_bytes();
     for i in 0..bytes.len() {
@@ -208,11 +171,7 @@ fn leading_sentence(s: &str) -> Option<usize> {
     None
 }
 
-/// True if `before` (the text up to, but not including, a `.`) ends with a word
-/// that keeps the period from closing a sentence: a known [`ABBREVIATIONS`]
-/// entry, or a single-letter initial like `J`. The word is the trailing run of
-/// ASCII letters and apostrophes, so contractions (`don't.`) read as ordinary
-/// words and lone acronym letters (`U.S.`) read as initials.
+/// Returns whether a trailing word or initial prevents a period boundary.
 fn ends_with_abbreviation(before: &str) -> bool {
     let bytes = before.as_bytes();
     let mut start = bytes.len();

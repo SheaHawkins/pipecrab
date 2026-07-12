@@ -1,33 +1,25 @@
 use std::any::Any;
 use std::sync::Arc;
 
-/// Extension point for application-defined frame payloads.
-///
-/// Implement this on your own types and wrap them in [`DataFrame::Custom`] to
-/// pass domain-specific data through a pipeline without forking the core frame
-/// enum.
+/// An application-defined [`DataFrame::Custom`] payload.
 pub trait CustomFrame: Any + Send + Sync + std::fmt::Debug {
-    /// A static string identifying the concrete frame type (used for logging/dispatch).
+    /// Identifies the concrete frame type for logging or dispatch.
     fn kind(&self) -> &'static str;
-    /// Downcasting helper; implementations should return `self`.
+    /// Returns `self` for downcasting.
     fn as_any(&self) -> &dyn Any;
 }
 
-/// The wire format of an [`AudioChunk`]: its sample rate and channel count.
-///
-/// Samples are always `f32`; only the rate and channel count vary along the
-/// pipeline (capture ~48 kHz → STT 16 kHz → TTS 24 kHz → playback ~48 kHz),
-/// which is why every chunk carries its own format instead of assuming one.
+/// The sample rate and channel count of an [`AudioChunk`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct AudioFormat {
-    /// Samples per second, per channel (e.g. 48 000 for 48 kHz).
+    /// Samples per second per channel.
     pub sample_rate: u32,
-    /// Number of channels (1 = mono, 2 = stereo). Samples are interleaved.
+    /// Number of interleaved channels.
     pub channels: u16,
 }
 
 impl AudioFormat {
-    /// Construct a format from a `sample_rate` and `channels` count.
+    /// Creates a format.
     pub fn new(sample_rate: u32, channels: u16) -> Self {
         Self {
             sample_rate,
@@ -36,58 +28,42 @@ impl AudioFormat {
     }
 }
 
-/// A chunk of `f32` PCM audio tagged with its own [`AudioFormat`].
-///
-/// Immutable like every [`DataFrame`]: aggregate chunks and produce a new one
-/// rather than mutating in place. `samples` are interleaved by channel; for the
-/// common mono case that is just a flat sample buffer.
+/// A chunk of interleaved `f32` PCM audio.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AudioChunk {
     /// Interleaved `f32` PCM samples.
     pub samples: Arc<[f32]>,
-    /// The rate and channel count these `samples` are in.
+    /// The samples' format.
     pub format: AudioFormat,
 }
 
 impl AudioChunk {
-    /// Bundle `samples` with the `format` they are in.
+    /// Creates an audio chunk.
     pub fn new(samples: Arc<[f32]>, format: AudioFormat) -> Self {
         Self { samples, format }
     }
 }
 
-/// Travel direction for system frames.
-///
-/// Down = source → sink; Up = sink → source (errors, acks).
-/// [`DataFrame`] carries no direction — media is always downstream.
+/// The travel direction of a [`SystemFrame`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Direction {
-    /// Source → sink (lifecycle, interrupts flowing forward through the pipeline).
+    /// Source to sink.
     Down,
-    /// Sink → source (errors, acknowledgements flowing back upstream).
+    /// Sink to source.
     Up,
 }
 
-/// System frames: lifecycle, control, and errors.
+/// Priority lifecycle, control, and error frames.
 ///
-/// These are bidirectional: `Interrupt` and `Start`/`Stop` travel downstream;
-/// `Error` typically travels upstream. Immutable once constructed.
-///
-/// A frame belongs on this lane only if it must *hop the queue* — be handled
-/// ahead of the data backlog instead of in sequence with it. That is a
-/// deliberately small set (a barge-in `Interrupt`, `Start`/`Stop` lifecycle, an
-/// `Error`), and the bar is high. Anything that marks a *point* in the stream —
-/// a state change that must stay ordered with the media it annotates, like the
-/// voice-activity edges (`SpeechStarted` / `SpeechStopped`) or a future turn
-/// boundary — instead rides the data lane as a [`DataFrame`], where frames keep
-/// their arrival order. When in doubt, use the data lane.
+/// These frames may overtake queued data. Use [`DataFrame`] for events that
+/// mark a position in the media stream and must preserve FIFO order.
 #[derive(Clone, Debug)]
 pub enum SystemFrame {
-    /// Pipeline is starting; stages should initialise any runtime state.
+    /// Starts the pipeline.
     Start,
-    /// Graceful shutdown; stages should flush and clean up.
+    /// Stops the pipeline gracefully.
     Stop,
-    /// User barged in; stages should discard in-flight work and reset.
+    /// Cancels in-flight work after a user barge-in.
     Interrupt,
     /// An error propagated through the pipeline.
     Error {
@@ -98,31 +74,22 @@ pub enum SystemFrame {
     },
 }
 
-/// A piece of conversation text flowing through the pipeline: speech-to-text
-/// output, language-model output, or text bound for TTS.
+/// Conversation text produced by speech recognition or a language model.
 ///
 /// # The stable-prefix invariant
 ///
-/// For a given utterance (a [`Role::User`] unit) or generation (a
-/// [`Role::Agent`] unit), the bytes `text[..stable]` **never change** across
-/// successive partials: once a prefix is declared stable it is frozen, and only
-/// the tail beyond `stable` may be revised or grow. Downstream stages rely on
-/// this to commit settled text early instead of waiting for
-/// [`Finality::Final`].
+/// Across successive partials, `text[..stable]` never changes. Only the
+/// remaining suffix may change or grow.
 ///
-/// `stable` is a byte index into `text` and must lie on a char boundary. STT
-/// partials revise their tail, so `stable <= text.len()`; LM partials are
-/// append-only, so `stable == text.len()`. A [`Finality::Final`] transcript
-/// carries no `stable` — the whole `text` is settled.
+/// `stable` is a character-boundary byte index. It is at most `text.len()` for
+/// user text and equals `text.len()` for append-only agent text.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Transcript {
-    /// The transcript text so far. For a [`Finality::Partial`] this is the
-    /// current best guess; only `text[..stable]` is guaranteed frozen.
+    /// The current text. For [`Finality::Partial`], only `text[..stable]` is fixed.
     pub text: Arc<str>,
-    /// Who produced this text — [`Role::User`] (STT) or [`Role::Agent`] (LM).
+    /// Who produced the text.
     pub role: Role,
-    /// Whether this is an in-progress [`Finality::Partial`] or the completed
-    /// [`Finality::Final`] unit.
+    /// Whether the text is partial or final.
     pub finality: Finality,
 }
 
@@ -130,31 +97,26 @@ pub struct Transcript {
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
-    /// Speech-to-text output: what the user said.
+    /// Speech-to-text output.
     User,
-    /// Language-model output: what the agent is saying.
+    /// Language-model output.
     Agent,
 }
 
 /// Whether a [`Transcript`] is still being revised or is complete.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Finality {
-    /// In-progress text. `stable` is the byte length of the prefix that will
-    /// never change. STT partials revise their tail (`stable <= text.len()`);
-    /// LM partials are append-only (`stable == text.len()`).
+    /// In-progress text with a stable prefix.
     Partial {
-        /// Byte length of the frozen prefix. Lies on a char boundary and is
-        /// `<= text.len()`; see the [`Transcript`] stable-prefix invariant.
+        /// Byte length of the fixed prefix. See [`Transcript`].
         stable: usize,
     },
-    /// The completed unit (utterance for [`Role::User`], generation for
-    /// [`Role::Agent`] — but see the `SentenceChunker` note in Part 4).
+    /// A completed utterance or generation.
     Final,
 }
 
 impl Transcript {
-    /// An in-progress user (STT) transcript: the first `stable` bytes of `text`
-    /// are frozen and its tail may still be revised.
+    /// Creates a partial user transcript.
     ///
     /// `stable` must be `<= text.len()` and lie on a char boundary; both are
     /// debug-asserted.
@@ -185,8 +147,7 @@ impl Transcript {
         }
     }
 
-    /// An in-progress agent (LM) transcript. LM output is append-only, so the
-    /// entire current `text` is stable (`stable == text.len()`).
+    /// Creates an append-only partial agent transcript.
     pub fn agent_partial(text: impl Into<Arc<str>>) -> Self {
         let text = text.into();
         let stable = text.len();
@@ -207,16 +168,10 @@ impl Transcript {
     }
 }
 
-/// Data frames: everything flowing downstream (source → sink) in FIFO order —
-/// the media payload plus the in-band voice-activity edges that must stay
-/// ordered with it.
-///
-/// Immutable: don't try to make mutable frames. Instead, aggregate frames and
-/// produce a new one when you're ready.
+/// Frames that flow downstream in FIFO order.
 #[derive(Clone, Debug)]
 pub enum DataFrame {
-    /// Input audio from a transport source. Survives an interrupt flush so that
-    /// a barge-in utterance is not clipped; see [`DataFrame::survives_flush`].
+    /// Transport audio that survives interrupt flushes.
     InputAudio {
         /// Raw PCM bytes.
         bytes: Arc<[u8]>,
@@ -225,29 +180,20 @@ pub enum DataFrame {
         /// Number of audio channels (1 = mono, 2 = stereo).
         num_channels: u16,
     },
-    /// A piece of conversation text: STT output, LM output, or text bound for
-    /// TTS. See [`Transcript`] for the role and finality it carries.
+    /// Conversation text. See [`Transcript`].
     Transcript(Transcript),
     /// A chunk of `f32` PCM audio carrying its own [`AudioFormat`].
     Audio(AudioChunk),
-    /// Voice-activity detection observed the user *start* speaking: the
-    /// silence→speech edge, emitted by the VAD stage at onset and followed by the
-    /// utterance's [`Audio`](DataFrame::Audio) frames.
+    /// A speech-start edge preceding the utterance's [`Audio`](Self::Audio).
     SpeechStarted,
-    /// Voice-activity detection observed the user *stop* speaking: the
-    /// speech→silence edge, emitted by the VAD stage after the utterance's last
-    /// [`Audio`](DataFrame::Audio) frame.
+    /// A speech-stop edge following the utterance's last [`Audio`](Self::Audio).
     SpeechStopped,
     /// Application-defined payload; see [`CustomFrame`].
     Custom(Arc<dyn CustomFrame>),
 }
 
 impl DataFrame {
-    /// True for frames that must survive an interrupt's data-queue flush —
-    /// input-from-transport media, since a barge-in utterance must not be
-    /// clipped. False for everything else, including the voice-activity edges:
-    /// like a transcript they are derived control, so a barge-in drops any queued
-    /// one and fresh edges are regenerated from the surviving transport audio.
+    /// Returns whether this frame survives an interrupt's data-queue flush.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -271,8 +217,7 @@ impl DataFrame {
 }
 
 impl From<Transcript> for DataFrame {
-    /// Wrap a [`Transcript`] as a [`DataFrame::Transcript`] so a stage can write
-    /// `Transcript::user_final(text).into()` instead of naming the variant.
+    /// Wraps a [`Transcript`] in [`DataFrame::Transcript`].
     fn from(transcript: Transcript) -> Self {
         DataFrame::Transcript(transcript)
     }

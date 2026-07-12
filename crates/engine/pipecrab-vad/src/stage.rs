@@ -1,5 +1,4 @@
-//! [`VadStage`]: the [`VoiceActivityDetector`] gate. Audio in; speech-only audio
-//! out, bracketed by well-formed speech edges.
+//! Gates audio using a [`VoiceActivityDetector`].
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -13,66 +12,39 @@ use pipecrab_runtime::{Outbound, Stage, StageError};
 
 use crate::{VadError, VadEvent, VoiceActivityDetector};
 
-/// Adapts any [`VoiceActivityDetector`] into a pipeline [`Stage`] — as a
-/// **gate**, not a tap.
+/// Emits speech-only audio bracketed by speech edges.
 ///
-/// The stage runs the detector over every conforming audio chunk and emits, on
-/// the data lane, an utterance's audio **bracketed by its edges**: a
-/// [`SpeechStarted`](DataFrame::SpeechStarted), then the utterance's chunks
-/// (pre-roll included), then a [`SpeechStopped`](DataFrame::SpeechStopped).
-/// While idle it emits *nothing* — silence dies here.
+/// Each utterance is [`DataFrame::SpeechStarted`], its audio including pre-roll,
+/// then [`DataFrame::SpeechStopped`]. Silence is dropped.
 ///
-/// # ⚠️ Contract inversion
-///
-/// The older lane-discipline design made VAD a tap: the audio flowed through
-/// untouched and the edge was emitted **after** the chunk that triggered it.
-/// The gate **inverts** that. Downstream of `VadStage`, **edges bracket the
-/// utterance audio**: `SpeechStarted` *precedes* every utterance chunk (pre-roll
-/// included) and `SpeechStopped` *follows* the last one. A stateless downstream
-/// stage can therefore open its utterance on the edge alone — the onset audio is
-/// already gated in behind it.
+/// Downstream stages may rely on edges bracketing all utterance audio.
 ///
 /// # The pre-roll ring
 ///
-/// A detector only declares speech *started* after enough speech has accrued
-/// ([`DebounceConfig::start_windows`](crate::DebounceConfig)), so real onset
-/// audio has already passed by the time the edge fires. The gate owns a
-/// duration-bounded pre-roll ring: while idle it stashes each incoming chunk,
-/// and on onset it flushes the ring — in arrival order — ahead of the triggering
-/// chunk, so the utterance's first syllables survive. The budget is
-/// [`GateConfig::preroll`] (default 300 ms).
+/// Detection lags speech onset, so the gate buffers idle audio for
+/// [`GateConfig::preroll`] and flushes it when speech starts.
 ///
 /// # Topology commitment
 ///
-/// Because the gate drops silence, any future consumer of *continuous* raw audio
-/// (recording, a level meter, an AEC reference) must sit **upstream** of
-/// `VadStage`. Nothing downstream consumes silence today, so this constrains
-/// nothing yet, but it is a standing commitment (see `ARCHITECTURE.md`).
+/// Consumers that need continuous audio must run upstream of this stage.
 ///
 /// # State and cancellation
 ///
-/// The detector's own edge state lives in the detector (reset via its control
-/// call). The stage owns only the gate — the current mode and the ring —
-/// behind a [`Mutex`], because [`perform`](Stage::perform) is `&self`. All gate
-/// mutation happens in one synchronous critical section *after* the awaited
-/// [`process`](VoiceActivityDetector::process); the sends happen after the lock
-/// is released. A `perform` dropped mid-send loses unsent onset audio but can
-/// never resurrect a stale chunk into a later utterance.
+/// Gate state changes in one synchronous critical section after
+/// [`VoiceActivityDetector::process`]. Sends occur after releasing the lock, so
+/// cancellation cannot carry stale buffered audio into another utterance.
 pub struct VadStage<V: VoiceActivityDetector> {
     detector: V,
-    /// The one format the detector accepts, cached from
-    /// [`input_format`](VoiceActivityDetector::input_format) in [`new`](Self::new).
+    /// The cached [`VoiceActivityDetector::input_format`].
     expected: AudioFormat,
-    /// Mode + ring. Locked only in post-await critical sections.
+    /// Gate mode and pre-roll buffer.
     gate: Mutex<Gate>,
 }
 
 /// Tuning for [`VadStage`]'s pre-roll ring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GateConfig {
-    /// How much onset audio to retain in the pre-roll ring. Larger keeps more of
-    /// the utterance's first syllables at the cost of buffering; the default is
-    /// 300 ms.
+    /// Maximum onset audio retained before speech starts.
     pub preroll: Duration,
 }
 
@@ -101,16 +73,10 @@ enum Mode {
     Speech,
 }
 
-/// A duration-bounded FIFO of audio chunks: the pre-roll buffer that captures an
-/// utterance's onset — the audio that arrives *before* the detector's
-/// `SpeechStarted` edge — so the first syllables are not clipped.
+/// A duration-bounded FIFO that preserves audio preceding a speech-start edge.
 ///
-/// While the gate is idle it accumulates chunks, evicting the oldest whole
-/// chunks once the total buffered duration exceeds `budget`. Chunks vary in
-/// size, so eviction works in whole chunks rather than samples. Admission is
-/// format-fatal upstream (the stage rejects a mismatch before it reaches here),
-/// so the ring is uniform-format by construction — it needs no clear-on-change
-/// logic of its own.
+/// It evicts whole chunks from the front when the duration exceeds its budget.
+/// The stage guarantees a uniform format.
 struct PrerollRing {
     /// The maximum total duration to retain.
     budget: Duration,
@@ -126,8 +92,7 @@ impl PrerollRing {
         }
     }
 
-    /// The total buffered duration. Recomputed from the chunks (the ring is
-    /// small, ~budget/window) so accounting never drifts.
+    /// Computes the total buffered duration.
     fn total(&self) -> Duration {
         self.chunks.iter().map(chunk_duration).sum()
     }
@@ -188,9 +153,7 @@ impl<V: VoiceActivityDetector> VadStage<V> {
     }
 }
 
-/// One step the gate asks [`perform`](Stage::perform) to carry out:
-/// [`VadStage`]'s [`Processor::Effect`]. Its contents are private — only the
-/// stage constructs one — so the effect vocabulary stays opaque to callers.
+/// One operation for [`VadStage`] to perform.
 pub struct VadEffect(Effect);
 
 enum Effect {

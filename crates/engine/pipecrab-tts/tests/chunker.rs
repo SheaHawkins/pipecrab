@@ -1,17 +1,11 @@
-//! `SentenceChunker` splits a streaming agent generation into one final agent
-//! transcript per sentence, flushes the trailing remainder on the generation's
-//! own final, forwards non-agent frames, and resets on barge-in.
-//!
-//! Deterministic and tokio-free (`block_on`), so it rides the default
-//! `cargo test --workspace` path.
+//! Tests for [`SentenceChunker`](pipecrab_tts::SentenceChunker).
 
 use futures::executor::block_on;
 use pipecrab_core::{DataFrame, Direction, Finality, Role, SystemFrame, Transcript};
 use pipecrab_runtime::{PipelineBuilder, Received};
 use pipecrab_tts::SentenceChunker;
 
-/// Collect the text of every agent-final transcript the chunker emits for a
-/// scripted sequence of input frames, closing the pipeline afterward.
+/// Runs a script and collects final agent transcripts.
 async fn run(inputs: Vec<DataFrame>) -> Vec<String> {
     let (ends, driver) = PipelineBuilder::new()
         .stage(SentenceChunker::new())

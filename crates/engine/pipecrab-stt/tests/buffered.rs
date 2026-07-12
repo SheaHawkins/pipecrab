@@ -1,11 +1,4 @@
-//! `Buffered` adapts a one-shot `Transcriber` to the `StreamingTranscriber`
-//! protocol: it accumulates `feed`s (emitting no partials) and produces a single
-//! `Final` on `end_utterance`. These tests pin that behavior, its one honest
-//! limitation (stale-result discard on cancel), and that it reports the wrapped
-//! engine's `input_format`.
-//!
-//! Deterministic and tokio-free (`block_on`), so it rides the default
-//! `cargo test --workspace` path.
+//! Tests for the [`Buffered`](pipecrab_stt::Buffered) adapter.
 
 use std::sync::Mutex;
 
@@ -15,8 +8,7 @@ use futures::executor::block_on;
 use pipecrab_core::AudioFormat;
 use pipecrab_stt::{Buffered, StreamingTranscriber, SttError, SttEvent, Transcriber};
 
-/// A hardware-free one-shot transcriber: reports the sample count it was handed
-/// and declares its configured format.
+/// Reports its configured format and input sample count.
 struct CountingTranscriber {
     format: AudioFormat,
 }
@@ -33,8 +25,7 @@ impl Transcriber for CountingTranscriber {
     }
 }
 
-/// A one-shot transcriber whose `transcribe` blocks until a oneshot fires — used
-/// to hold an `end_utterance` in flight while a `cancel` races in.
+/// Blocks transcription until released.
 struct GatedTranscriber {
     gate: Mutex<Option<oneshot::Receiver<()>>>,
 }

@@ -1,9 +1,7 @@
-//! [`CpalSource`]: capture over the [`AudioSource`] trait.
+//! cpal capture through [`AudioSource`].
 //!
-//! The cpal input callback downmixes each frame to mono and pushes it into a
-//! [`bridge`](crate::bridge) ring; the async [`next_chunk`](AudioSource::next_chunk)
-//! pops a chunk once one is buffered, or parks until the callback signals more
-//! (or the stream fails).
+//! The device callback downmixes to mono and writes to a ring.
+//! [`AudioSource::next_chunk`] waits for a complete chunk or stream failure.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -22,15 +20,13 @@ use crate::config::{CpalConfig, DeviceSelection};
 pub struct CpalSource {
     name: String,
     ring: CaptureRing,
-    /// Keeps the capture stream alive. The audio interface is `Send` but a
-    /// `cpal::Stream` is not, so the stream is parked on its own thread and only
-    /// this `Send` handle is held here.
+    /// Keeps the thread-owned capture stream alive.
     _thread: crate::stream::StreamThread,
 }
 
 impl CpalSource {
-    /// Open the input device named by `config.source_device` and start capturing
-    /// at its default sample rate, chunked per `config`.
+    /// Opens the configured input device and starts capture at its default
+    /// sample rate, chunked per `config`.
     ///
     /// # Errors
     ///
@@ -61,8 +57,7 @@ impl CpalSource {
         self.ring.chunk_frames()
     }
 
-    /// Samples dropped so far because the capture ring was full (the async side
-    /// was not popping fast enough). Monotonic; a healthy stream stays at 0.
+    /// Returns the cumulative samples dropped because the capture ring was full.
     pub fn overruns(&self) -> usize {
         self.ring.overruns()
     }
@@ -79,10 +74,7 @@ impl AudioSource for CpalSource {
     }
 }
 
-/// Open the input device named by `config`, build and start its capture stream,
-/// and return the (`!Send`) stream alongside the `Send` async end (a
-/// [`CaptureRing`]) and the device name. Split out so it can run on the
-/// stream-owning thread (see [`CpalSource::new`] and [`crate::stream`]).
+/// Builds the capture stream and its [`CaptureRing`] on the owning thread.
 fn build_capture(config: &CpalConfig) -> Result<(cpal::Stream, CaptureRing, String), AudioError> {
     let host = cpal::default_host();
     let device = find_input_device(&host, &config.source_device)?;
@@ -147,8 +139,7 @@ fn build_capture(config: &CpalConfig) -> Result<(cpal::Stream, CaptureRing, Stri
     Ok((stream, ring, name))
 }
 
-/// Names of the available input (capture) devices, for building a
-/// [`DeviceSelection::Name`].
+/// Lists input device names for [`DeviceSelection::Name`].
 pub fn input_device_names() -> Result<Vec<String>, AudioError> {
     Ok(cpal::default_host()
         .input_devices()
@@ -202,11 +193,7 @@ where
     )
 }
 
-/// The input callback's per-buffer work: downmix each interleaved frame of the
-/// device's native sample type `T` to mono `f32`, push it into the ring, and
-/// count samples dropped when the ring is full (an overrun the async side
-/// observes via [`CpalSource::overruns`]). This is the one cpal-coupled piece of
-/// the capture path; the ring itself ([`crate::bridge`]) is backend-agnostic.
+/// Downmixes an input buffer to mono and counts ring overruns.
 fn capture_write<T>(
     data: &[T],
     channels: usize,

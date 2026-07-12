@@ -1,9 +1,7 @@
-//! [`CpalSink`]: playback over the [`AudioSink`] trait.
+//! cpal playback through [`AudioSink`].
 //!
-//! The async [`play`](AudioSink::play) pushes a chunk's samples into a
-//! [`bridge`](crate::bridge) ring, awaiting room when full; the cpal output
-//! callback pops one mono sample per frame, duplicates it across the device's
-//! channels, and outputs silence on underrun.
+//! [`AudioSink::play`] writes mono samples to a ring with backpressure. The
+//! device callback duplicates mono across channels and writes silence on underrun.
 
 use std::sync::Arc;
 
@@ -21,15 +19,13 @@ use crate::config::{CpalConfig, DeviceSelection};
 pub struct CpalSink {
     name: String,
     ring: PlaybackRing,
-    /// Keeps the playback stream alive. The audio interface is `Send` but a
-    /// `cpal::Stream` is not, so the stream is parked on its own thread and only
-    /// this `Send` handle is held here.
+    /// Keeps the thread-owned playback stream alive.
     _thread: crate::stream::StreamThread,
 }
 
 impl CpalSink {
-    /// Open the output device named by `config.sink_device` and start playback
-    /// at its default sample rate, chunked per `config`.
+    /// Opens the configured output device and starts playback at its default
+    /// sample rate, chunked per `config`.
     ///
     /// # Errors
     ///
@@ -67,10 +63,7 @@ impl AudioSink for CpalSink {
     }
 }
 
-/// Open the output device named by `config`, build and start its playback
-/// stream, and return the (`!Send`) stream alongside the `Send` async end (a
-/// [`PlaybackRing`]) and the device name. Split out so it can run on the
-/// stream-owning thread (see [`CpalSink::new`] and [`crate::stream`]).
+/// Builds the playback stream and its [`PlaybackRing`] on the owning thread.
 fn build_playback(config: &CpalConfig) -> Result<(cpal::Stream, PlaybackRing, String), AudioError> {
     let host = cpal::default_host();
     let device = find_output_device(&host, &config.sink_device)?;
@@ -124,8 +117,7 @@ fn build_playback(config: &CpalConfig) -> Result<(cpal::Stream, PlaybackRing, St
     Ok((stream, ring, name))
 }
 
-/// Names of the available output (playback) devices, for building a
-/// [`DeviceSelection::Name`].
+/// Lists output device names for [`DeviceSelection::Name`].
 pub fn output_device_names() -> Result<Vec<String>, AudioError> {
     Ok(cpal::default_host()
         .output_devices()
@@ -151,8 +143,7 @@ fn find_output_device(
     }
 }
 
-/// Build the output stream for a device whose native sample type is `T`,
-/// duplicating each mono `f32` sample across the device's channels.
+/// Builds an output stream and duplicates mono samples across device channels.
 fn build_playback_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,

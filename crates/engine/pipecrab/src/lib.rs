@@ -1,7 +1,5 @@
-//! pipecrab — sans-IO voice-agent pipelines, async bundled in.
+//! Sans-I/O voice-agent pipelines with asynchronous orchestration.
 //!
-//! Re-exports the sans-IO core ([`pipecrab_core`]) and the runtime-agnostic
-//! async orchestration layer ([`pipecrab_runtime`]) so downstream code depends
-//! on one crate. The two have no name collisions.
+//! Re-exports [`pipecrab_core`] and [`pipecrab_runtime`] as one facade.
 pub use pipecrab_core::*;
 pub use pipecrab_runtime::*;

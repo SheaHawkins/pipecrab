@@ -1,13 +1,7 @@
-//! Run-loop behavior: interrupt barge-in, sys-preempts-data, pass-through.
+//! Tests run-loop interruption, lane priority, and pass-through behavior.
 //!
-//! All deterministic and tokio-free, driven by `futures::executor::block_on`.
-//! Frames go in through the pipeline's `input` ([`Outbound`]) and come out
-//! through its `output` ([`Inbound`]) — the same abstraction every stage uses.
-//!
-//! The interrupt test parks `perform` on a `oneshot` the test never fires, so
-//! the only way the driver can terminate is by abandoning that `perform` — the
-//! test hanging would itself be the failure signal; the assertions confirm the
-//! mechanism (the receiver was dropped, and `decide_system(Interrupt)` ran).
+//! The interrupt test parks `perform` and verifies that the run loop drops it
+//! before handling the interrupt.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -26,8 +20,7 @@ use pipecrab_runtime::{Outbound, PipelineBuilder, Received, Stage, StageError};
 
 // --- Test 1: an Interrupt abandons an in-flight perform and runs decide_system.
 
-/// `perform` signals that it started, then parks forever on a `oneshot` the
-/// test never fires. `decide_system(Interrupt)` flips the shared flag.
+/// Parks `perform` until the run loop drops it on interrupt.
 struct BlockingStage {
     block_rx: Mutex<Option<oneshot::Receiver<()>>>,
     started: mpsc::Sender<()>,
@@ -107,8 +100,7 @@ fn interrupt_abandons_perform_and_runs_decide_system() {
 
 // --- Test 2: a system frame preempts a backed-up data lane.
 
-/// Counts data frames in `decide_data`; on a `Start` frame, records how many had
-/// been processed at that moment.
+/// Records how many data frames precede a start frame.
 struct CountingStage {
     data_count: Arc<AtomicUsize>,
     data_at_preempt: Arc<Mutex<Option<usize>>>,
@@ -181,7 +173,7 @@ fn sys_preempts_backed_up_data() {
 
 // --- Test 3: an un-overridden stage is a transparent pass-through.
 
-/// Every `Processor`/`Stage` method left at its default.
+/// A stage using the default pass-through decisions.
 struct PassThrough;
 
 impl Processor for PassThrough {
@@ -330,9 +322,7 @@ fn pipeline_composes_stages_with_distinct_effect_types() {
         .build();
 }
 
-/// On native targets the pipeline driver must be `Send`, so it can be handed to
-/// a multi-threaded executor (`tokio::spawn`). On wasm32 it is `!Send` and is
-/// driven by `spawn_local`; this assertion is native-only by construction.
+/// Asserts that native pipeline drivers can move to another executor thread.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn driver_is_send_on_native() {

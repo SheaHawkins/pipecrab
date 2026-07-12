@@ -1,5 +1,4 @@
-//! [`TtsStage`]: the generic adapter from any [`Synthesizer`] to a pipeline
-//! [`Stage`].
+//! Adapts a [`Synthesizer`] into a pipeline [`Stage`].
 
 use std::sync::Arc;
 
@@ -12,32 +11,16 @@ use pipecrab_runtime::{Outbound, Stage, StageError};
 
 use crate::{Synthesizer, TtsError};
 
-/// Adapts any [`Synthesizer`] into a pipeline [`Stage`]: on a **final agent**
-/// [`Transcript`] it synthesizes the text and streams
-/// [`Audio`](DataFrame::Audio) chunks in its place; every other frame passes
-/// through untouched.
+/// Converts final agent [`Transcript`]s into streamed [`Audio`](DataFrame::Audio).
 ///
-/// Only the agent's [`Final`](Finality::Final) speech is spoken — user speech
-/// and in-progress agent partials are not the stage's to voice, so they forward.
-/// A [`SentenceChunker`](crate::SentenceChunker) upstream turns a streaming
-/// generation into per-sentence finals, so "final agent transcript" is often a
-/// single sentence and playback starts without waiting for the whole reply.
+/// Other frames pass through. A [`SentenceChunker`](crate::SentenceChunker)
+/// upstream can turn a generation into sentence-sized final transcripts.
 ///
 /// # Barge-in
 ///
-/// Following the [`Processor`]/[`Stage`] split, [`decide_data`] only classifies
-/// the frame and hands the text to `perform` as a [`Speak`] effect; `perform`
-/// pulls the synthesizer's stream and emits a chunk per item. Each `.await`
-/// there is a point the run loop can drop `perform` at, so a barge-in
-/// [`Interrupt`](SystemFrame::Interrupt) stops emission within one chunk. The
-/// [`Interrupt`](SystemFrame::Interrupt) also reaches [`decide_system`], which
-/// issues the [`cancel`](Synthesizer::cancel) control call so the engine's worker
-/// stops producing too. Any [`Audio`](DataFrame::Audio) chunks already queued
-/// downstream are discarded by the run loop's interrupt flush
-/// ([`survives_flush`](DataFrame::survives_flush) is false for them).
-///
-/// [`decide_data`]: Processor::decide_data
-/// [`decide_system`]: Processor::decide_system
+/// [`Processor::decide_data`] emits a [`Speak`] effect without doing I/O.
+/// [`SystemFrame::Interrupt`] drops that effect, calls [`Synthesizer::cancel`],
+/// and flushes queued synthesized audio.
 pub struct TtsStage<S: Synthesizer> {
     synth: S,
 }
@@ -49,9 +32,7 @@ impl<S: Synthesizer> TtsStage<S> {
     }
 }
 
-/// One piece of text to synthesize: [`TtsStage`]'s [`Processor::Effect`].
-/// Emitted by `decide_data`, interpreted by `perform`. Its inner text is private
-/// — only the stage constructs one.
+/// Text for [`TtsStage`] to synthesize.
 pub struct Speak(Arc<str>);
 
 impl<S: Synthesizer> Processor for TtsStage<S> {
