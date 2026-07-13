@@ -48,11 +48,11 @@ and wakes the async side (that wake is a documented pragmatic exception). Both
 open from a shared `CpalConfig` (which device per side, plus chunk/buffer
 sizing), defaulting to the system default devices.
 
-`pipecrab-audio` also provides `ResamplerStage`, which converts every
-`DataFrame::Audio` to one fixed `AudioFormat`. Put one immediately before a
-format-strict VAD, STT engine, or audio sink. It preserves continuous filter
-state across chunks, resets that state on interrupts and input-format changes,
-and forwards already-conforming audio without copying its sample buffer.
+`pipecrab-audio` also provides the `Resampler` audio-to-audio interface and a
+generic `ResamplerStage<R>` pipeline adapter. `ResamplerStage::new(format)` uses
+the bundled `RubatoSincResampler`; `ResamplerStage::with_resampler(custom)`
+injects another implementation. Put the stage immediately before a
+format-strict VAD, STT engine, or audio sink.
 
 ## Running the echo example
 

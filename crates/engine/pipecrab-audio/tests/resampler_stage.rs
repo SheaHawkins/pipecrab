@@ -3,9 +3,57 @@
 use std::sync::Arc;
 
 use futures::executor::block_on;
-use pipecrab_audio::{AudioChunk, AudioFormat, ResamplerStage};
+use pipecrab_audio::{AudioChunk, AudioFormat, Resampler, ResamplerError, ResamplerStage};
 use pipecrab_core::{DataFrame, Direction, SystemFrame};
 use pipecrab_runtime::{PipelineBuilder, Received};
+
+struct PassthroughResampler {
+    output_format: AudioFormat,
+}
+
+impl Resampler for PassthroughResampler {
+    fn output_format(&self) -> AudioFormat {
+        self.output_format
+    }
+
+    fn resample(&mut self, input: &AudioChunk) -> Result<Option<AudioChunk>, ResamplerError> {
+        Ok(Some(AudioChunk::new(
+            input.samples.clone(),
+            self.output_format,
+        )))
+    }
+
+    fn reset(&mut self) {}
+}
+
+#[test]
+fn accepts_a_public_custom_resampler() {
+    block_on(async {
+        let output_format = AudioFormat::new(24_000, 1);
+        let stage = ResamplerStage::with_resampler(PassthroughResampler { output_format }).unwrap();
+        let (ends, driver) = PipelineBuilder::new().stage(stage).build().start();
+        let input = ends.input;
+        let mut output = ends.output;
+
+        let send = async move {
+            input
+                .send_data(DataFrame::Audio(AudioChunk::new(
+                    Arc::from([0.25, -0.25]),
+                    AudioFormat::new(48_000, 1),
+                )))
+                .await
+                .unwrap();
+        };
+        let receive = async move { output.recv().await.unwrap() };
+
+        let (_, _, received) = futures::join!(driver, send, receive);
+        assert!(matches!(
+            received,
+            Received::Data(DataFrame::Audio(chunk))
+                if chunk.format == output_format && *chunk.samples == [0.25, -0.25]
+        ));
+    });
+}
 
 #[test]
 fn converted_audio_stays_bracketed_by_data_frames() {

@@ -115,16 +115,17 @@ VAD is two tiers. `VoiceActivityDetector` (audio in, speech *edges* out) is the 
 
 ## Resampling
 
-`pipecrab-audio::ResamplerStage` is the format-conversion boundary. It has one
-fixed output `AudioFormat`; matching audio is forwarded without copying, and
-other `DataFrame::Audio` chunks are replaced with streaming windowed-sinc
-output. Non-audio frames pass through unchanged.
+`pipecrab-audio::Resampler` is the synchronous audio-to-audio conversion
+interface. `ResamplerStage<R>` adapts any implementation to the pipeline;
+`ResamplerStage::new(format)` selects the bundled `RubatoSincResampler` as the
+sensible default, while `with_resampler` accepts another backend. Non-audio
+frames pass through unchanged.
 
-The resampler is continuous across chunks of one input format. An input-format
-change or `Interrupt` resets its filter history. Equal channel counts remain
-independent; when counts differ, channels are averaged to mono and replicated
-because `AudioFormat` carries no speaker-layout metadata from which to infer a
-more specific mix matrix.
+The Rubato sinc implementation is continuous across chunks of one input
+format. An input-format change or `Interrupt` resets its filter history. Equal
+channel counts remain independent; when counts differ, channels are averaged
+to mono and replicated because `AudioFormat` carries no speaker-layout metadata
+from which to infer a more specific mix matrix.
 
 The DSP state lives in `decide_data`, keeping mutation inside the synchronous,
 non-cancellable half of the stage. That work occupies the orchestrator for the
