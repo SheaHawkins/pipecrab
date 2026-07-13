@@ -11,7 +11,7 @@ use futures::executor::block_on;
 use pipecrab_audio::mock::{MockSink, MockSource};
 use pipecrab_audio::{AudioFormat, AudioSink, AudioSource};
 use pipecrab_core::{DataFrame, Direction, Processor, SystemFrame};
-use pipecrab_runtime::{maybe_async_trait, Outbound, PipelineBuilder, Received, Stage, StageError};
+use pipecrab_runtime::{Outbound, PipelineBuilder, Received, Stage, StageError, maybe_async_trait};
 
 /// Forwards every frame unchanged: an all-default [`Processor`] is already a
 /// transparent passthrough, so `decide_*` are left at their defaults (which

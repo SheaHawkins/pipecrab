@@ -7,10 +7,10 @@
 //! `Error` going up — since fast upstream failure depends on the error jumping
 //! the data backlog.
 
+use futures::FutureExt;
 use futures::channel::mpsc;
 use futures::executor::block_on;
 use futures::sink::SinkExt;
-use futures::FutureExt;
 use pipecrab_core::{DataFrame, Direction, SystemFrame, Transcript};
 use pipecrab_runtime::{Inbound, Received};
 

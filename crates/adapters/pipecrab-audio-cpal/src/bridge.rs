@@ -10,8 +10,8 @@
 //! reusable building block for any callback-driven backend, and unit-testable
 //! without audio hardware.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 
 use futures::future::poll_fn;
@@ -220,7 +220,7 @@ fn push_available(producer: &mut Producer<f32>, samples: &[f32], offset: &mut us
 mod tests {
     use super::*;
     use futures::executor::block_on;
-    use futures::task::{waker, ArcWake};
+    use futures::task::{ArcWake, waker};
     use rtrb::RingBuffer;
 
     /// A `Waker` that counts how many times it is woken.

@@ -30,5 +30,5 @@ pub use inbound::{Inbound, Received};
 pub use maybe::{MaybeSend, MaybeSendSync};
 pub use offload::offload;
 pub use outbound::Outbound;
-pub use pipeline::{link, Pipeline, PipelineBuilder, PipelineEnds};
+pub use pipeline::{Pipeline, PipelineBuilder, PipelineEnds, link};
 pub use stage::{Stage, StageError};

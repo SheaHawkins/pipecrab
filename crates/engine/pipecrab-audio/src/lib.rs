@@ -15,7 +15,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-use pipecrab_runtime::{maybe_async_trait, MaybeSend};
+use pipecrab_runtime::{MaybeSend, maybe_async_trait};
 
 pub mod mock;
 mod resampler;

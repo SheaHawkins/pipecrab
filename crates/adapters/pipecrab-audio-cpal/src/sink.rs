@@ -112,7 +112,7 @@ fn build_playback(config: &CpalConfig) -> Result<(cpal::Stream, PlaybackRing, St
         other => {
             return Err(AudioError::Device(format!(
                 "unsupported output sample format: {other:?}"
-            )))
+            )));
         }
     }
     .map_err(|e| AudioError::Device(format!("build output stream: {e}")))?;

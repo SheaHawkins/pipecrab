@@ -9,9 +9,9 @@
 //! test hanging would itself be the failure signal; the assertions confirm the
 //! mechanism (the receiver was dropped, and `decide_system(Interrupt)` ran).
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use futures::channel::{mpsc, oneshot};

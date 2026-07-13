@@ -150,7 +150,9 @@ mod desktop {
             sink.device_name(),
             sink.format().sample_rate
         );
-        println!("echo: {chunk_frames} frames/chunk (~{chunk_ms} ms), delay {delay_ms} ms ({delay_chunks} chunks)");
+        println!(
+            "echo: {chunk_frames} frames/chunk (~{chunk_ms} ms), delay {delay_ms} ms ({delay_chunks} chunks)"
+        );
         match max_chunks {
             Some(_) => println!("echo: running for {} s", max_seconds.unwrap()),
             None => println!("echo: running until Ctrl-C — use headphones!"),
@@ -235,7 +237,7 @@ mod desktop {
                 other => {
                     return Err(format!(
                         "unknown argument {other:?} (expected --delay-ms or --seconds)"
-                    ))
+                    ));
                 }
             }
         }

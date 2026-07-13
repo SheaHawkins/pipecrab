@@ -46,5 +46,5 @@ mod source;
 mod stream;
 
 pub use config::{CpalConfig, DeviceSelection};
-pub use sink::{output_device_names, CpalSink};
-pub use source::{input_device_names, CpalSource};
+pub use sink::{CpalSink, output_device_names};
+pub use source::{CpalSource, input_device_names};
