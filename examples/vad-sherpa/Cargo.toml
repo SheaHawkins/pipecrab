@@ -1,0 +1,19 @@
+[package]
+name = "vad-sherpa"
+description = "Print Sherpa VAD speech edges from a live microphone."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.pipecrab]
+layer = "app"
+
+[dependencies]
+pipecrab            = { workspace = true }
+pipecrab-audio      = { workspace = true }
+pipecrab-audio-cpal = { workspace = true }
+pipecrab-vad        = { workspace = true }
+pipecrab-vad-sherpa = { workspace = true }
+futures             = "0.3"

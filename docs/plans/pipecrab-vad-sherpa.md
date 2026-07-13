@@ -72,7 +72,7 @@ linkage features:
 
 ```toml
 sherpa-onnx         = "=1.13.4"
-pipecrab-vad-sherpa = { path = "crates/adapters/pipecrab-vad-sherpa", version = "0.2.0" }
+pipecrab-vad-sherpa = { path = "crates/adapters/pipecrab-vad-sherpa", version = "0.3.0" }
 ```
 
 Sherpa links statically by default. A build can provide its own matching native

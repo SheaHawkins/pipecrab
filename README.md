@@ -54,6 +54,12 @@ the bundled `RubatoSincResampler`; `ResamplerStage::with_resampler(custom)`
 injects another implementation. Put the stage immediately before a
 format-strict VAD, STT engine, or audio sink.
 
+[`pipecrab-vad-sherpa`](./crates/adapters/pipecrab-vad-sherpa) runs Sherpa
+ONNX's Silero VAD on a dedicated worker and implements the edge-emitting
+`VoiceActivityDetector` interface. It accepts 16 kHz mono audio in exact
+512-sample model windows; arbitrary PipeCrab chunk sizes are accumulated by the
+adapter.
+
 ## Running the echo example
 
 [`examples/echo`](./examples/echo) captures your voice and plays it straight
@@ -69,6 +75,23 @@ $ cargo run -p echo -- --seconds 5      # run for 5 s, then shut down cleanly
 Use **headphones** — over speakers the mic re-captures the playback and howls.
 On macOS the first run triggers a microphone-permission prompt. Without
 `--seconds` it runs until Ctrl-C.
+
+## Running the Sherpa VAD example
+
+Download Sherpa's 16 kHz Silero model, then run the live microphone example:
+
+```console
+$ curl -L \
+    https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx \
+    -o silero_vad.onnx
+$ cargo run -p vad-sherpa -- --model ./silero_vad.onnx
+$ cargo run -p vad-sherpa -- --model ./silero_vad.onnx --seconds 10
+```
+
+The example captures at the microphone's native rate, resamples once to 16 kHz
+mono, and prints `SpeechStarted` and `SpeechStopped`. The first Sherpa build may
+download matching native libraries; set `SHERPA_ONNX_LIB_DIR` to use an existing
+Sherpa installation.
 
 ## Contributing
 See [CONTRIBUTING.md](./CONTRIBUTING.md)
