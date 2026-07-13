@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use futures::executor::block_on;
 use futures::stream::StreamExt;
 use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Direction, Processor, SystemFrame};
-use pipecrab_runtime::{link, PipelineBuilder, Received, Stage};
+use pipecrab_runtime::{PipelineBuilder, Received, Stage, link};
 use pipecrab_vad::{GateConfig, VadError, VadEvent, VadStage, VoiceActivityDetector};
 
 /// A hardware-free detector: replays a scripted sequence of edge-batches, one

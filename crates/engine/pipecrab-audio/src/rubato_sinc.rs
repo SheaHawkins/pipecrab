@@ -4,11 +4,11 @@ use std::collections::VecDeque;
 
 use pipecrab_core::{AudioChunk, AudioFormat};
 use rubato::{
-    calculate_cutoff, Resampler as _, SincFixedIn, SincInterpolationParameters,
-    SincInterpolationType, WindowFunction,
+    Resampler as _, SincFixedIn, SincInterpolationParameters, SincInterpolationType,
+    WindowFunction, calculate_cutoff,
 };
 
-use crate::resampler::{validate_chunk, validate_format, Resampler, ResamplerError};
+use crate::resampler::{Resampler, ResamplerError, validate_chunk, validate_format};
 
 const BLOCK_FRAMES: usize = 64;
 const SINC_LENGTH: usize = 128;

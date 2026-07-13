@@ -5,8 +5,8 @@
 //! pops a chunk once one is buffered, or parks until the callback signals more
 //! (or the stream fails).
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -129,7 +129,7 @@ fn build_capture(config: &CpalConfig) -> Result<(cpal::Stream, CaptureRing, Stri
         other => {
             return Err(AudioError::Device(format!(
                 "unsupported input sample format: {other:?}"
-            )))
+            )));
         }
     }
     .map_err(|e| AudioError::Device(format!("build input stream: {e}")))?;

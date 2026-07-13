@@ -65,10 +65,11 @@ fn send_data_to_closed_channel_returns_err() {
         };
         drop(data_rx);
 
-        assert!(outb
-            .send_data(Transcript::user_final("x").into())
-            .await
-            .is_err());
+        assert!(
+            outb.send_data(Transcript::user_final("x").into())
+                .await
+                .is_err()
+        );
     });
 }
 
@@ -83,9 +84,10 @@ fn send_system_to_closed_channel_returns_err() {
         };
         drop(sys_rx);
 
-        assert!(outb
-            .send_system(Direction::Down, SystemFrame::Stop)
-            .await
-            .is_err());
+        assert!(
+            outb.send_system(Direction::Down, SystemFrame::Stop)
+                .await
+                .is_err()
+        );
     });
 }

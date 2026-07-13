@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use pipecrab_core::{
     AudioChunk, AudioFormat, DataFrame, Decision, Direction, Processor, SystemFrame,
 };
-use pipecrab_runtime::{maybe_async_trait, MaybeSend, Outbound, Stage, StageError};
+use pipecrab_runtime::{MaybeSend, Outbound, Stage, StageError, maybe_async_trait};
 
 use crate::rubato_sinc::RubatoSincResampler;
 
@@ -195,8 +195,8 @@ pub(crate) fn validate_chunk(chunk: &AudioChunk) -> Result<(), ResamplerError> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use pipecrab_core::Disposition;
 

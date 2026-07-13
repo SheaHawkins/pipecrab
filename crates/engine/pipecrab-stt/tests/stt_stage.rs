@@ -26,7 +26,7 @@ use pipecrab_core::{
     AudioChunk, AudioFormat, DataFrame, Direction, Disposition, Finality, Processor, Role,
     SystemFrame,
 };
-use pipecrab_runtime::{link, PipelineBuilder, Received, Stage};
+use pipecrab_runtime::{PipelineBuilder, Received, Stage, link};
 use pipecrab_stt::{
     Buffered, StreamingTranscriber, SttEffect, SttError, SttEvent, SttStage, Transcriber,
 };

@@ -28,7 +28,7 @@ use pipecrab_lm::{
     ChatRole, Conversation, GenParams, Generate, LanguageModel, LmError, LmStage, TokenOut,
     TokenStream,
 };
-use pipecrab_runtime::{link, PipelineBuilder, Received, Stage};
+use pipecrab_runtime::{PipelineBuilder, Received, Stage, link};
 
 // --- A scripted LanguageModel mock. ------------------------------------------
 

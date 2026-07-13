@@ -73,9 +73,10 @@ fn flush_all_marked_returns_all_in_order() {
     data_tx.try_send(input_audio()).unwrap();
     let kept = inb.flush_data();
     assert_eq!(kept.len(), 3);
-    assert!(kept
-        .iter()
-        .all(|f| matches!(f, DataFrame::InputAudio { .. })));
+    assert!(
+        kept.iter()
+            .all(|f| matches!(f, DataFrame::InputAudio { .. }))
+    );
 }
 
 #[test]
