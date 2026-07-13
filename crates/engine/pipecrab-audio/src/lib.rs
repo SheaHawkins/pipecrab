@@ -9,8 +9,9 @@
 //!
 //! Audio is a first-party pipeline payload — a typed
 //! [`DataFrame::Audio`](pipecrab_core::DataFrame::Audio), never a `Custom`
-//! frame — so nothing here downcasts. [`ResamplerStage`] converts that audio to
-//! a fixed sample rate and channel count before a format-strict consumer.
+//! frame — so nothing here downcasts. [`Resampler`] defines audio-to-audio
+//! conversion, [`ResamplerStage`] adapts it to the pipeline, and
+//! [`RubatoSincResampler`] provides the bundled windowed-sinc default.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
@@ -18,9 +19,11 @@ use pipecrab_runtime::{maybe_async_trait, MaybeSend};
 
 pub mod mock;
 mod resampler;
+mod rubato_sinc;
 
 pub use pipecrab_core::{AudioChunk, AudioFormat};
-pub use resampler::{ResamplerEffect, ResamplerError, ResamplerStage};
+pub use resampler::{Resampler, ResamplerEffect, ResamplerError, ResamplerStage};
+pub use rubato_sinc::RubatoSincResampler;
 
 /// Why an [`AudioSource`]/[`AudioSink`] (or an underlying backend I/O) failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
