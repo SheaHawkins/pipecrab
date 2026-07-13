@@ -89,7 +89,7 @@ impl<S: StreamingTranscriber> Processor for SttStage<S> {
                 Decision::drop().emit(SttEffect::Feed(chunk.clone()))
             }
             // Format-fatal admission: a mismatch is a wiring bug the engine can
-            // never conform (it cannot detect rate from `&[f32]`). Cancel first
+            // never conform (it cannot detect rate from samples). Cancel first
             // as hygiene — don't leave the worker mid-utterance — then reject.
             DataFrame::Audio(chunk) => {
                 self.transcriber.cancel();
@@ -130,7 +130,7 @@ impl<S: StreamingTranscriber> Stage for SttStage<S> {
                 self.transcriber.begin_utterance().await?;
             }
             SttEffect::Feed(chunk) => {
-                let events = self.transcriber.feed(&chunk.samples).await?;
+                let events = self.transcriber.feed(chunk.samples).await?;
                 forward_events(events, out).await;
             }
             SttEffect::End => {

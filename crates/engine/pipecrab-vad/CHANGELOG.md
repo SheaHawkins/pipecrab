@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** Pass VAD audio to detectors and scorers as `Arc<[f32]>` so
+  worker-backed implementations can retain it without a sample-buffer copy.
+
 ## [0.2.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-vad-v0.1.0...pipecrab-vad-v0.2.0) - 2026-07-12
 
 ### Added

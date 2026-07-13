@@ -24,7 +24,7 @@
 //! this adapter. Because a segmenter is never wrapped by `Debounced`, no engine
 //! is ever debounced twice: double hysteresis cannot arise by construction.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use pipecrab_core::AudioFormat;
@@ -109,6 +109,11 @@ struct DebouncedState {
 /// Lifts a [`SpeechScorer`] into a [`VoiceActivityDetector`] by windowing its
 /// input, thresholding its probabilities, and debouncing the result into edges.
 /// The sibling of `pipecrab-stt`'s `Buffered`; see the module docs.
+///
+/// Arbitrary input chunks may split or contain several scorer windows, so this
+/// adapter intentionally copies samples into exact, contiguous windows. Direct
+/// [`VoiceActivityDetector`] implementations receive the pipeline's shared
+/// sample buffer without that windowing copy.
 pub struct Debounced<S: SpeechScorer> {
     scorer: S,
     config: DebounceConfig,
@@ -144,19 +149,21 @@ impl<S: SpeechScorer> VoiceActivityDetector for Debounced<S> {
         self.scorer.input_format()
     }
 
-    async fn process(&self, samples: &[f32]) -> Result<Vec<VadEvent>, VadError> {
+    async fn process(&self, samples: Arc<[f32]>) -> Result<Vec<VadEvent>, VadError> {
         let window_len = self.scorer.window_len();
         // Lock → append the new samples, extract every complete window into a
         // local Vec, unlock. The remainder (a partial window) stays safe in
         // state. A `process` dropped after this point loses only the locally
         // extracted windows — the edge is delayed by a window or two, never
         // resurrected — and the remainder is untouched.
-        let windows: Vec<Vec<f32>> = {
+        let windows: Vec<Arc<[f32]>> = {
             let mut st = self.state.lock().expect("Debounced state mutex poisoned");
-            st.remainder.extend_from_slice(samples);
+            st.remainder.extend_from_slice(&samples);
             let mut windows = Vec::new();
             while st.remainder.len() >= window_len && window_len > 0 {
-                windows.push(st.remainder.drain(..window_len).collect());
+                windows.push(Arc::from(
+                    st.remainder.drain(..window_len).collect::<Vec<_>>(),
+                ));
             }
             windows
         };
@@ -165,7 +172,7 @@ impl<S: SpeechScorer> VoiceActivityDetector for Debounced<S> {
         // the verdict and collect any edge.
         let mut events = Vec::new();
         for window in windows {
-            let prob = self.scorer.score(&window).await?;
+            let prob = self.scorer.score(window).await?;
             let is_speech = prob >= self.config.threshold;
             let mut st = self.state.lock().expect("Debounced state mutex poisoned");
             if let Some(event) = st.observe.observe(is_speech, &self.config) {

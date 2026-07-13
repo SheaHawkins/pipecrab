@@ -99,7 +99,7 @@ cpal's device callbacks run on a real-time thread that must never block, allocat
 
 ## STT interface
 
-`Transcriber` (`f32` in, text out) is the swappable capability; `SttStage` adapts one to a `Stage`, replacing a `DataFrame::Audio` with a `DataFrame::Transcript`. Engines live behind the trait — native `ort`, browser Transformers.js in a Worker — each owning its own offload, so the pipeline never names a concrete model.
+`Transcriber` (`f32` in, text out) is the swappable capability; `SttStage` adapts one to a `Stage`, replacing a `DataFrame::Audio` with a `DataFrame::Transcript`. Audio crosses the async engine boundary as `Arc<[f32]>`, allowing worker-backed engines to retain or enqueue a chunk without copying its samples. Engines live behind the trait — native `ort`, browser Transformers.js in a Worker — each owning its own offload, so the pipeline never names a concrete model.
 
 ## VAD gate
 
@@ -111,7 +111,7 @@ VAD is two tiers. `VoiceActivityDetector` (audio in, speech *edges* out) is the 
 
 **Topology commitment.** Because the gate drops silence, any future consumer of *continuous* raw audio (recording, a level meter, an AEC reference) must sit **upstream** of `VadStage`. Nothing downstream consumes silence today, so this constrains nothing yet — but it is a standing commitment.
 
-**Format is fatal.** A bare `&[f32]` carries no sample rate, so the detector declares its `input_format()` and the stage enforces it fatally: nonconforming audio is rejected before it reaches any engine (`VadError` therefore carries no format-mismatch variant). Continuous-format conversion belongs to a resample stage upstream.
+**Format is fatal.** `Arc<[f32]>` carries no sample rate, so the detector declares its `input_format()` and the stage enforces it fatally: nonconforming audio is rejected before it reaches any engine (`VadError` therefore carries no format-mismatch variant). The shared buffer lets worker-backed detectors retain a chunk without copying its samples. Continuous-format conversion belongs to a resample stage upstream.
 
 ## Resampling
 

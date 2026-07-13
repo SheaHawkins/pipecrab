@@ -206,7 +206,7 @@ impl<V: VoiceActivityDetector> Processor for VadStage<V> {
     fn decide_data(&mut self, frame: &DataFrame) -> Decision<VadEffect> {
         match frame {
             // Format-fatal admission: a mismatch is rejected before any audio
-            // reaches the engine (the engine cannot detect rate from `&[f32]`).
+            // reaches the engine (the engine cannot detect rate from samples).
             DataFrame::Audio(chunk) if chunk.format != self.expected => {
                 Decision::drop().emit(VadEffect(Effect::RejectFormat { got: chunk.format }))
             }
@@ -263,7 +263,7 @@ impl<V: VoiceActivityDetector> Stage for VadStage<V> {
             Effect::Detect(chunk) => chunk,
         };
 
-        let events = self.detector.process(&chunk.samples).await?;
+        let events = self.detector.process(chunk.samples.clone()).await?;
 
         // ONE critical section: take the ring, flip the mode, and build the send
         // plan atomically. No await inside; the sends happen after the unlock.

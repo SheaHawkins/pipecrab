@@ -46,7 +46,7 @@ impl SpeechScorer for MockScorer {
         self.window_len
     }
 
-    async fn score(&self, window: &[f32]) -> Result<f32, VadError> {
+    async fn score(&self, window: Arc<[f32]>) -> Result<f32, VadError> {
         self.scored_lengths.lock().unwrap().push(window.len());
         Ok(self.probs.lock().unwrap().pop_front().unwrap_or(0.0))
     }
@@ -70,7 +70,7 @@ fn windows_odd_chunks_and_carries_the_remainder_across_calls() {
         let vad = Debounced::with_config(scorer, config(0.5, 1, 1));
 
         // 3 samples: remainder 3, no complete window yet.
-        assert!(vad.process(&[0.0; 3]).await.unwrap().is_empty());
+        assert!(vad.process(Arc::from([0.0; 3])).await.unwrap().is_empty());
         assert_eq!(
             *scored.lock().unwrap(),
             Vec::<usize>::new(),
@@ -78,11 +78,11 @@ fn windows_odd_chunks_and_carries_the_remainder_across_calls() {
         );
 
         // +3 -> remainder 6 -> one window of 4, remainder 2.
-        vad.process(&[0.0; 3]).await.unwrap();
+        vad.process(Arc::from([0.0; 3])).await.unwrap();
         // +5 -> remainder 7 -> one window of 4, remainder 3.
-        vad.process(&[0.0; 5]).await.unwrap();
+        vad.process(Arc::from([0.0; 5])).await.unwrap();
         // +1 -> remainder 4 -> one window of 4, remainder 0.
-        vad.process(&[0.0; 1]).await.unwrap();
+        vad.process(Arc::from([0.0; 1])).await.unwrap();
 
         // Three windows extracted across the calls, each exactly window_len.
         assert_eq!(
@@ -100,7 +100,7 @@ fn threshold_is_inclusive_at_the_boundary() {
         // probability exactly at the threshold counts as speech (>=).
         let at = Debounced::with_config(MockScorer::new(2, vec![0.5]), config(0.5, 1, 1));
         assert_eq!(
-            at.process(&[0.0; 2]).await.unwrap(),
+            at.process(Arc::from([0.0; 2])).await.unwrap(),
             vec![VadEvent::SpeechStarted],
             "0.5 >= 0.5"
         );
@@ -108,7 +108,7 @@ fn threshold_is_inclusive_at_the_boundary() {
         // Just below the threshold is silence: no edge.
         let below = Debounced::with_config(MockScorer::new(2, vec![0.499]), config(0.5, 1, 1));
         assert!(
-            below.process(&[0.0; 2]).await.unwrap().is_empty(),
+            below.process(Arc::from([0.0; 2])).await.unwrap().is_empty(),
             "0.499 < 0.5 is not speech"
         );
     });
@@ -131,7 +131,7 @@ fn edges_debounce_with_hangover_and_alternate() {
         // Feed one window (2 samples) per scripted probability, collecting edges.
         let mut events = Vec::new();
         for _ in 0..probs.len() {
-            events.extend(vad.process(&[0.0; 2]).await.unwrap());
+            events.extend(vad.process(Arc::from([0.0; 2])).await.unwrap());
         }
         assert_eq!(
             events,
@@ -151,7 +151,7 @@ fn reset_clears_both_the_accumulator_and_the_observe_state() {
 
         // Leave a 2-sample remainder and move the state into speech.
         assert_eq!(
-            vad.process(&[0.0; 6]).await.unwrap(),
+            vad.process(Arc::from([0.0; 6])).await.unwrap(),
             vec![VadEvent::SpeechStarted]
         );
         // The window scored was exactly 4; a 2-sample remainder is carried.
@@ -162,7 +162,7 @@ fn reset_clears_both_the_accumulator_and_the_observe_state() {
         // Accumulator cleared: the carried 2 samples are gone, so 2 fresh samples
         // do NOT complete a window (they would have, 2 + 2 = 4, without the reset).
         assert!(
-            vad.process(&[0.0; 2]).await.unwrap().is_empty(),
+            vad.process(Arc::from([0.0; 2])).await.unwrap().is_empty(),
             "the remainder was cleared"
         );
         assert_eq!(
@@ -174,7 +174,7 @@ fn reset_clears_both_the_accumulator_and_the_observe_state() {
         // Observe state cleared: we are idle again, so the next speech window
         // re-fires SpeechStarted rather than staying silent.
         assert_eq!(
-            vad.process(&[0.0; 2]).await.unwrap(),
+            vad.process(Arc::from([0.0; 2])).await.unwrap(),
             vec![VadEvent::SpeechStarted],
             "reset returned the state to idle, so onset fires afresh",
         );

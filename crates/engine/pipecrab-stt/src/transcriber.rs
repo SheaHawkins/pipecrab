@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use pipecrab_core::AudioFormat;
 use pipecrab_runtime::MaybeSendSync;
+use std::sync::Arc;
 
 /// The swappable speech-to-text capability: `f32` samples in, a transcript out.
 ///
@@ -25,10 +26,12 @@ pub trait Transcriber: MaybeSendSync {
     /// a stage's `decide_*` under the control-call carve-out.
     fn input_format(&self) -> AudioFormat;
 
-    /// Transcribe `samples` (interleaved `f32` PCM) to text.
+    /// Transcribe `samples` (interleaved `f32` PCM) to text. Shared ownership
+    /// lets a worker-backed implementation retain or enqueue the buffer without
+    /// copying its samples.
     ///
-    /// Samples are interpreted as [`input_format()`](Self::input_format): a bare
-    /// `&[f32]` carries no sample rate, so no runtime detection is possible.
+    /// Samples are interpreted as [`input_format()`](Self::input_format): an
+    /// `Arc<[f32]>` carries no sample rate, so no runtime detection is possible.
     /// Feeding a mismatch is a wiring bug the stage rejects fatally before a
     /// sample reaches here, so this method never has to.
     ///
@@ -36,7 +39,7 @@ pub trait Transcriber: MaybeSendSync {
     /// [`Stage::perform`](pipecrab_runtime::Stage::perform), transcription must
     /// not mutate observable state, so the run loop can drop an in-flight call on
     /// a barge-in interrupt without tearing anything.
-    async fn transcribe(&self, samples: &[f32]) -> Result<String, SttError>;
+    async fn transcribe(&self, samples: Arc<[f32]>) -> Result<String, SttError>;
 }
 
 /// Why a [`Transcriber::transcribe`] call failed.
