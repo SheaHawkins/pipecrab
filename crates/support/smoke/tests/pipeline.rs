@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use pipecrab_core::AudioFormat;
 use pipecrab_runtime::PipelineBuilder;
@@ -12,7 +14,7 @@ impl VoiceActivityDetector for Detector {
         AudioFormat::new(16_000, 1)
     }
 
-    async fn process(&self, _samples: &[f32]) -> Result<Vec<VadEvent>, VadError> {
+    async fn process(&self, _samples: Arc<[f32]>) -> Result<Vec<VadEvent>, VadError> {
         Ok(Vec::new())
     }
 

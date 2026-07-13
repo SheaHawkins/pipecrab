@@ -27,6 +27,7 @@ struct MockDetector {
     script: Mutex<VecDeque<Vec<VadEvent>>>,
     format: AudioFormat,
     resets: Arc<Mutex<u32>>,
+    processed: Arc<Mutex<Vec<Arc<[f32]>>>>,
 }
 
 impl MockDetector {
@@ -35,6 +36,7 @@ impl MockDetector {
             script: Mutex::new(script.into_iter().collect()),
             format,
             resets: Arc::default(),
+            processed: Arc::default(),
         }
     }
 }
@@ -46,7 +48,8 @@ impl VoiceActivityDetector for MockDetector {
         self.format
     }
 
-    async fn process(&self, _samples: &[f32]) -> Result<Vec<VadEvent>, VadError> {
+    async fn process(&self, samples: Arc<[f32]>) -> Result<Vec<VadEvent>, VadError> {
+        self.processed.lock().unwrap().push(samples);
         Ok(self.script.lock().unwrap().pop_front().unwrap_or_default())
     }
 
@@ -125,6 +128,29 @@ fn big_preroll() -> GateConfig {
     GateConfig {
         preroll: std::time::Duration::from_secs(10),
     }
+}
+
+#[test]
+fn detector_receives_the_chunks_shared_sample_buffer() {
+    block_on(async {
+        let detector = MockDetector::new(vec![vec![]], FMT);
+        let processed = detector.processed.clone();
+        let mut stage = VadStage::new(detector);
+        let samples: Arc<[f32]> = Arc::from([0.25, -0.25]);
+        let retained = samples.clone();
+        let (out, _inbound) = link(1);
+        let frame = DataFrame::Audio(AudioChunk::new(samples, FMT));
+        let effect = stage
+            .decide_data(&frame)
+            .effects
+            .into_iter()
+            .next()
+            .unwrap();
+
+        stage.perform(effect, &out).await.unwrap();
+
+        assert!(Arc::ptr_eq(&retained, &processed.lock().unwrap()[0]));
+    });
 }
 
 #[test]

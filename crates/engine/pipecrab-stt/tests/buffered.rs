@@ -7,7 +7,7 @@
 //! Deterministic and tokio-free (`block_on`), so it rides the default
 //! `cargo test --workspace` path.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use futures::channel::oneshot;
@@ -28,8 +28,25 @@ impl Transcriber for CountingTranscriber {
         self.format
     }
 
-    async fn transcribe(&self, samples: &[f32]) -> Result<String, SttError> {
+    async fn transcribe(&self, samples: Arc<[f32]>) -> Result<String, SttError> {
         Ok(format!("heard {} samples", samples.len()))
+    }
+}
+
+struct RetainingTranscriber {
+    received: Arc<Mutex<Option<Arc<[f32]>>>>,
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl Transcriber for RetainingTranscriber {
+    fn input_format(&self) -> AudioFormat {
+        FMT
+    }
+
+    async fn transcribe(&self, samples: Arc<[f32]>) -> Result<String, SttError> {
+        *self.received.lock().unwrap() = Some(samples);
+        Ok(String::new())
     }
 }
 
@@ -46,7 +63,7 @@ impl Transcriber for GatedTranscriber {
         FMT
     }
 
-    async fn transcribe(&self, _samples: &[f32]) -> Result<String, SttError> {
+    async fn transcribe(&self, _samples: Arc<[f32]>) -> Result<String, SttError> {
         // Take the receiver out before awaiting so the mutex guard never crosses
         // the `.await`.
         let rx = self
@@ -74,14 +91,35 @@ fn input_format_delegates_to_the_inner_transcriber() {
 }
 
 #[test]
+fn a_single_chunk_reaches_the_transcriber_without_copying() {
+    block_on(async {
+        let received = Arc::new(Mutex::new(None));
+        let engine = Buffered::new(RetainingTranscriber {
+            received: received.clone(),
+        });
+        let samples: Arc<[f32]> = Arc::from([0.25, -0.25]);
+        let retained = samples.clone();
+
+        engine.begin_utterance().await.unwrap();
+        engine.feed(samples).await.unwrap();
+        engine.end_utterance().await.unwrap();
+
+        assert!(Arc::ptr_eq(
+            &retained,
+            received.lock().unwrap().as_ref().unwrap()
+        ));
+    });
+}
+
+#[test]
 fn accumulates_windows_and_finalizes_once() {
     block_on(async {
         let engine = Buffered::new(CountingTranscriber { format: FMT });
         engine.begin_utterance().await.unwrap();
 
         // Two windows accumulate; neither yields an event.
-        assert_eq!(engine.feed(&[0.0; 3]).await.unwrap(), vec![]);
-        assert_eq!(engine.feed(&[0.0; 5]).await.unwrap(), vec![]);
+        assert_eq!(engine.feed(Arc::from([0.0; 3])).await.unwrap(), vec![]);
+        assert_eq!(engine.feed(Arc::from([0.0; 5])).await.unwrap(), vec![]);
 
         // The whole 8-sample buffer transcribes as one Final.
         let events = engine.end_utterance().await.unwrap();
@@ -95,7 +133,7 @@ fn begin_utterance_rejects_a_second_begin() {
         let engine = Buffered::new(CountingTranscriber { format: FMT });
 
         engine.begin_utterance().await.unwrap();
-        engine.feed(&[0.0; 9]).await.unwrap();
+        engine.feed(Arc::from([0.0; 9])).await.unwrap();
 
         // A second begin without closing the first is a protocol violation:
         // reject it rather than silently dropping the 9 accumulated samples.
@@ -122,7 +160,7 @@ fn feed_and_end_without_begin_are_protocol_errors() {
         // upstream contract breach (audio ahead of any SpeechStarted) becomes a
         // loud, recoverable engine error at the stage.
         assert!(matches!(
-            engine.feed(&[0.0; 4]).await,
+            engine.feed(Arc::from([0.0; 4])).await,
             Err(SttError::Engine(_))
         ));
         assert!(matches!(
@@ -137,14 +175,14 @@ fn cancel_discards_the_pending_utterance() {
     block_on(async {
         let engine = Buffered::new(CountingTranscriber { format: FMT });
         engine.begin_utterance().await.unwrap();
-        engine.feed(&[0.0; 4]).await.unwrap();
+        engine.feed(Arc::from([0.0; 4])).await.unwrap();
 
         engine.cancel();
 
         // After cancel there is no active utterance: feed and end both reject
         // until a new begin.
         assert!(matches!(
-            engine.feed(&[0.0; 4]).await,
+            engine.feed(Arc::from([0.0; 4])).await,
             Err(SttError::Engine(_))
         ));
         assert!(matches!(
@@ -154,7 +192,7 @@ fn cancel_discards_the_pending_utterance() {
 
         // A fresh utterance starts clean — only the new samples count.
         engine.begin_utterance().await.unwrap();
-        engine.feed(&[0.0; 1]).await.unwrap();
+        engine.feed(Arc::from([0.0; 1])).await.unwrap();
         let events = engine.end_utterance().await.unwrap();
         assert_eq!(events, vec![SttEvent::Final("heard 1 samples".into())]);
     });
@@ -165,7 +203,7 @@ fn cancel_is_idempotent() {
     block_on(async {
         let engine = Buffered::new(CountingTranscriber { format: FMT });
         engine.begin_utterance().await.unwrap();
-        engine.feed(&[0.0; 4]).await.unwrap();
+        engine.feed(Arc::from([0.0; 4])).await.unwrap();
         engine.cancel();
         engine.cancel(); // second cancel is a no-op, not a panic
         assert!(matches!(
@@ -183,7 +221,7 @@ fn cancel_discards_an_in_flight_result() {
             gate: Mutex::new(Some(rx)),
         });
         engine.begin_utterance().await.unwrap();
-        engine.feed(&[0.0; 4]).await.unwrap();
+        engine.feed(Arc::from([0.0; 4])).await.unwrap();
 
         // Drive end_utterance (which parks on the gate) concurrently with a
         // canceller. `join!` polls end first — it snapshots the generation and

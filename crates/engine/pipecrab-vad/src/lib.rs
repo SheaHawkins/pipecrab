@@ -35,7 +35,7 @@
 //!
 //! # No runtime format detection
 //!
-//! Both traits take a bare `&[f32]`, which carries no sample rate. Samples are
+//! Both traits take an `Arc<[f32]>`, which carries no sample rate. Samples are
 //! interpreted as [`input_format()`](VoiceActivityDetector::input_format); no
 //! runtime detection is possible. The stage enforces the format *fatally* before
 //! any audio reaches an engine, so an engine never sees nonconforming samples
@@ -57,6 +57,7 @@ pub use stage::{GateConfig, VadEffect, VadStage};
 use async_trait::async_trait;
 use pipecrab_core::AudioFormat;
 use pipecrab_runtime::MaybeSendSync;
+use std::sync::Arc;
 
 /// A speech-state transition, emitted by a [`VoiceActivityDetector`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,13 +89,14 @@ pub trait VoiceActivityDetector: MaybeSendSync {
     fn input_format(&self) -> AudioFormat;
 
     /// Feed samples (any length; the engine buffers internally) and return zero
-    /// or more edges, in order.
+    /// or more edges, in order. Shared ownership lets a worker-backed detector
+    /// retain or enqueue the buffer without copying its samples.
     ///
     /// Across calls, events **must alternate**, starting with
     /// [`SpeechStarted`](VadEvent::SpeechStarted) — the documented invariant
     /// [`VadStage`] and everything downstream trust. Samples are interpreted as
     /// [`input_format()`](Self::input_format).
-    async fn process(&self, samples: &[f32]) -> Result<Vec<VadEvent>, VadError>;
+    async fn process(&self, samples: Arc<[f32]>) -> Result<Vec<VadEvent>, VadError>;
 
     /// Control call: return to the idle, no-speech state. Synchronous,
     /// non-blocking, idempotent (see the [`Processor`](pipecrab_core::Processor)
@@ -127,8 +129,9 @@ pub trait SpeechScorer: MaybeSendSync {
     fn window_len(&self) -> usize;
 
     /// Score exactly [`window_len()`](Self::window_len) samples; returns a
-    /// probability in `[0.0, 1.0]` that the window contains speech.
-    async fn score(&self, window: &[f32]) -> Result<f32, VadError>;
+    /// probability in `[0.0, 1.0]` that the window contains speech. Shared
+    /// ownership lets an asynchronous scorer retain the window without copying.
+    async fn score(&self, window: Arc<[f32]>) -> Result<f32, VadError>;
 }
 
 /// Why a [`VoiceActivityDetector::process`] or [`SpeechScorer::score`] call

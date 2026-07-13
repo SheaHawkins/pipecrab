@@ -54,8 +54,9 @@ pub trait StreamingTranscriber: MaybeSendSync {
     async fn begin_utterance(&self) -> Result<(), SttError>;
 
     /// Feed one window of samples; returns whatever events are ready so far.
-    /// Cheap message-pass to the engine's worker.
-    async fn feed(&self, samples: &[f32]) -> Result<Vec<SttEvent>, SttError>;
+    /// Ownership is shared so a worker-backed engine can enqueue the audio
+    /// without copying it.
+    async fn feed(&self, samples: Arc<[f32]>) -> Result<Vec<SttEvent>, SttError>;
 
     /// Close the utterance; drains remaining events, including the
     /// [`Final`](SttEvent::Final).
@@ -104,6 +105,10 @@ pub enum SttEvent {
 /// but the underlying one-shot inference — offloaded and detached — still runs
 /// to completion off-thread. True mid-inference cancel requires a native
 /// streaming engine.
+///
+/// Incoming chunks remain shared while they accumulate. A one-chunk utterance
+/// reaches the transcriber without copying; a multi-chunk utterance is flattened
+/// once at completion because [`Transcriber`] requires one contiguous buffer.
 pub struct Buffered<T: Transcriber> {
     inner: T,
     state: Mutex<BufferedState>,
@@ -117,8 +122,8 @@ struct BufferedState {
     /// `end_utterance`/`cancel`. It only gates the protocol; the format itself
     /// is no longer tracked (the stage enforces it before a sample arrives).
     active: bool,
-    /// Accumulated interleaved samples for the active utterance.
-    buffer: Vec<f32>,
+    /// Audio chunks retained for the active utterance.
+    chunks: Vec<Arc<[f32]>>,
     /// Bumped by `cancel`. `end_utterance` snapshots it before awaiting and
     /// discards its result if the value changed while it was in flight.
     generation: u64,
@@ -131,7 +136,7 @@ impl<T: Transcriber> Buffered<T> {
             inner: transcriber,
             state: Mutex::new(BufferedState {
                 active: false,
-                buffer: Vec::new(),
+                chunks: Vec::new(),
                 generation: 0,
             }),
         }
@@ -156,18 +161,18 @@ impl<T: Transcriber> StreamingTranscriber for Buffered<T> {
             ));
         }
         st.active = true;
-        st.buffer.clear();
+        st.chunks.clear();
         Ok(())
     }
 
-    async fn feed(&self, samples: &[f32]) -> Result<Vec<SttEvent>, SttError> {
+    async fn feed(&self, samples: Arc<[f32]>) -> Result<Vec<SttEvent>, SttError> {
         let mut st = self.state.lock().expect("Buffered state mutex poisoned");
         if !st.active {
             return Err(SttError::Engine(
                 "Buffered::feed called without an active utterance".into(),
             ));
         }
-        st.buffer.extend_from_slice(samples);
+        st.chunks.push(samples);
         // Chunk-final: nothing to report until the utterance closes.
         Ok(Vec::new())
     }
@@ -175,7 +180,7 @@ impl<T: Transcriber> StreamingTranscriber for Buffered<T> {
     async fn end_utterance(&self) -> Result<Vec<SttEvent>, SttError> {
         // Snapshot the utterance under the lock, then release it before the
         // awaited inference — the guard must not cross the `.await`.
-        let (samples, generation) = {
+        let (mut chunks, generation) = {
             let mut st = self.state.lock().expect("Buffered state mutex poisoned");
             if !st.active {
                 return Err(SttError::Engine(
@@ -183,13 +188,24 @@ impl<T: Transcriber> StreamingTranscriber for Buffered<T> {
                 ));
             }
             st.active = false;
-            (std::mem::take(&mut st.buffer), st.generation)
+            (std::mem::take(&mut st.chunks), st.generation)
+        };
+
+        let samples = if chunks.len() == 1 {
+            chunks.pop().expect("one buffered chunk")
+        } else {
+            let sample_count = chunks.iter().map(|chunk| chunk.len()).sum();
+            let mut samples = Vec::with_capacity(sample_count);
+            for chunk in chunks {
+                samples.extend_from_slice(&chunk);
+            }
+            Arc::from(samples)
         };
 
         // One-shot inference over the whole utterance. The wrapped engine owns
         // where this runs; if a barge-in drops this future, that offloaded work
         // detaches and its result is lost.
-        let text = self.inner.transcribe(&samples).await?;
+        let text = self.inner.transcribe(samples).await?;
 
         // If `cancel` bumped the generation while we were awaiting, the utterance
         // was abandoned: discard the now-stale transcript.
@@ -209,7 +225,7 @@ impl<T: Transcriber> StreamingTranscriber for Buffered<T> {
         // generation so any in-flight `end_utterance` discards its result.
         let mut st = self.state.lock().expect("Buffered state mutex poisoned");
         st.active = false;
-        st.buffer.clear();
+        st.chunks.clear();
         st.generation = st.generation.wrapping_add(1);
     }
 }

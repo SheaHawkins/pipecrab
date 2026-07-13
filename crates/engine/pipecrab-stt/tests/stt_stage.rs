@@ -44,6 +44,8 @@ struct Log {
     begins: usize,
     /// Sample count of each `feed`, in order.
     feeds: Vec<usize>,
+    /// Shared sample buffers received by `feed`.
+    buffers: Vec<Arc<[f32]>>,
     /// Number of `end_utterance` calls.
     ends: usize,
     /// Number of `cancel` control-calls.
@@ -105,7 +107,7 @@ impl StreamingTranscriber for Mock {
         Ok(())
     }
 
-    async fn feed(&self, samples: &[f32]) -> Result<Vec<SttEvent>, SttError> {
+    async fn feed(&self, samples: Arc<[f32]>) -> Result<Vec<SttEvent>, SttError> {
         // The gated first feed announces itself and parks until dropped: the
         // barge-in test relies on the interrupt dropping this future right here.
         let park = self.park.lock().unwrap().take();
@@ -117,6 +119,7 @@ impl StreamingTranscriber for Mock {
         let total = {
             let mut log = self.log.lock().unwrap();
             log.feeds.push(n);
+            log.buffers.push(samples);
             log.feeds.iter().sum::<usize>()
         };
         let _ = self.notes.unbounded_send(Note::Fed(n));
@@ -154,7 +157,7 @@ impl Transcriber for OneShot {
         FMT
     }
 
-    async fn transcribe(&self, samples: &[f32]) -> Result<String, SttError> {
+    async fn transcribe(&self, samples: Arc<[f32]>) -> Result<String, SttError> {
         Ok(format!("heard {} samples", samples.len()))
     }
 }
@@ -293,14 +296,20 @@ fn interrupt_cancels_unconditionally() {
 #[test]
 fn events_map_to_user_transcripts() {
     block_on(async {
-        let stage = SttStage::new(Mock::silent());
+        let mock = Mock::silent();
+        let log = mock.log.clone();
+        let stage = SttStage::new(mock);
         let (out, mut inbound) = link(8);
 
         // Drive the three effects perform interprets, in utterance order.
         stage.perform(SttEffect::Begin, &out).await.unwrap();
-        let chunk = AudioChunk::new(Arc::from(&[0.0f32; 4][..]), FMT);
+        let samples: Arc<[f32]> = Arc::from([0.0f32; 4]);
+        let retained = samples.clone();
+        let chunk = AudioChunk::new(samples, FMT);
         stage.perform(SttEffect::Feed(chunk), &out).await.unwrap();
         stage.perform(SttEffect::End, &out).await.unwrap();
+
+        assert!(Arc::ptr_eq(&retained, &log.lock().unwrap().buffers[0]));
 
         // Dropping `out` closes the lane so the drain terminates.
         drop(out);
