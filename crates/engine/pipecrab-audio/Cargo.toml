@@ -1,6 +1,6 @@
 [package]
 name = "pipecrab-audio"
-description = "Platform-neutral audio I/O interface for pipecrab: AudioSource / AudioSink traits plus hardware-free mocks."
+description = "Platform-neutral audio support for pipecrab: AudioSource / AudioSink traits, mocks, and streaming resampling."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,6 +13,11 @@ layer = "trait"
 [dependencies]
 pipecrab-core    = { workspace = true }
 pipecrab-runtime = { workspace = true }
+rubato           = { version = "0.16.2", default-features = false }
 
 [dev-dependencies]
 futures = "0.3"
+
+[[bench]]
+name = "resampler"
+harness = false

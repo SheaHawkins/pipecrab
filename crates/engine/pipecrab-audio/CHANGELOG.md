@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add a streaming `ResamplerStage` for sample-rate and channel-count conversion.
+
 ## [0.1.0](https://github.com/SheaHawkins/pipecrab/releases/tag/pipecrab-audio-v0.1.0) - 2026-07-08
 
 ### Other

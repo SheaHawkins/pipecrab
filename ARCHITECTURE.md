@@ -29,7 +29,8 @@ external model runtime an adapter wraps.
 - `pipecrab-core` — sans-IO: frames, `Processor`, `Decision`. No async, no I/O.
 - `pipecrab-runtime` — async orchestration: `Stage`, `Pipeline`, `Inbound`/`Outbound`, `offload`. No executor baked in.
 - `pipecrab` — facade; re-exports core + runtime.
-- `pipecrab-audio` — `AudioSource`/`AudioSink` traits + hardware-free mocks.
+- `pipecrab-audio` — `AudioSource`/`AudioSink` traits, hardware-free mocks, and
+  the streaming `ResamplerStage`.
 - `pipecrab-audio-cpal` — cpal backend behind those traits.
 - `pipecrab-stt` — `Transcriber` trait + `SttStage` adapter.
 - `pipecrab-vad` — two-tier VAD: the `VoiceActivityDetector` trait (audio in, speech edges out) that `VadStage` gates on, plus the `SpeechScorer` raw-model tier and the `Debounced` adapter that lifts a scorer into a detector. See "VAD gate" below.
@@ -111,3 +112,22 @@ VAD is two tiers. `VoiceActivityDetector` (audio in, speech *edges* out) is the 
 **Topology commitment.** Because the gate drops silence, any future consumer of *continuous* raw audio (recording, a level meter, an AEC reference) must sit **upstream** of `VadStage`. Nothing downstream consumes silence today, so this constrains nothing yet — but it is a standing commitment.
 
 **Format is fatal.** A bare `&[f32]` carries no sample rate, so the detector declares its `input_format()` and the stage enforces it fatally: nonconforming audio is rejected before it reaches any engine (`VadError` therefore carries no format-mismatch variant). Continuous-format conversion belongs to a resample stage upstream.
+
+## Resampling
+
+`pipecrab-audio::ResamplerStage` is the format-conversion boundary. It has one
+fixed output `AudioFormat`; matching audio is forwarded without copying, and
+other `DataFrame::Audio` chunks are replaced with streaming windowed-sinc
+output. Non-audio frames pass through unchanged.
+
+The resampler is continuous across chunks of one input format. An input-format
+change or `Interrupt` resets its filter history. Equal channel counts remain
+independent; when counts differ, channels are averaged to mono and replicated
+because `AudioFormat` carries no speaker-layout metadata from which to infer a
+more specific mix matrix.
+
+The DSP state lives in `decide_data`, keeping mutation inside the synchronous,
+non-cancellable half of the stage. That work occupies the orchestrator for the
+duration of one input chunk, so the implementation uses reusable buffers and a
+small fixed internal block. The `pipecrab-audio` resampler benchmark asserts
+cold-start and steady-state occupancy as a fraction of represented audio time.
