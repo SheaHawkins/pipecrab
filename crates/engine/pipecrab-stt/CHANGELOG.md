@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-stt-v0.2.0...pipecrab-stt-v0.3.0) - 2026-07-13
+
+### Other
+
+- use Arc<f32> for audio engines, prevent copies
+- format repo
+- group crates into engine/adapters/support with a layering gate ([#37](https://github.com/SheaHawkins/pipecrab/pull/37))
+
 ### Changed
 
 - **Breaking:** Pass streaming and one-shot STT audio as `Arc<[f32]>` so

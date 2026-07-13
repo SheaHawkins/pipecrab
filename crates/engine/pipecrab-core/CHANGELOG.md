@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-core-v0.2.0...pipecrab-core-v0.3.0) - 2026-07-13
+
+### Other
+
+- format repo
+- group crates into engine/adapters/support with a layering gate ([#37](https://github.com/SheaHawkins/pipecrab/pull/37))
+
 ## [0.2.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-core-v0.1.0...pipecrab-core-v0.2.0) - 2026-07-12
 
 ### Added
