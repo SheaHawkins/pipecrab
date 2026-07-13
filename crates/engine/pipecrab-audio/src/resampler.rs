@@ -50,6 +50,8 @@ const OVERSAMPLING_FACTOR: usize = 128;
 /// means one conversion occupies the orchestrator until it finishes. Work is
 /// split into fixed-size internal blocks, buffers and filter state are reused,
 /// and the crate benchmark asserts an upper bound relative to audio duration.
+/// TODO: Move resampling to a shared worker and await it from `perform` so DSP
+/// does not occupy the orchestrator thread.
 pub struct ResamplerStage {
     output_format: AudioFormat,
     current_input: Option<AudioFormat>,
