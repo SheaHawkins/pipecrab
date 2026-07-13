@@ -1,0 +1,112 @@
+name: Audio benchmark comment
+
+on:
+  workflow_run:
+    workflows: ["Audio benchmark"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  comment:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Find benchmark results
+        id: artifact
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const name = `audio-benchmark-${context.payload.workflow_run.id}`;
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.payload.workflow_run.id,
+              name,
+            });
+            core.setOutput("found", data.artifacts.some((artifact) => artifact.name === name));
+
+      - name: Download benchmark results
+        if: steps.artifact.outputs.found == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: audio-benchmark-${{ github.event.workflow_run.id }}
+          path: benchmark-results
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Create or update pull request comment
+        uses: actions/github-script@v9
+        env:
+          BENCHMARK_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          BENCHMARK_HAS_ARTIFACT: ${{ steps.artifact.outputs.found }}
+          BENCHMARK_RUN_URL: ${{ github.event.workflow_run.html_url }}
+        with:
+          script: |
+            const fs = require("fs");
+            const marker = "<!-- pipecrab-audio-benchmark -->";
+            const pullRequests = context.payload.workflow_run.pull_requests ?? [];
+            const pullRequest = pullRequests[0];
+            if (!pullRequest) {
+              core.setFailed("The benchmark workflow run is not associated with a pull request");
+              return;
+            }
+
+            const raw = process.env.BENCHMARK_HAS_ARTIFACT === "true"
+              ? fs.readFileSync(
+                  "benchmark-results/audio-benchmark-results.txt",
+                  "utf8",
+                )
+              : "The benchmark did not upload a results artifact.";
+            const report = raw
+              .slice(0, 60_000)
+              .replaceAll("```", "`\u200b``")
+              .trim();
+            const conclusion = process.env.BENCHMARK_CONCLUSION;
+            const icon = conclusion === "success" ? "✅" : "❌";
+            const body = [
+              marker,
+              `## pipecrab-audio benchmark ${icon}`,
+              "",
+              "```text",
+              report || "The benchmark produced no report.",
+              "```",
+              "",
+              `Result: **${conclusion}** · [workflow run](${process.env.BENCHMARK_RUN_URL})`,
+            ].join("\n");
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pullRequest.number,
+                per_page: 100,
+              },
+            );
+            const previous = comments.find(
+              (comment) =>
+                comment.user?.type === "Bot" && comment.body?.includes(marker),
+            );
+
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: previous.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pullRequest.number,
+                body,
+              });
+            }

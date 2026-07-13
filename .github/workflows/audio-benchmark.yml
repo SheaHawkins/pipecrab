@@ -1,0 +1,52 @@
+name: Audio benchmark
+
+on:
+  pull_request:
+    paths:
+      - "crates/engine/pipecrab-audio/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audio-benchmark-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Run asserted resampler benchmark
+        id: benchmark
+        shell: bash
+        run: |
+          set +e
+          cargo bench -p pipecrab-audio --bench resampler >audio-benchmark.log 2>&1
+          status=$?
+          set -e
+
+          if ! grep -F "processing /" audio-benchmark.log >audio-benchmark-results.txt; then
+            tail -n 80 audio-benchmark.log >audio-benchmark-results.txt
+          fi
+
+          cat audio-benchmark-results.txt
+          echo "$status" >audio-benchmark-status.txt
+          exit "$status"
+
+      - name: Upload benchmark results
+        if: always() && steps.benchmark.outcome != 'skipped'
+        uses: actions/upload-artifact@v7
+        with:
+          name: audio-benchmark-${{ github.run_id }}
+          path: |
+            audio-benchmark-results.txt
+            audio-benchmark-status.txt
+          if-no-files-found: error
+          retention-days: 7
