@@ -76,7 +76,7 @@ Use **headphones** — over speakers the mic re-captures the playback and howls.
 On macOS the first run triggers a microphone-permission prompt. Without
 `--seconds` it runs until Ctrl-C.
 
-## Running the Sherpa VAD example
+## Running the [Sherpa VAD example](./examples/vad-sherpa)
 
 Download Sherpa's 16 kHz Silero model, then run the live microphone example:
 
