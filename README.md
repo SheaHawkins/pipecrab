@@ -1,97 +1,94 @@
-# PipeCrab
-🦀 
+```
+██████  ██ ██████  ███████  ██████ ██████   █████  ██████  
+██   ██ ██ ██   ██ ██      ██      ██   ██ ██   ██ ██   ██ 
+██████  ██ ██████  █████   ██      ██████  ███████ ██████  
+██      ██ ██      ██      ██      ██   ██ ██   ██ ██   ██ 
+██      ██ ██      ███████  ██████ ██   ██ ██   ██ ██████                                     
+```
 Pipecrab is a thoughtful grounds-up rewrite of `pipecat` but in Rust. It aims to be for edge devices what pipecat isn't: A voice agent pipeline for low-latency local inference.
 
-## Writing a stage
+## Running the examples
 
-A stage implements `Processor`. Both `decide_data` and `decide_system` return a `Decision` — which answers two questions at once: *does the incoming frame keep moving downstream?* and *what should this stage emit?*
+Four runnable examples live under [`examples/`](./examples), smallest first.
+Each has its own README with full model-download and setup steps.
 
-| You return | Input frame | Emits |
+| Example | What it shows | Setup |
 |---|---|---|
-| `Decision::forward()` | forwarded downstream | nothing |
-| `Decision::drop()` | consumed | nothing |
-| `Decision::drop().emit(x)` | consumed | `x` |
-| `Decision::forward().emit(x)` | forwarded downstream | `x` |
+| [`echo`](./examples/echo) | Capture → playback: the shortest end-to-end path | none |
+| [`vad-sherpa`](./examples/vad-sherpa) | Sherpa Silero VAD printing speech edges | 1 model file |
+| [`stt-sherpa`](./examples/stt-sherpa) | VAD + streaming Zipformer transcription | VAD + ASR models |
+| [`stt-sherpa-moonshine`](./examples/stt-sherpa-moonshine) | VAD + offline Moonshine v2 transcription | VAD + ASR models |
 
-**Transform** (e.g. STT, redactor): `drop().emit(output)` — the input never reaches downstream, only the replacement does.
+**Use headphones** 
 
-**Tap** (e.g. VAD, logger): `forward().emit(derived)` — the original frame passes through and is followed by the derived one.
+### Transcription — `stt-sherpa` and `stt-sherpa-moonshine`
 
-**Pass-through**: don't override `decide_data` / `decide_system` — the default is `Decision::forward()`, so every frame on an ignored lane flows on unchanged.
+Both add an STT stage after the VAD gate: `stt-sherpa` uses a streaming
+Zipformer, `stt-sherpa-moonshine` an offline Moonshine v2 model. They need
+several model files — see each example's README
+([`stt-sherpa`](./examples/stt-sherpa/README.md),
+[`stt-sherpa-moonshine`](./examples/stt-sherpa-moonshine/README.md)) for the
+download commands and the full flag list.
+
+## Writing a pipeline
+
+A pipeline is an ordered list of stages built with `PipelineBuilder`. Stages run
+head-first in the order you add them, and each stage's emitted frames become the
+next stage's input. `build().start()` wires the pipeline and hands back its two
+ends plus a driver future.
 
 ```rust
-fn decide_data(&mut self, frame: &DataFrame) -> Decision<Self::Effect> {
-    match frame {
-        DataFrame::Audio(a) => Decision::drop().emit(Effect::Transcript(self.stt(a))),
-        _ => Decision::forward(),
+use pipecrab::{DataFrame, Direction, PipelineBuilder, Received, SystemFrame};
+
+let (ends, driver) = PipelineBuilder::new()
+    .stage(ResamplerStage::new(SHERPA_FORMAT)?)  // capture rate → 16 kHz mono
+    .stage(VadStage::with_config(detector, cfg)) // gate: emit only utterances
+    .stage(SttStage::new(transcriber))           // Audio → Transcript
+    .build()
+    .start();
+let input = ends.input;        // Outbound — feed the head
+let mut output = ends.output;  // Inbound  — read past the tail
+```
+
+Send frames into `ends.input` and read results from `ends.output`; they are the
+same `Outbound` / `Inbound` handles every stage sees. Open the run with a `Start`
+system frame, then push data frames. Dropping `input` closes the head and
+cascades a clean shutdown downstream.
+
+```rust
+let pump_in = async move {
+    input.send_system(Direction::Down, SystemFrame::Start).await.ok();
+    while let Ok(Some(chunk)) = source.next_chunk().await {
+        if input.send_data(DataFrame::Audio(chunk)).await.is_err() {
+            break; // downstream gone
+        }
     }
-}
+    // `input` dropped here → the pipeline shuts down
+};
+
+let drain = async move {
+    while let Some(received) = output.recv().await {
+        if let Received::Data(DataFrame::Transcript(t)) = received {
+            println!("{}", t.text);
+        }
+    }
+};
 ```
 
-## Audio I/O
+Drive the driver and both pumps together on one thread — pipecrab bakes in no
+executor, so the caller runs the future (`block_on` natively, `spawn_local` in the
+browser):
 
-Audio enters and leaves a pipeline through two platform-neutral traits in
-[`pipecrab-audio`](./crates/engine/pipecrab-audio): an `AudioSource` (capture) and an
-`AudioSink` (playback), both trading in `AudioChunk`s — `f32` PCM samples tagged
-with their own `AudioFormat` (sample rate + channels). Chunks ride the pipeline
-as the first-party `DataFrame::Audio` variant, so stages match them exhaustively
-with no downcast. The crate also ships `mock::MockSource` / `mock::MockSink` for
-hardware-free tests.
-
-Concrete backends live behind those traits in their own crates.
-[`pipecrab-audio-cpal`](./crates/adapters/pipecrab-audio-cpal) is the cpal one — it runs
-wherever cpal does (macOS, Windows, Linux, iOS, Android, and the browser via
-WebAudio). `CpalSource` / `CpalSink` bridge cpal's real-time device callbacks to
-the async pipeline over a lock-free `rtrb` ring buffer, so the audio thread does
-no locking or allocation on the hot path — it only hands samples across the ring
-and wakes the async side (that wake is a documented pragmatic exception). Both
-open from a shared `CpalConfig` (which device per side, plus chunk/buffer
-sizing), defaulting to the system default devices.
-
-`pipecrab-audio` also provides the `Resampler` audio-to-audio interface and a
-generic `ResamplerStage<R>` pipeline adapter. `ResamplerStage::new(format)` uses
-the bundled `RubatoSincResampler`; `ResamplerStage::with_resampler(custom)`
-injects another implementation. Put the stage immediately before a
-format-strict VAD, STT engine, or audio sink.
-
-[`pipecrab-vad-sherpa`](./crates/adapters/pipecrab-vad-sherpa) runs Sherpa
-ONNX's Silero VAD on a dedicated worker and implements the edge-emitting
-`VoiceActivityDetector` interface. It accepts 16 kHz mono audio in exact
-512-sample model windows; arbitrary PipeCrab chunk sizes are accumulated by the
-adapter.
-
-## Running the echo example
-
-[`examples/echo`](./examples/echo) captures your voice and plays it straight
-back through a one-stage pipeline — the shortest end-to-end path through the
-audio traits, the runtime, and the cpal backend.
-
-```console
-$ cargo run -p echo                     # live monitor: hear yourself immediately
-$ cargo run -p echo -- --delay-ms 400   # 400 ms delay: an audible echo
-$ cargo run -p echo -- --seconds 5      # run for 5 s, then shut down cleanly
+```rust
+block_on(async { futures::join!(driver, pump_in, drain) });
 ```
 
-Use **headphones** — over speakers the mic re-captures the playback and howls.
-On macOS the first run triggers a microphone-permission prompt. Without
-`--seconds` it runs until Ctrl-C.
-
-## Running the [Sherpa VAD example](./examples/vad-sherpa)
-
-Download Sherpa's 16 kHz Silero model, then run the live microphone example:
-
-```console
-$ curl -L \
-    https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx \
-    -o silero_vad.onnx
-$ cargo run -p vad-sherpa -- --model ./silero_vad.onnx
-$ cargo run -p vad-sherpa -- --model ./silero_vad.onnx --seconds 10
-```
-
-The example captures at the microphone's native rate, resamples once to 16 kHz
-mono, and prints `SpeechStarted` and `SpeechStopped`. The first Sherpa build may
-download matching native libraries; set `SHERPA_ONNX_LIB_DIR` to use an existing
-Sherpa installation.
+A `Pipeline` is itself a `Stage`, so a whole pipeline can be passed to `.stage(..)`
+to nest it inside another, and `PipelineBuilder::capacity(n)` sets the per-lane
+buffer depth (backpressure). See [`examples/stt-sherpa`](./examples/stt-sherpa)
+for the full version of the pipeline above, and
+[ARCHITECTURE.md](./ARCHITECTURE.md#writing-a-stage) for how to write the stages
+that go in it.
 
 ## Contributing
 See [CONTRIBUTING.md](./CONTRIBUTING.md)
