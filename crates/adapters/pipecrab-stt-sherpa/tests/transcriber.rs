@@ -11,7 +11,7 @@ use pipecrab_stt_sherpa::{Backend, SherpaStt, SherpaSttConfig};
 struct Probe {
     streams_created: usize,
     streams_dropped: usize,
-    accepted: Vec<(usize, usize)>,
+    accepted: Vec<(usize, usize, bool)>,
     input_finished: usize,
     readiness_checks: usize,
     decodes: usize,
@@ -86,9 +86,11 @@ impl Backend for ScriptedBackend {
     fn accept_waveform(&mut self, stream: &mut Self::Stream, samples: &[f32]) {
         let mut probe = self.probe.lock().unwrap();
         Self::record_thread(&mut probe);
-        probe
-            .accepted
-            .push((samples.as_ptr() as usize, samples.len()));
+        probe.accepted.push((
+            samples.as_ptr() as usize,
+            samples.len(),
+            samples.iter().all(|sample| *sample == 0.0),
+        ));
         drop(probe);
         stream
             .pending
@@ -179,7 +181,10 @@ fn streams_changed_unstable_hypotheses_and_a_final_result() {
         assert_eq!(probe.streams_dropped, 1);
         assert_eq!(probe.input_finished, 1);
         assert_eq!(probe.decodes, 5);
-        assert_eq!(probe.accepted[0], (first_pointer, 512));
+        assert_eq!(probe.accepted[0], (first_pointer, 512, false));
+        let (_, padding_len, padding_is_silent) = probe.accepted.last().unwrap();
+        assert_eq!(*padding_len, 4_800);
+        assert!(*padding_is_silent);
     });
 }
 
@@ -438,7 +443,7 @@ fn worker_failure_is_reported_as_an_stt_error() {
 
 #[test]
 #[ignore = "requires SHERPA_STT_ENCODER, SHERPA_STT_DECODER, SHERPA_STT_JOINER, and SHERPA_STT_TOKENS"]
-fn production_backend_completes_an_empty_utterance() {
+fn production_backend_transcribes_a_wave_file() {
     block_on(async {
         let config = SherpaSttConfig::new(
             std::env::var("SHERPA_STT_ENCODER").expect("set SHERPA_STT_ENCODER"),
@@ -446,10 +451,24 @@ fn production_backend_completes_an_empty_utterance() {
             std::env::var("SHERPA_STT_JOINER").expect("set SHERPA_STT_JOINER"),
             std::env::var("SHERPA_STT_TOKENS").expect("set SHERPA_STT_TOKENS"),
         );
+        let wave_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../test-resources/audio/sherpa-zipformer-en-20m-0.wav");
+        let wave = sherpa_onnx::Wave::read(wave_path.to_str().expect("UTF-8 test resource path"))
+            .expect("read test speech resource");
+        assert_eq!(wave.sample_rate(), 16_000, "test wave must be 16 kHz");
         let transcriber = SherpaStt::new(config).unwrap();
         transcriber.begin_utterance().await.unwrap();
-        transcriber.feed(Arc::from(Vec::new())).await.unwrap();
+        for samples in wave.samples().chunks(512) {
+            transcriber
+                .feed(Arc::from(samples))
+                .await
+                .expect("feed test wave");
+        }
         let events = transcriber.end_utterance().await.unwrap();
-        assert!(matches!(events.as_slice(), [SttEvent::Final(_)]));
+        let [SttEvent::Final(text)] = events.as_slice() else {
+            panic!("expected one final transcript, got {events:?}");
+        };
+        assert!(!text.is_empty(), "known speech wave produced no transcript");
+        println!("{text}");
     });
 }
