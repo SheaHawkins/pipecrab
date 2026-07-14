@@ -1,13 +1,19 @@
 # pipecrab-stt-sherpa
 
-This crate adapts Sherpa ONNX's online recognizer to PipeCrab's
-`StreamingTranscriber` protocol. One actor thread owns the
-`OnlineRecognizer` and its active `OnlineStream`; PipeCrab VAD edges create and
-finish each utterance.
+This crate adapts Sherpa ONNX's online and offline recognizers to PipeCrab's
+`StreamingTranscriber` protocol. `OnlineSherpaStt` owns a true streaming
+`OnlineRecognizer`; `OfflineSherpaStt` accumulates one VAD-bounded utterance
+for `OfflineRecognizer` models such as Moonshine v2.
+
+`SherpaStt` and `SherpaSttConfig` are aliases for `OnlineSherpaStt` and
+`OnlineSherpaSttConfig`. Callers that want the sensible streaming default use
+`SherpaStt::new(config)`.
 
 ## Model configuration
 
-`SherpaSttConfig::new` takes four streaming-transducer files:
+### Online streaming transducers
+
+`OnlineSherpaSttConfig::new` takes four streaming-transducer files:
 
 - Encoder ONNX model.
 - Decoder ONNX model.
@@ -26,7 +32,7 @@ or tuned per model:
 ```rust
 use std::time::Duration;
 
-let mut config = SherpaSttConfig::new(encoder, decoder, joiner, tokens);
+let mut config = OnlineSherpaSttConfig::new(encoder, decoder, joiner, tokens);
 config.initial_context = Duration::from_millis(750);
 config.final_context = Duration::ZERO;
 ```
@@ -34,13 +40,45 @@ config.final_context = Duration::ZERO;
 The live [stt-sherpa example](../../../examples/stt-sherpa) documents model
 downloads and microphone usage.
 
+### Offline Moonshine v2
+
+Moonshine v2 is not available through Sherpa's `OnlineRecognizer`. Its model
+layout is an encoder, a merged decoder, and a token table:
+
+```rust
+use std::time::Duration;
+
+use pipecrab_stt_sherpa::{MoonshineV2Config, OfflineSherpaStt};
+
+let mut config = MoonshineV2Config::new(encoder, merged_decoder, tokens);
+config.num_threads = 2;
+config.chunk_duration = Duration::from_secs(8);
+config.chunk_overlap = Duration::from_millis(500);
+let transcriber = OfflineSherpaStt::new(config)?;
+```
+
+The offline adapter accepts the same 16 kHz mono format and uses CPU greedy
+search with two compute threads by default. It buffers audio on its actor
+thread between PipeCrab's utterance edges, decodes model-safe overlapping
+windows at the end, and emits exactly one merged `Final` event. It cannot emit
+partial hypotheses.
+
+The default window is eight seconds with 500 ms overlap. Moonshine v2's current
+model files fail above roughly 9.25 seconds, so configuration rejects a
+`chunk_duration` above nine seconds. This model constraint does not shorten the
+PipeCrab utterance or create additional VAD edges.
+
+The live [stt-sherpa-moonshine example](../../../examples/stt-sherpa-moonshine)
+documents the official Moonshine v2 model package, microphone usage, and its
+VAD-backed integration test.
+
 ## Components and ownership
 
 ```text
 SttStage
    │ StreamingTranscriber
    ▼
-SherpaStt
+OnlineSherpaStt (`SherpaStt` default)
    ├── cancellation generation (atomic)
    └── WorkerHandle
           ├── command sender ───────────────┐
@@ -49,7 +87,7 @@ SherpaStt
                                       worker thread
                                             │ owns
                                             ▼
-                                      SherpaBackend
+                                      online backend
                                             │ owns exactly one
                                             ▼
                               sherpa_onnx::OnlineRecognizer
@@ -58,22 +96,24 @@ SherpaStt
                                  active OnlineStream (0 or 1)
 ```
 
-`SherpaStt` is the inexpensive, `Send + Sync` handle used by `SttStage`. The
-actor thread constructs, accesses, and drops the native recognizer. No
+`OnlineSherpaStt` is the inexpensive, `Send + Sync` handle used by `SttStage`.
+The actor thread constructs, accesses, and drops the native recognizer. No
 recognizer or stream reference escapes that thread.
 
 `WorkerHandle` keeps the command sender and actor join handle together. Dropping
 `SherpaStt` closes the command channel and joins the actor. An
 active stream is explicitly dropped before the recognizer during worker
-shutdown.
+shutdown. `OfflineSherpaStt` uses the same handle/actor ownership boundary but
+owns an `OfflineRecognizer` and an optional utterance buffer instead of an
+`OnlineStream`.
 
 ### Backend boundary
 
-`Backend` is the testable boundary around the serialized online-recognizer
-operations:
+`OnlineBackend` (`Backend` is its concise alias) is the testable boundary
+around the serialized online-recognizer operations:
 
 ```rust
-pub trait Backend: Send + 'static {
+pub trait OnlineBackend: Send + 'static {
     type Stream: 'static;
 
     fn create_stream(&mut self) -> Self::Stream;
@@ -85,13 +125,25 @@ pub trait Backend: Send + 'static {
 }
 ```
 
-`SherpaBackend` is the production implementation and owns one
-`OnlineRecognizer`. Its associated stream is `OnlineStream`. Test backends use
+The production online backend owns one `OnlineRecognizer`. Its associated
+stream is `OnlineStream`. Test backends use
 ordinary Rust stream values to script hypotheses, block individual decode
 steps, and record thread ownership without loading ONNX models.
 
 Mutable receivers express the single-owner rule even where Sherpa's Rust API
 accepts shared references internally.
+
+The offline boundary is deliberately utterance-level:
+
+```rust
+pub trait OfflineBackend: Send + 'static {
+    fn transcribe(&mut self, samples: &[f32]) -> Option<String>;
+}
+```
+
+Its production implementation creates a fresh `OfflineStream`, accepts one
+bounded waveform window, calls `OfflineRecognizer::decode`, and reads that
+window's result. The recognizer remains loaded across windows and utterances.
 
 ## Utterance request flow
 
@@ -104,7 +156,7 @@ Feed  { samples: Arc<[f32]>, generation, reply }
 End   { generation, reply }
 ```
 
-Only one utterance can be active per `SherpaStt` instance. A second begin, a
+Only one utterance can be active per transcriber instance. A second begin, a
 feed without begin, or an end without begin becomes `SttError::Engine` rather
 than silently changing worker state.
 
@@ -161,6 +213,16 @@ requirement rather than increasing VAD pre-roll indefinitely.
 PipeCrab's `SpeechStopped` edge is the boundary authority. Sherpa endpoint
 detection is disabled, and the worker never calls `is_endpoint()`.
 
+### Offline flow
+
+`OfflineSherpaStt::begin_utterance()` creates an empty actor-owned sample
+buffer. Each `feed()` appends its chunk and returns no events.
+`end_utterance()` divides the completed buffer into bounded, overlapping
+windows, decodes them sequentially, merges repeated words from the overlap, and
+returns one `SttEvent::Final`. It returns an empty final when Sherpa recognizes
+no text. There is no extra recognizer padding; VAD pre-roll and trailing
+silence are already part of the utterance waveform.
+
 ## Cancellation and interruption
 
 `StreamingTranscriber::cancel()` is synchronous, non-blocking, idempotent, and
@@ -188,9 +250,12 @@ without touching recognizer state, so they cannot contaminate the next
 utterance.
 
 Sherpa does not expose cancellation inside one already-running `decode()` call.
-That native call completes before the worker can observe the new generation;
-its result is then discarded. Small input chunks, one decode step per check,
-and a one- or two-thread inference pool bound that delay.
+For `OnlineSherpaStt`, that native call completes before the worker checks the
+generation again; small chunks and one decode step per check bound the delay.
+For `OfflineSherpaStt`, one window decode must finish before the actor can
+observe cancellation. It checks again between every window, and both the actor
+and awaiting caller discard stale results. A one- or two-thread inference pool
+limits contention, not the duration of an already-running offline call.
 
 ## Composition with Sherpa VAD
 
@@ -206,9 +271,9 @@ SherpaVad actor
   one compute thread
           │ speech edges + gated Arc-backed chunks
           ▼
-SherpaStt actor
-  one OnlineRecognizer
-  one active OnlineStream
+Sherpa STT actor
+  one OnlineRecognizer + active stream
+  or one OfflineRecognizer + utterance buffer
   one or two compute threads
 ```
 
@@ -237,10 +302,11 @@ specific CPU cores.
 
 ## Errors
 
-`SherpaSttBuildError` separates invalid paths or thread counts, recognizer
-construction failure, and worker setup failure. Runtime channel closure,
-protocol violations, and actor failure become `SttError::Engine` so `SttStage`
-can surface them through the pipeline's normal recoverable-error path.
+`SherpaSttBuildError` separates invalid paths or thread counts, online or
+offline recognizer construction failure, and worker setup failure. Runtime
+channel closure, protocol violations, and actor failure become
+`SttError::Engine` so `SttStage` can surface them through the pipeline's normal
+recoverable-error path.
 
 ## Model-backed integration tests
 
@@ -251,6 +317,10 @@ model-backed tests, but does not execute them. The model-backed tests are
 The speech input is committed at
 [`test-resources/audio/sherpa-zipformer-en-20m-0.wav`](../../../test-resources/audio/sherpa-zipformer-en-20m-0.wav),
 so no WAV environment variable is required.
+
+The Moonshine tests use the same committed resources. No WAV should be copied
+from a downloaded model directory or referenced through an environment
+variable.
 
 Run these commands from the repository root. The environment variables use
 absolute paths because Cargo runs integration-test binaries with a package
@@ -263,7 +333,7 @@ requires the final transcript to retain its opening words:
 
 ```console
 ROOT="$(pwd)"
-MODEL="$ROOT/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
+MODEL="$ROOT/models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
 
 SHERPA_STT_ENCODER="$MODEL/encoder-epoch-99-avg-1.int8.onnx" \
 SHERPA_STT_DECODER="$MODEL/decoder-epoch-99-avg-1.onnx" \
@@ -276,6 +346,35 @@ cargo test -p pipecrab-stt-sherpa \
 ```
 
 `--nocapture` prints the recognized final text.
+
+### Direct Moonshine v2 STT
+
+The short test checks a single Moonshine decode. The long test constructs a
+13-second utterance from the committed WAV, exercises internal windowing and
+transcript merging, and requires one nonempty final result:
+
+```console
+ROOT="$(pwd)"
+MODEL="$ROOT/models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27"
+
+export SHERPA_MOONSHINE_ENCODER="$MODEL/encoder_model.ort"
+export SHERPA_MOONSHINE_MERGED_DECODER="$MODEL/decoder_model_merged.ort"
+export SHERPA_MOONSHINE_TOKENS="$MODEL/tokens.txt"
+
+cargo test -p pipecrab-stt-sherpa \
+  --test offline_transcriber \
+  moonshine_v2_transcribes_a_wave_file \
+  -- --ignored --nocapture
+
+cargo test -p pipecrab-stt-sherpa \
+  --test offline_transcriber \
+  moonshine_v2_chunks_a_long_wave_file \
+  -- --ignored --nocapture
+```
+
+Point `MODEL` at the tiny model directory to run the same tests against
+Moonshine v2 tiny. Both tests remain ignored in ordinary CI because the ONNX
+model artifacts are not committed.
 
 ### VAD-gated streaming STT
 
@@ -290,9 +389,9 @@ final transcript to retain the fixture's opening words:
 
 ```console
 ROOT="$(pwd)"
-MODEL="$ROOT/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
+MODEL="$ROOT/models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
 
-SHERPA_VAD_MODEL="$ROOT/silero_vad.onnx" \
+SHERPA_VAD_MODEL="$ROOT/models/silero_vad.onnx" \
 SHERPA_STT_ENCODER="$MODEL/encoder-epoch-99-avg-1.int8.onnx" \
 SHERPA_STT_DECODER="$MODEL/decoder-epoch-99-avg-1.onnx" \
 SHERPA_STT_JOINER="$MODEL/joiner-epoch-99-avg-1.int8.onnx" \
@@ -306,7 +405,7 @@ cargo test -p stt-sherpa \
 The short fixture contains about 400 milliseconds of speech:
 
 ```console
-SHERPA_VAD_MODEL="$ROOT/silero_vad.onnx" \
+SHERPA_VAD_MODEL="$ROOT/models/silero_vad.onnx" \
 SHERPA_STT_ENCODER="$MODEL/encoder-epoch-99-avg-1.int8.onnx" \
 SHERPA_STT_DECODER="$MODEL/decoder-epoch-99-avg-1.onnx" \
 SHERPA_STT_JOINER="$MODEL/joiner-epoch-99-avg-1.int8.onnx" \
@@ -322,7 +421,7 @@ directly into `SherpaStt`:
 
 ```console
 ROOT="$(pwd)"
-MODEL="$ROOT/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
+MODEL="$ROOT/models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
 
 SHERPA_STT_ENCODER="$MODEL/encoder-epoch-99-avg-1.int8.onnx" \
 SHERPA_STT_DECODER="$MODEL/decoder-epoch-99-avg-1.onnx" \
@@ -334,16 +433,35 @@ cargo test -p stt-sherpa \
   -- --ignored --nocapture
 ```
 
+### VAD-gated Moonshine v2 STT
+
+This test exercises the microphone topology with a committed 48 kHz WAV:
+
+```console
+ROOT="$(pwd)"
+MODEL="$ROOT/models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27"
+
+SHERPA_VAD_MODEL="$ROOT/models/silero_vad.onnx" \
+SHERPA_MOONSHINE_ENCODER="$MODEL/encoder_model.ort" \
+SHERPA_MOONSHINE_MERGED_DECODER="$MODEL/decoder_model_merged.ort" \
+SHERPA_MOONSHINE_TOKENS="$MODEL/tokens.txt" \
+cargo test -p stt-sherpa-moonshine \
+  --test model_pipeline \
+  -- --ignored --nocapture
+```
+
 ## Default CI coverage
 
 CI does not need model files or network access. It covers:
 
 - Configuration validation and fixed Sherpa settings.
 - Partial and final transcript behavior.
+- Offline buffering and final-only transcript behavior.
 - Duplicate-hypothesis suppression.
 - Protocol errors.
 - Actor-thread ownership.
 - Cancellation during native decoding.
+- Stale offline-result suppression after cancellation.
 - Stale queued-command rejection.
 - Worker failure reporting.
 - Resampled waveform timing, level, and similarity.
@@ -354,4 +472,5 @@ To run the default crate suite locally:
 ```console
 cargo test -p pipecrab-stt-sherpa
 cargo test -p stt-sherpa
+cargo test -p stt-sherpa-moonshine
 ```

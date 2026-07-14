@@ -8,9 +8,9 @@ use futures::channel::oneshot;
 use pipecrab_core::AudioFormat;
 use pipecrab_stt::{StreamingTranscriber, SttError, SttEvent};
 
-use crate::backend::SherpaBackend;
+use crate::backend::OnlineSherpaBackend;
 use crate::config::{DEFAULT_FINAL_CONTEXT, DEFAULT_INITIAL_CONTEXT, SAMPLE_RATE};
-use crate::{Backend, SherpaSttBuildError, SherpaSttConfig};
+use crate::{OnlineBackend, OnlineSherpaSttConfig, SherpaSttBuildError};
 
 const INPUT_FORMAT: AudioFormat = AudioFormat {
     sample_rate: SAMPLE_RATE,
@@ -102,37 +102,37 @@ impl Drop for WorkerHandle {
     }
 }
 
-/// A worker-backed Sherpa ONNX streaming speech recognizer.
+/// A worker-backed Sherpa ONNX online speech recognizer.
 ///
 /// The handle is `Send + Sync`; the native recognizer and active stream stay on
 /// one dedicated actor thread. PipeCrab VAD edges open and close each stream,
 /// and changed Sherpa hypotheses are emitted with no stable prefix.
-pub struct SherpaStt {
+pub struct OnlineSherpaStt {
     generation: Arc<AtomicU64>,
     worker: WorkerHandle,
 }
 
-impl SherpaStt {
+impl OnlineSherpaStt {
     /// Create a recognizer and actor thread from a streaming transducer
     /// configuration.
     ///
     /// Model loading runs on the actor thread. This call waits for setup so a
     /// returned handle is ready to begin an utterance.
-    pub fn new(config: SherpaSttConfig) -> Result<Self, SherpaSttBuildError> {
+    pub fn new(config: OnlineSherpaSttConfig) -> Result<Self, SherpaSttBuildError> {
         config.validate()?;
         let padding = BoundaryPadding::new(config.initial_context, config.final_context)?;
-        Self::spawn(move || SherpaBackend::create(config), padding)
+        Self::spawn(move || OnlineSherpaBackend::create(config), padding)
     }
 
     /// Move a custom backend onto a new actor thread.
     ///
     /// This supports deterministic recognizers and tests without changing the
     /// worker ownership or utterance protocol.
-    pub fn with_backend(backend: impl Backend) -> Result<Self, SherpaSttBuildError> {
+    pub fn with_backend(backend: impl OnlineBackend) -> Result<Self, SherpaSttBuildError> {
         Self::spawn(move || Ok(backend), BoundaryPadding::defaults()?)
     }
 
-    fn spawn<B: Backend>(
+    fn spawn<B: OnlineBackend>(
         create: impl FnOnce() -> Result<B, SherpaSttBuildError> + Send + 'static,
         padding: BoundaryPadding,
     ) -> Result<Self, SherpaSttBuildError> {
@@ -143,7 +143,7 @@ impl SherpaStt {
 }
 
 #[async_trait]
-impl StreamingTranscriber for SherpaStt {
+impl StreamingTranscriber for OnlineSherpaStt {
     fn input_format(&self) -> AudioFormat {
         INPUT_FORMAT
     }
@@ -209,7 +209,7 @@ async fn current_events_response(
     result
 }
 
-fn spawn_worker<B: Backend>(
+fn spawn_worker<B: OnlineBackend>(
     generation: Arc<AtomicU64>,
     create: impl FnOnce() -> Result<B, SherpaSttBuildError> + Send + 'static,
     padding: BoundaryPadding,
@@ -217,7 +217,7 @@ fn spawn_worker<B: Backend>(
     let (sender, receiver) = mpsc::channel();
     let (setup_sender, setup_receiver) = mpsc::channel();
     let thread = thread::Builder::new()
-        .name("pipecrab-stt-sherpa".into())
+        .name("pipecrab-stt-sherpa-online".into())
         .spawn(move || match create() {
             Ok(recognizer) => {
                 if setup_sender.send(Ok(())).is_ok() {
@@ -248,7 +248,7 @@ fn spawn_worker<B: Backend>(
     }
 }
 
-struct SttWorker<B: Backend> {
+struct SttWorker<B: OnlineBackend> {
     recognizer: B,
     stream: Option<B::Stream>,
     generation: u64,
@@ -256,13 +256,13 @@ struct SttWorker<B: Backend> {
     padding: BoundaryPadding,
 }
 
-impl<B: Backend> Drop for SttWorker<B> {
+impl<B: OnlineBackend> Drop for SttWorker<B> {
     fn drop(&mut self) {
         self.stream = None;
     }
 }
 
-impl<B: Backend> SttWorker<B> {
+impl<B: OnlineBackend> SttWorker<B> {
     fn new(recognizer: B, generation: &AtomicU64, padding: BoundaryPadding) -> Self {
         Self {
             recognizer,
@@ -308,7 +308,8 @@ impl<B: Backend> SttWorker<B> {
         }
         if self.stream.is_some() {
             return Err(SttError::Engine(
-                "SherpaStt::begin_utterance called while an utterance is already active".into(),
+                "OnlineSherpaStt::begin_utterance called while an utterance is already active"
+                    .into(),
             ));
         }
 
@@ -347,7 +348,7 @@ impl<B: Backend> SttWorker<B> {
         }
         let Some(mut stream) = self.stream.take() else {
             return Err(SttError::Engine(
-                "SherpaStt::feed called without an active utterance".into(),
+                "OnlineSherpaStt::feed called without an active utterance".into(),
             ));
         };
 
@@ -390,7 +391,7 @@ impl<B: Backend> SttWorker<B> {
         }
         let Some(mut stream) = self.stream.take() else {
             return Err(SttError::Engine(
-                "SherpaStt::end_utterance called without an active utterance".into(),
+                "OnlineSherpaStt::end_utterance called without an active utterance".into(),
             ));
         };
 

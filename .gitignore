@@ -26,3 +26,4 @@ memory/
 
 # Examples Artifacts
 silero_vad.onnx
+/models/

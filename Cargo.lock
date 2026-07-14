@@ -1299,6 +1299,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "stt-sherpa-moonshine"
+version = "0.3.0"
+dependencies = [
+ "futures",
+ "pipecrab",
+ "pipecrab-audio",
+ "pipecrab-audio-cpal",
+ "pipecrab-stt",
+ "pipecrab-stt-sherpa",
+ "pipecrab-vad",
+ "pipecrab-vad-sherpa",
+ "sherpa-onnx",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
