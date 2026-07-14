@@ -153,11 +153,72 @@ impl std::error::Error for SherpaVadBuildError {}
 mod tests {
     use super::*;
 
+    fn valid_config() -> SherpaVadConfig {
+        SherpaVadConfig::new(std::env::current_exe().expect("test executable has a path"))
+    }
+
+    fn invalid_config_message(config: SherpaVadConfig) -> String {
+        match config.validate().unwrap_err() {
+            SherpaVadBuildError::InvalidConfig(message) => message,
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
+    }
+
+    fn assert_rejects_non_finite(name: &str, invalidate: impl FnOnce(&mut SherpaVadConfig)) {
+        let mut config = valid_config();
+        invalidate(&mut config);
+        assert_eq!(
+            invalid_config_message(config),
+            format!("{name} must be finite and positive, got NaN")
+        );
+    }
+
     #[test]
     fn rejects_a_missing_model_before_starting_a_worker() {
         let error = SherpaVadConfig::new("definitely-not-a-silero-model.onnx")
             .into_sherpa()
             .unwrap_err();
         assert!(matches!(error, SherpaVadBuildError::InvalidConfig(_)));
+    }
+
+    #[test]
+    fn rejects_thresholds_outside_the_closed_unit_interval() {
+        for (threshold, expected) in [
+            (-0.1, "threshold must be finite and in [0, 1], got -0.1"),
+            (1.1, "threshold must be finite and in [0, 1], got 1.1"),
+            (f32::NAN, "threshold must be finite and in [0, 1], got NaN"),
+        ] {
+            let mut config = valid_config();
+            config.threshold = threshold;
+            assert_eq!(invalid_config_message(config), expected);
+        }
+    }
+
+    #[test]
+    fn rejects_non_finite_positive_fields() {
+        assert_rejects_non_finite("min_silence_duration", |config| {
+            config.min_silence_duration = f32::NAN;
+        });
+        assert_rejects_non_finite("min_speech_duration", |config| {
+            config.min_speech_duration = f32::NAN;
+        });
+        assert_rejects_non_finite("max_speech_duration", |config| {
+            config.max_speech_duration = f32::NAN;
+        });
+        assert_rejects_non_finite("buffer_size", |config| {
+            config.buffer_size = f32::NAN;
+        });
+    }
+
+    #[test]
+    fn rejects_a_buffer_shorter_than_the_maximum_speech_duration() {
+        let mut config = valid_config();
+        config.max_speech_duration = 5.0;
+        config.buffer_size = 4.5;
+
+        assert_eq!(
+            invalid_config_message(config),
+            "buffer_size (4.5) must be at least max_speech_duration (5)"
+        );
     }
 }
