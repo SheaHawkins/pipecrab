@@ -18,6 +18,19 @@ The adapter accepts 16 kHz mono audio and uses CPU greedy search with two
 compute threads by default. Sherpa endpoint detection is disabled because the
 upstream VAD stage owns utterance boundaries.
 
+Boundary context is model policy rather than a resampling setting. The defaults
+are one second before an utterance and 300 milliseconds after it. Both buffers
+are allocated once when `SherpaStt` is constructed, and either can be disabled
+or tuned per model:
+
+```rust
+use std::time::Duration;
+
+let mut config = SherpaSttConfig::new(encoder, decoder, joiner, tokens);
+config.initial_context = Duration::from_millis(750);
+config.final_context = Duration::ZERO;
+```
+
 The live [stt-sherpa example](../../../examples/stt-sherpa) documents model
 downloads and microphone usage.
 
@@ -97,8 +110,11 @@ than silently changing worker state.
 
 ### Begin
 
-`begin_utterance()` creates a clean `OnlineStream` and clears the previous
-partial hypothesis. The recognizer remains loaded across utterances.
+`begin_utterance()` creates a clean `OnlineStream`, feeds the configured
+zero-valued initial context, and decodes it before accepting utterance audio.
+The default is one second. This keeps the recognizer from consuming the first
+spoken frames as its startup context. The recognizer remains loaded across
+utterances.
 
 ### Feed
 
@@ -124,12 +140,23 @@ the way to an empty string.
 
 ### End
 
-`end_utterance()` appends 300 milliseconds of zero-valued audio before calling
-`input_finished()`. Streaming Zipformer needs that right context to finish
-tokens near either edge of a short utterance. The worker then drains every
+`end_utterance()` appends the configured zero-valued final context before
+calling `input_finished()`. The default is 300 milliseconds. Streaming
+Zipformer needs that right context to finish tokens near the end of a short
+utterance. The worker then drains every
 remaining ready decode step, reads the final result, and drops the stream. It
 always returns exactly one `SttEvent::Final`, including an empty final when
 Sherpa recognizes no text.
+
+The final padding follows Sherpa's
+[official Rust streaming Zipformer example](https://github.com/k2-fsa/sherpa-onnx/blob/master/rust-api-examples/examples/streaming_zipformer.rs),
+which adds approximately 0.3 seconds of silence before finishing a stream.
+
+Padding supplies encoder context; it does not guarantee that every short sound
+becomes a token. In particular, the recommended 20M model can return blank for
+an isolated one-syllable word even when the same waveform bypasses VAD. Treat
+reliable keyword recognition as a model-selection or contextual-biasing
+requirement rather than increasing VAD pre-roll indefinitely.
 
 PipeCrab's `SpeechStopped` edge is the boundary authority. Sherpa endpoint
 detection is disabled, and the worker never calls `is_endpoint()`.
@@ -232,7 +259,7 @@ working directory.
 ### Direct streaming STT
 
 This test feeds the committed WAV to `SherpaStt` in 512-sample chunks and
-requires a non-empty final transcript:
+requires the final transcript to retain its opening words:
 
 ```console
 ROOT="$(pwd)"
@@ -255,11 +282,11 @@ cargo test -p pipecrab-stt-sherpa \
 This test exercises the same topology as the microphone example:
 
 ```text
-known WAV → SherpaVad → VadStage → SherpaStt → SttStage → final transcript
+48 kHz WAV → ResamplerStage → SherpaVad → VadStage → SherpaStt → SttStage
 ```
 
-It appends one second of silence to close the VAD utterance and requires a
-non-empty final transcript:
+It appends one second of silence to close the VAD utterance and requires the
+final transcript to retain the fixture's opening words:
 
 ```console
 ROOT="$(pwd)"
@@ -276,6 +303,37 @@ cargo test -p stt-sherpa \
   -- --ignored --nocapture
 ```
 
+The short fixture contains about 400 milliseconds of speech:
+
+```console
+SHERPA_VAD_MODEL="$ROOT/silero_vad.onnx" \
+SHERPA_STT_ENCODER="$MODEL/encoder-epoch-99-avg-1.int8.onnx" \
+SHERPA_STT_DECODER="$MODEL/decoder-epoch-99-avg-1.onnx" \
+SHERPA_STT_JOINER="$MODEL/joiner-epoch-99-avg-1.int8.onnx" \
+SHERPA_STT_TOKENS="$MODEL/tokens.txt" \
+cargo test -p stt-sherpa \
+  --test model_pipeline \
+  vad_gated_short_wave_produces_text \
+  -- --ignored --nocapture
+```
+
+To isolate recognizer startup from VAD, run the 48→16 kHz resampling path
+directly into `SherpaStt`:
+
+```console
+ROOT="$(pwd)"
+MODEL="$ROOT/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
+
+SHERPA_STT_ENCODER="$MODEL/encoder-epoch-99-avg-1.int8.onnx" \
+SHERPA_STT_DECODER="$MODEL/decoder-epoch-99-avg-1.onnx" \
+SHERPA_STT_JOINER="$MODEL/joiner-epoch-99-avg-1.int8.onnx" \
+SHERPA_STT_TOKENS="$MODEL/tokens.txt" \
+cargo test -p stt-sherpa \
+  --test model_pipeline \
+  transcribes_microphone_resampling_without_vad \
+  -- --ignored --nocapture
+```
+
 ## Default CI coverage
 
 CI does not need model files or network access. It covers:
@@ -288,7 +346,8 @@ CI does not need model files or network access. It covers:
 - Cancellation during native decoding.
 - Stale queued-command rejection.
 - Worker failure reporting.
-- Compilation of both ignored model-backed tests.
+- Resampled waveform timing, level, and similarity.
+- Compilation of all ignored model-backed tests.
 
 To run the default crate suite locally:
 

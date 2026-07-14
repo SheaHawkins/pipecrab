@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::channel::oneshot;
@@ -8,19 +9,60 @@ use pipecrab_core::AudioFormat;
 use pipecrab_stt::{StreamingTranscriber, SttError, SttEvent};
 
 use crate::backend::SherpaBackend;
-use crate::config::SAMPLE_RATE;
+use crate::config::{DEFAULT_FINAL_CONTEXT, DEFAULT_INITIAL_CONTEXT, SAMPLE_RATE};
 use crate::{Backend, SherpaSttBuildError, SherpaSttConfig};
 
 const INPUT_FORMAT: AudioFormat = AudioFormat {
     sample_rate: SAMPLE_RATE,
     channels: 1,
 };
-const FINAL_PADDING_SAMPLES: usize = SAMPLE_RATE as usize * 3 / 10;
-static FINAL_PADDING: [f32; FINAL_PADDING_SAMPLES] = [0.0; FINAL_PADDING_SAMPLES];
-
 type EventsResult = Result<Vec<SttEvent>, SttError>;
 type BeginReply = oneshot::Sender<(u64, Result<(), SttError>)>;
 type EventsReply = oneshot::Sender<(u64, EventsResult)>;
+
+struct BoundaryPadding {
+    initial: Box<[f32]>,
+    final_: Box<[f32]>,
+}
+
+impl BoundaryPadding {
+    fn new(initial: Duration, final_: Duration) -> Result<Self, SherpaSttBuildError> {
+        Ok(Self {
+            initial: silent_samples("initial_context", initial)?,
+            final_: silent_samples("final_context", final_)?,
+        })
+    }
+
+    fn defaults() -> Result<Self, SherpaSttBuildError> {
+        Self::new(DEFAULT_INITIAL_CONTEXT, DEFAULT_FINAL_CONTEXT)
+    }
+}
+
+fn silent_samples(name: &str, duration: Duration) -> Result<Box<[f32]>, SherpaSttBuildError> {
+    const NANOS_PER_SECOND: u128 = 1_000_000_000;
+    let scaled = duration
+        .as_nanos()
+        .checked_mul(u128::from(SAMPLE_RATE))
+        .and_then(|value| value.checked_add(NANOS_PER_SECOND - 1))
+        .ok_or_else(|| {
+            SherpaSttBuildError::InvalidConfig(format!(
+                "{name} is too large to convert to 16 kHz samples"
+            ))
+        })?;
+    let count = usize::try_from(scaled / NANOS_PER_SECOND).map_err(|_| {
+        SherpaSttBuildError::InvalidConfig(format!(
+            "{name} is too large to convert to 16 kHz samples"
+        ))
+    })?;
+    let mut samples = Vec::new();
+    samples.try_reserve_exact(count).map_err(|error| {
+        SherpaSttBuildError::InvalidConfig(format!(
+            "{name} needs {count} samples that cannot be allocated: {error}"
+        ))
+    })?;
+    samples.resize(count, 0.0);
+    Ok(samples.into_boxed_slice())
+}
 
 enum Command {
     Begin {
@@ -78,7 +120,8 @@ impl SherpaStt {
     /// returned handle is ready to begin an utterance.
     pub fn new(config: SherpaSttConfig) -> Result<Self, SherpaSttBuildError> {
         config.validate()?;
-        Self::spawn(move || SherpaBackend::create(config))
+        let padding = BoundaryPadding::new(config.initial_context, config.final_context)?;
+        Self::spawn(move || SherpaBackend::create(config), padding)
     }
 
     /// Move a custom backend onto a new actor thread.
@@ -86,14 +129,15 @@ impl SherpaStt {
     /// This supports deterministic recognizers and tests without changing the
     /// worker ownership or utterance protocol.
     pub fn with_backend(backend: impl Backend) -> Result<Self, SherpaSttBuildError> {
-        Self::spawn(move || Ok(backend))
+        Self::spawn(move || Ok(backend), BoundaryPadding::defaults()?)
     }
 
     fn spawn<B: Backend>(
         create: impl FnOnce() -> Result<B, SherpaSttBuildError> + Send + 'static,
+        padding: BoundaryPadding,
     ) -> Result<Self, SherpaSttBuildError> {
         let generation = Arc::new(AtomicU64::new(0));
-        let worker = spawn_worker(generation.clone(), create)?;
+        let worker = spawn_worker(generation.clone(), create, padding)?;
         Ok(Self { generation, worker })
     }
 }
@@ -168,6 +212,7 @@ async fn current_events_response(
 fn spawn_worker<B: Backend>(
     generation: Arc<AtomicU64>,
     create: impl FnOnce() -> Result<B, SherpaSttBuildError> + Send + 'static,
+    padding: BoundaryPadding,
 ) -> Result<WorkerHandle, SherpaSttBuildError> {
     let (sender, receiver) = mpsc::channel();
     let (setup_sender, setup_receiver) = mpsc::channel();
@@ -176,7 +221,7 @@ fn spawn_worker<B: Backend>(
         .spawn(move || match create() {
             Ok(recognizer) => {
                 if setup_sender.send(Ok(())).is_ok() {
-                    SttWorker::new(recognizer, &generation).run(receiver, &generation);
+                    SttWorker::new(recognizer, &generation, padding).run(receiver, &generation);
                 }
             }
             Err(error) => {
@@ -208,6 +253,7 @@ struct SttWorker<B: Backend> {
     stream: Option<B::Stream>,
     generation: u64,
     last_partial: String,
+    padding: BoundaryPadding,
 }
 
 impl<B: Backend> Drop for SttWorker<B> {
@@ -217,12 +263,13 @@ impl<B: Backend> Drop for SttWorker<B> {
 }
 
 impl<B: Backend> SttWorker<B> {
-    fn new(recognizer: B, generation: &AtomicU64) -> Self {
+    fn new(recognizer: B, generation: &AtomicU64, padding: BoundaryPadding) -> Self {
         Self {
             recognizer,
             stream: None,
             generation: generation.load(Ordering::Acquire),
             last_partial: String::new(),
+            padding,
         }
     }
 
@@ -266,7 +313,26 @@ impl<B: Backend> SttWorker<B> {
         }
 
         self.last_partial.clear();
-        self.stream = Some(self.recognizer.create_stream());
+        let mut stream = self.recognizer.create_stream();
+        if !self.padding.initial.is_empty() {
+            self.recognizer
+                .accept_waveform(&mut stream, &self.padding.initial);
+        }
+        if !self.local_stream_is_current(command_generation, generation) {
+            return Ok(());
+        }
+
+        while self.recognizer.is_ready(&mut stream) {
+            if !self.local_stream_is_current(command_generation, generation) {
+                return Ok(());
+            }
+            self.recognizer.decode(&mut stream);
+            if !self.local_stream_is_current(command_generation, generation) {
+                return Ok(());
+            }
+        }
+
+        self.stream = Some(stream);
         Ok(())
     }
 
@@ -328,7 +394,10 @@ impl<B: Backend> SttWorker<B> {
             ));
         };
 
-        self.recognizer.accept_waveform(&mut stream, &FINAL_PADDING);
+        if !self.padding.final_.is_empty() {
+            self.recognizer
+                .accept_waveform(&mut stream, &self.padding.final_);
+        }
         if !self.local_stream_is_current(command_generation, generation) {
             return Ok(Vec::new());
         }
@@ -379,5 +448,26 @@ impl<B: Backend> SttWorker<B> {
     fn drop_active_stream(&mut self) {
         self.stream = None;
         self.last_partial.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn boundary_padding_uses_configured_durations() {
+        let padding = BoundaryPadding::new(Duration::from_millis(125), Duration::ZERO).unwrap();
+
+        assert_eq!(padding.initial.len(), 2_000);
+        assert!(padding.initial.iter().all(|sample| *sample == 0.0));
+        assert!(padding.final_.is_empty());
+    }
+
+    #[test]
+    fn sub_sample_context_rounds_up() {
+        let samples = silent_samples("context", Duration::from_nanos(1)).unwrap();
+
+        assert_eq!(samples.len(), 1);
     }
 }

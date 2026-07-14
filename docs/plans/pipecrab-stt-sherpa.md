@@ -223,9 +223,10 @@ without copying its sample buffer. Closed command and response channels become
 
 ### Begin
 
-`begin_utterance()` creates a fresh stream and clears `last_partial`. Calling it
-while a stream is active is a protocol error. It never resets or silently
-replaces an active utterance.
+`begin_utterance()` creates a fresh stream, clears `last_partial`, and decodes
+the zero-valued startup context configured on `SherpaSttConfig`. The default is
+one second. Calling it while a stream is active is a protocol error. It never
+resets or silently replaces an active utterance.
 
 ### Feed
 
@@ -271,11 +272,13 @@ permanent.
 
 ### End
 
-Ending without an active stream is a protocol error. `end_utterance()` marks
-the stream complete, drains ready decode steps with the same generation checks,
-and returns exactly one final event:
+Ending without an active stream is a protocol error. `end_utterance()` appends
+the configured zero-valued final context, which defaults to 300 milliseconds,
+marks the stream complete, drains ready decode steps with the same generation
+checks, and returns exactly one final event:
 
 ```rust
+stream.accept_waveform(16_000, &final_padding);
 stream.input_finished();
 
 while recognizer.is_ready(stream) {
@@ -358,7 +361,8 @@ A scripted backend covers:
 - A changed hypothesis emits `Partial { stable: 0 }`.
 - An unchanged hypothesis emits no duplicate partial.
 - A hypothesis can retract to empty.
-- End marks input finished, drains every ready step, and emits one final.
+- End appends final context, marks input finished, drains every ready step, and
+  emits one final.
 - Empty Sherpa results become an empty partial or final according to protocol
   state.
 - A completed utterance drops its stream and permits a clean next begin.
@@ -414,8 +418,8 @@ exception. `cargo tree -d` should continue to show one resolved Sherpa version.
 - `SherpaStt` implements `StreamingTranscriber` directly.
 - The production actor exclusively owns one `OnlineRecognizer` and at most one
   active `OnlineStream`.
-- Begin creates a stream, feed incrementally decodes it, and end flushes and
-  drops it.
+- Begin creates and primes a stream, feed incrementally decodes it, and end
+  appends final context, flushes, and drops it.
 - Sherpa endpoint detection is disabled and PipeCrab VAD edges define every
   utterance boundary.
 - Changed hypotheses are emitted as partials with `stable: 0`; identical
