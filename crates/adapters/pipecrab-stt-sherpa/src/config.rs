@@ -1,0 +1,216 @@
+use std::fmt;
+use std::path::{Path, PathBuf};
+
+use sherpa_onnx::OnlineRecognizerConfig;
+
+pub(crate) const SAMPLE_RATE: u32 = 16_000;
+
+/// Configuration for [`SherpaStt`](crate::SherpaStt).
+///
+/// The adapter fixes recognition to 16 kHz mono audio, the CPU provider,
+/// greedy search, and external PipeCrab utterance boundaries. The model paths
+/// identify one Sherpa streaming transducer.
+#[derive(Clone, Debug)]
+pub struct SherpaSttConfig {
+    /// Path to the streaming transducer encoder model.
+    pub encoder: PathBuf,
+    /// Path to the streaming transducer decoder model.
+    pub decoder: PathBuf,
+    /// Path to the streaming transducer joiner model.
+    pub joiner: PathBuf,
+    /// Path to the model token table.
+    pub tokens: PathBuf,
+    /// ONNX Runtime compute threads used by the recognizer.
+    pub num_threads: i32,
+    /// Enable Sherpa model diagnostics.
+    pub debug: bool,
+}
+
+impl SherpaSttConfig {
+    /// Create a CPU streaming-transducer configuration with two compute
+    /// threads, greedy search, and endpoint detection disabled.
+    pub fn new(
+        encoder: impl Into<PathBuf>,
+        decoder: impl Into<PathBuf>,
+        joiner: impl Into<PathBuf>,
+        tokens: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            encoder: encoder.into(),
+            decoder: decoder.into(),
+            joiner: joiner.into(),
+            tokens: tokens.into(),
+            num_threads: 2,
+            debug: false,
+        }
+    }
+
+    pub(crate) fn into_sherpa(self) -> Result<OnlineRecognizerConfig, SherpaSttBuildError> {
+        self.validate()?;
+
+        let mut config = OnlineRecognizerConfig::default();
+        config.model_config.transducer.encoder = Some(path_string("encoder", &self.encoder)?);
+        config.model_config.transducer.decoder = Some(path_string("decoder", &self.decoder)?);
+        config.model_config.transducer.joiner = Some(path_string("joiner", &self.joiner)?);
+        config.model_config.tokens = Some(path_string("tokens", &self.tokens)?);
+        config.model_config.num_threads = self.num_threads;
+        config.model_config.provider = Some("cpu".into());
+        config.model_config.debug = self.debug;
+        config.feat_config.sample_rate = SAMPLE_RATE as i32;
+        config.decoding_method = Some("greedy_search".into());
+        config.enable_endpoint = false;
+        Ok(config)
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), SherpaSttBuildError> {
+        validate_file("encoder", &self.encoder)?;
+        validate_file("decoder", &self.decoder)?;
+        validate_file("joiner", &self.joiner)?;
+        validate_file("tokens", &self.tokens)?;
+        if self.num_threads <= 0 {
+            return Err(SherpaSttBuildError::InvalidConfig(format!(
+                "num_threads must be positive, got {}",
+                self.num_threads
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn validate_file(name: &str, path: &Path) -> Result<(), SherpaSttBuildError> {
+    if path.is_file() {
+        Ok(())
+    } else {
+        Err(SherpaSttBuildError::InvalidConfig(format!(
+            "{name} does not exist or is not a file: {}",
+            path.display()
+        )))
+    }
+}
+
+fn path_string(name: &str, path: &Path) -> Result<String, SherpaSttBuildError> {
+    path.to_str().map(str::to_owned).ok_or_else(|| {
+        SherpaSttBuildError::InvalidConfig(format!(
+            "{name} path must contain valid UTF-8 for Sherpa"
+        ))
+    })
+}
+
+/// Why a Sherpa STT worker could not be constructed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SherpaSttBuildError {
+    /// A configuration field or model path is unusable.
+    InvalidConfig(String),
+    /// Sherpa rejected the online recognizer configuration.
+    CreateRecognizer(String),
+    /// The actor thread could not start or exited during setup.
+    Worker(String),
+}
+
+impl fmt::Display for SherpaSttBuildError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidConfig(message) => {
+                write!(formatter, "invalid Sherpa STT config: {message}")
+            }
+            Self::CreateRecognizer(message) => {
+                write!(formatter, "create Sherpa online recognizer: {message}")
+            }
+            Self::Worker(message) => write!(formatter, "Sherpa STT worker: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for SherpaSttBuildError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_config() -> SherpaSttConfig {
+        let file = std::env::current_exe().expect("test executable has a path");
+        SherpaSttConfig::new(&file, &file, &file, &file)
+    }
+
+    fn invalid_config_message(config: SherpaSttConfig) -> String {
+        match config.into_sherpa().unwrap_err() {
+            SherpaSttBuildError::InvalidConfig(message) => message,
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
+    }
+
+    fn assert_missing_file(name: &str, invalidate: impl FnOnce(&mut SherpaSttConfig)) {
+        let mut config = valid_config();
+        invalidate(&mut config);
+        assert!(invalid_config_message(config).starts_with(name));
+    }
+
+    #[test]
+    fn translates_fixed_streaming_configuration() {
+        let config = valid_config().into_sherpa().unwrap();
+
+        assert_eq!(config.feat_config.sample_rate, SAMPLE_RATE as i32);
+        assert_eq!(config.model_config.num_threads, 2);
+        assert_eq!(config.model_config.provider.as_deref(), Some("cpu"));
+        assert_eq!(config.decoding_method.as_deref(), Some("greedy_search"));
+        assert!(!config.enable_endpoint);
+        assert!(config.hotwords_file.is_none());
+    }
+
+    #[test]
+    fn retains_supported_thread_profiles() {
+        for threads in [1, 2, 3] {
+            let mut config = valid_config();
+            config.num_threads = threads;
+            assert_eq!(
+                config.into_sherpa().unwrap().model_config.num_threads,
+                threads
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_non_positive_thread_counts() {
+        for threads in [0, -1] {
+            let mut config = valid_config();
+            config.num_threads = threads;
+            assert_eq!(
+                invalid_config_message(config),
+                format!("num_threads must be positive, got {threads}")
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_each_missing_model_file() {
+        assert_missing_file("encoder", |config| {
+            config.encoder = "missing-encoder.onnx".into();
+        });
+        assert_missing_file("decoder", |config| {
+            config.decoder = "missing-decoder.onnx".into();
+        });
+        assert_missing_file("joiner", |config| {
+            config.joiner = "missing-joiner.onnx".into();
+        });
+        assert_missing_file("tokens", |config| {
+            config.tokens = "missing-tokens.txt".into();
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_non_utf8_model_paths() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        assert_eq!(
+            path_string(
+                "encoder",
+                Path::new(&OsString::from_vec(b"encoder-\xff.onnx".to_vec()))
+            ),
+            Err(SherpaSttBuildError::InvalidConfig(
+                "encoder path must contain valid UTF-8 for Sherpa".into()
+            ))
+        );
+    }
+}
