@@ -84,6 +84,8 @@ impl Backend for ScriptedBackend {
     }
 
     fn accept_waveform(&mut self, stream: &mut Self::Stream, samples: &[f32]) {
+        let is_padding =
+            matches!(samples.len(), 16_000 | 4_800) && samples.iter().all(|sample| *sample == 0.0);
         let mut probe = self.probe.lock().unwrap();
         Self::record_thread(&mut probe);
         probe.accepted.push((
@@ -92,9 +94,11 @@ impl Backend for ScriptedBackend {
             samples.iter().all(|sample| *sample == 0.0),
         ));
         drop(probe);
-        stream
-            .pending
-            .extend(self.feed_steps.pop_front().unwrap_or_default());
+        if !is_padding {
+            stream
+                .pending
+                .extend(self.feed_steps.pop_front().unwrap_or_default());
+        }
     }
 
     fn input_finished(&mut self, stream: &mut Self::Stream) {
@@ -181,7 +185,9 @@ fn streams_changed_unstable_hypotheses_and_a_final_result() {
         assert_eq!(probe.streams_dropped, 1);
         assert_eq!(probe.input_finished, 1);
         assert_eq!(probe.decodes, 5);
-        assert_eq!(probe.accepted[0], (first_pointer, 512, false));
+        assert_eq!(probe.accepted[0].1, 16_000);
+        assert!(probe.accepted[0].2);
+        assert_eq!(probe.accepted[1], (first_pointer, 512, false));
         let (_, padding_len, padding_is_silent) = probe.accepted.last().unwrap();
         assert_eq!(*padding_len, 4_800);
         assert!(*padding_is_silent);
@@ -338,7 +344,9 @@ impl Backend for BlockingBackend {
             .unwrap()
             .accepted_lengths
             .push(samples.len());
-        stream.ready = true;
+        if samples.len() != 16_000 {
+            stream.ready = true;
+        }
     }
 
     fn input_finished(&mut self, _stream: &mut Self::Stream) {}
@@ -397,7 +405,7 @@ fn cancellation_drops_in_flight_and_queued_work_before_a_new_begin() {
         next_begin.await.unwrap();
 
         let probe = probe.lock().unwrap();
-        assert_eq!(probe.accepted_lengths, vec![512]);
+        assert_eq!(probe.accepted_lengths, vec![16_000, 512, 16_000]);
         assert_eq!(probe.decodes, 1);
         assert_eq!(probe.streams_created, 2);
         assert_eq!(probe.streams_dropped, 1);
@@ -411,8 +419,10 @@ impl Backend for PanickingBackend {
 
     fn create_stream(&mut self) -> Self::Stream {}
 
-    fn accept_waveform(&mut self, _stream: &mut Self::Stream, _samples: &[f32]) {
-        panic!("scripted worker failure");
+    fn accept_waveform(&mut self, _stream: &mut Self::Stream, samples: &[f32]) {
+        if samples.len() != 16_000 {
+            panic!("scripted worker failure");
+        }
     }
 
     fn input_finished(&mut self, _stream: &mut Self::Stream) {}
@@ -469,6 +479,10 @@ fn production_backend_transcribes_a_wave_file() {
             panic!("expected one final transcript, got {events:?}");
         };
         assert!(!text.is_empty(), "known speech wave produced no transcript");
+        assert!(
+            text.starts_with("AFTER EARLY NIGHTFALL"),
+            "known speech wave lost its opening words: {text}"
+        );
         println!("{text}");
     });
 }

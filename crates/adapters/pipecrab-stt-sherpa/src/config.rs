@@ -1,9 +1,12 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use sherpa_onnx::OnlineRecognizerConfig;
 
 pub(crate) const SAMPLE_RATE: u32 = 16_000;
+pub(crate) const DEFAULT_INITIAL_CONTEXT: Duration = Duration::from_secs(1);
+pub(crate) const DEFAULT_FINAL_CONTEXT: Duration = Duration::from_millis(300);
 
 /// Configuration for [`SherpaStt`](crate::SherpaStt).
 ///
@@ -22,6 +25,12 @@ pub struct SherpaSttConfig {
     pub tokens: PathBuf,
     /// ONNX Runtime compute threads used by the recognizer.
     pub num_threads: i32,
+    /// Zero-valued audio decoded before each utterance to prime model context.
+    /// Set to [`Duration::ZERO`] to disable initial padding.
+    pub initial_context: Duration,
+    /// Zero-valued audio appended before finishing each utterance.
+    /// Set to [`Duration::ZERO`] to disable final padding.
+    pub final_context: Duration,
     /// Enable Sherpa model diagnostics.
     pub debug: bool,
 }
@@ -41,6 +50,8 @@ impl SherpaSttConfig {
             joiner: joiner.into(),
             tokens: tokens.into(),
             num_threads: 2,
+            initial_context: DEFAULT_INITIAL_CONTEXT,
+            final_context: DEFAULT_FINAL_CONTEXT,
             debug: false,
         }
     }
@@ -167,6 +178,14 @@ mod tests {
                 threads
             );
         }
+    }
+
+    #[test]
+    fn defaults_to_zipformer_boundary_context() {
+        let config = valid_config();
+
+        assert_eq!(config.initial_context, Duration::from_secs(1));
+        assert_eq!(config.final_context, Duration::from_millis(300));
     }
 
     #[test]
