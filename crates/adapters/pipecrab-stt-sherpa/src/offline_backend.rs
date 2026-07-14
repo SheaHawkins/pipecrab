@@ -2,12 +2,12 @@ use sherpa_onnx::OfflineRecognizer;
 
 use crate::{MoonshineV2Config, SherpaSttBuildError};
 
-/// The utterance-level recognition operation used by the offline Sherpa actor.
+/// The window-level recognition operation used by the offline Sherpa actor.
 ///
-/// Implementations receive one complete 16 kHz mono utterance. A mutable
+/// Implementations receive one bounded 16 kHz mono decode window. A mutable
 /// receiver makes exclusive actor ownership explicit.
 pub trait OfflineBackend: Send + 'static {
-    /// Decode one complete utterance and return its text, if available.
+    /// Decode one bounded waveform window and return its text, if available.
     fn transcribe(&mut self, samples: &[f32]) -> Option<String>;
 }
 

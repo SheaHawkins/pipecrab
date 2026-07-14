@@ -7,6 +7,9 @@ use sherpa_onnx::{OfflineRecognizerConfig, OnlineRecognizerConfig};
 pub(crate) const SAMPLE_RATE: u32 = 16_000;
 pub(crate) const DEFAULT_INITIAL_CONTEXT: Duration = Duration::from_secs(1);
 pub(crate) const DEFAULT_FINAL_CONTEXT: Duration = Duration::from_millis(300);
+pub(crate) const DEFAULT_MOONSHINE_CHUNK_DURATION: Duration = Duration::from_secs(8);
+pub(crate) const DEFAULT_MOONSHINE_CHUNK_OVERLAP: Duration = Duration::from_millis(500);
+pub(crate) const MAX_MOONSHINE_CHUNK_DURATION: Duration = Duration::from_secs(9);
 
 /// Configuration for [`OnlineSherpaStt`](crate::OnlineSherpaStt).
 ///
@@ -100,6 +103,13 @@ pub struct MoonshineV2Config {
     pub tokens: PathBuf,
     /// ONNX Runtime compute threads used by the recognizer.
     pub num_threads: i32,
+    /// Maximum audio duration passed to one native Moonshine decode.
+    ///
+    /// Longer PipeCrab utterances are divided into overlapping windows and
+    /// still produce one final transcript.
+    pub chunk_duration: Duration,
+    /// Audio context repeated between consecutive decode windows.
+    pub chunk_overlap: Duration,
     /// Enable Sherpa model diagnostics.
     pub debug: bool,
 }
@@ -117,6 +127,8 @@ impl MoonshineV2Config {
             merged_decoder: merged_decoder.into(),
             tokens: tokens.into(),
             num_threads: 2,
+            chunk_duration: DEFAULT_MOONSHINE_CHUNK_DURATION,
+            chunk_overlap: DEFAULT_MOONSHINE_CHUNK_OVERLAP,
             debug: false,
         }
     }
@@ -141,8 +153,55 @@ impl MoonshineV2Config {
         validate_file("encoder", &self.encoder)?;
         validate_file("merged_decoder", &self.merged_decoder)?;
         validate_file("tokens", &self.tokens)?;
-        validate_threads(self.num_threads)
+        validate_threads(self.num_threads)?;
+        self.chunk_samples().map(|_| ())
     }
+
+    pub(crate) fn chunk_samples(&self) -> Result<(usize, usize), SherpaSttBuildError> {
+        if self.chunk_duration > MAX_MOONSHINE_CHUNK_DURATION {
+            return Err(SherpaSttBuildError::InvalidConfig(format!(
+                "chunk_duration must be at most {} seconds for Moonshine v2, got {:?}",
+                MAX_MOONSHINE_CHUNK_DURATION.as_secs(),
+                self.chunk_duration
+            )));
+        }
+        if self.chunk_overlap >= self.chunk_duration {
+            return Err(SherpaSttBuildError::InvalidConfig(format!(
+                "chunk_overlap ({:?}) must be shorter than chunk_duration ({:?})",
+                self.chunk_overlap, self.chunk_duration
+            )));
+        }
+
+        let chunk = duration_sample_count("chunk_duration", self.chunk_duration)?;
+        if chunk == 0 {
+            return Err(SherpaSttBuildError::InvalidConfig(
+                "chunk_duration must contain at least one 16 kHz sample".into(),
+            ));
+        }
+        let overlap = duration_sample_count("chunk_overlap", self.chunk_overlap)?;
+        Ok((chunk, overlap))
+    }
+}
+
+pub(crate) fn duration_sample_count(
+    name: &str,
+    duration: Duration,
+) -> Result<usize, SherpaSttBuildError> {
+    const NANOS_PER_SECOND: u128 = 1_000_000_000;
+    let count = duration
+        .as_nanos()
+        .checked_mul(u128::from(SAMPLE_RATE))
+        .ok_or_else(|| {
+            SherpaSttBuildError::InvalidConfig(format!(
+                "{name} is too large to convert to 16 kHz samples"
+            ))
+        })?
+        / NANOS_PER_SECOND;
+    usize::try_from(count).map_err(|_| {
+        SherpaSttBuildError::InvalidConfig(format!(
+            "{name} is too large to convert to 16 kHz samples"
+        ))
+    })
 }
 
 fn validate_file(name: &str, path: &Path) -> Result<(), SherpaSttBuildError> {
@@ -303,6 +362,40 @@ mod tests {
         assert!(config.model_config.moonshine.cached_decoder.is_none());
         assert!(config.model_config.moonshine.encoder.is_some());
         assert!(config.model_config.moonshine.merged_decoder.is_some());
+    }
+
+    #[test]
+    fn defaults_to_safe_overlapping_moonshine_windows() {
+        let file = std::env::current_exe().expect("test executable has a path");
+        let config = MoonshineV2Config::new(&file, &file, &file);
+
+        assert_eq!(config.chunk_duration, Duration::from_secs(8));
+        assert_eq!(config.chunk_overlap, Duration::from_millis(500));
+        assert_eq!(config.chunk_samples().unwrap(), (128_000, 8_000));
+    }
+
+    #[test]
+    fn rejects_unsafe_moonshine_window_configuration() {
+        let file = std::env::current_exe().expect("test executable has a path");
+        let mut config = MoonshineV2Config::new(&file, &file, &file);
+        config.chunk_duration = Duration::from_millis(9_001);
+        assert!(
+            config
+                .chunk_samples()
+                .unwrap_err()
+                .to_string()
+                .contains("at most 9")
+        );
+
+        config.chunk_duration = Duration::from_secs(8);
+        config.chunk_overlap = Duration::from_secs(8);
+        assert!(
+            config
+                .chunk_samples()
+                .unwrap_err()
+                .to_string()
+                .contains("must be shorter")
+        );
     }
 
     #[test]

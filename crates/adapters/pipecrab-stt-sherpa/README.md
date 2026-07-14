@@ -46,17 +46,27 @@ Moonshine v2 is not available through Sherpa's `OnlineRecognizer`. Its model
 layout is an encoder, a merged decoder, and a token table:
 
 ```rust
+use std::time::Duration;
+
 use pipecrab_stt_sherpa::{MoonshineV2Config, OfflineSherpaStt};
 
 let mut config = MoonshineV2Config::new(encoder, merged_decoder, tokens);
 config.num_threads = 2;
+config.chunk_duration = Duration::from_secs(8);
+config.chunk_overlap = Duration::from_millis(500);
 let transcriber = OfflineSherpaStt::new(config)?;
 ```
 
 The offline adapter accepts the same 16 kHz mono format and uses CPU greedy
 search with two compute threads by default. It buffers audio on its actor
-thread between PipeCrab's utterance edges, performs one native decode at the
-end, and emits exactly one `Final` event. It cannot emit partial hypotheses.
+thread between PipeCrab's utterance edges, decodes model-safe overlapping
+windows at the end, and emits exactly one merged `Final` event. It cannot emit
+partial hypotheses.
+
+The default window is eight seconds with 500 ms overlap. Moonshine v2's current
+model files fail above roughly 9.25 seconds, so configuration rejects a
+`chunk_duration` above nine seconds. This model constraint does not shorten the
+PipeCrab utterance or create additional VAD edges.
 
 The live [stt-sherpa-moonshine example](../../../examples/stt-sherpa-moonshine)
 documents the official Moonshine v2 model package, microphone usage, and its
@@ -131,9 +141,9 @@ pub trait OfflineBackend: Send + 'static {
 }
 ```
 
-Its production implementation creates a fresh `OfflineStream`, accepts the
-complete waveform, calls `OfflineRecognizer::decode` once, and reads the final
-result. The recognizer remains loaded across utterances.
+Its production implementation creates a fresh `OfflineStream`, accepts one
+bounded waveform window, calls `OfflineRecognizer::decode`, and reads that
+window's result. The recognizer remains loaded across windows and utterances.
 
 ## Utterance request flow
 
@@ -207,10 +217,11 @@ detection is disabled, and the worker never calls `is_endpoint()`.
 
 `OfflineSherpaStt::begin_utterance()` creates an empty actor-owned sample
 buffer. Each `feed()` appends its chunk and returns no events.
-`end_utterance()` moves the completed buffer into the offline backend and
-returns one `SttEvent::Final`, including an empty final when Sherpa recognizes
+`end_utterance()` divides the completed buffer into bounded, overlapping
+windows, decodes them sequentially, merges repeated words from the overlap, and
+returns one `SttEvent::Final`. It returns an empty final when Sherpa recognizes
 no text. There is no extra recognizer padding; VAD pre-roll and trailing
-silence are already part of the bounded waveform.
+silence are already part of the utterance waveform.
 
 ## Cancellation and interruption
 
@@ -241,10 +252,10 @@ utterance.
 Sherpa does not expose cancellation inside one already-running `decode()` call.
 For `OnlineSherpaStt`, that native call completes before the worker checks the
 generation again; small chunks and one decode step per check bound the delay.
-For `OfflineSherpaStt`, the single utterance-level decode must finish before the
-actor can observe cancellation, but both the actor and awaiting caller discard
-its stale result. A one- or two-thread inference pool limits contention, not
-the duration of an already-running offline call.
+For `OfflineSherpaStt`, one window decode must finish before the actor can
+observe cancellation. It checks again between every window, and both the actor
+and awaiting caller discard stale results. A one- or two-thread inference pool
+limits contention, not the duration of an already-running offline call.
 
 ## Composition with Sherpa VAD
 
@@ -336,6 +347,35 @@ cargo test -p pipecrab-stt-sherpa \
 
 `--nocapture` prints the recognized final text.
 
+### Direct Moonshine v2 STT
+
+The short test checks a single Moonshine decode. The long test constructs a
+13-second utterance from the committed WAV, exercises internal windowing and
+transcript merging, and requires one nonempty final result:
+
+```console
+ROOT="$(pwd)"
+MODEL="$ROOT/models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27"
+
+export SHERPA_MOONSHINE_ENCODER="$MODEL/encoder_model.ort"
+export SHERPA_MOONSHINE_MERGED_DECODER="$MODEL/decoder_model_merged.ort"
+export SHERPA_MOONSHINE_TOKENS="$MODEL/tokens.txt"
+
+cargo test -p pipecrab-stt-sherpa \
+  --test offline_transcriber \
+  moonshine_v2_transcribes_a_wave_file \
+  -- --ignored --nocapture
+
+cargo test -p pipecrab-stt-sherpa \
+  --test offline_transcriber \
+  moonshine_v2_chunks_a_long_wave_file \
+  -- --ignored --nocapture
+```
+
+Point `MODEL` at the tiny model directory to run the same tests against
+Moonshine v2 tiny. Both tests remain ignored in ordinary CI because the ONNX
+model artifacts are not committed.
+
 ### VAD-gated streaming STT
 
 This test exercises the same topology as the microphone example:
@@ -390,23 +430,6 @@ SHERPA_STT_TOKENS="$MODEL/tokens.txt" \
 cargo test -p stt-sherpa \
   --test model_pipeline \
   transcribes_microphone_resampling_without_vad \
-  -- --ignored --nocapture
-```
-
-### Direct Moonshine v2 STT
-
-This test feeds the committed 16 kHz WAV through `OfflineSherpaStt`:
-
-```console
-ROOT="$(pwd)"
-MODEL="$ROOT/models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27"
-
-SHERPA_MOONSHINE_ENCODER="$MODEL/encoder_model.ort" \
-SHERPA_MOONSHINE_MERGED_DECODER="$MODEL/decoder_model_merged.ort" \
-SHERPA_MOONSHINE_TOKENS="$MODEL/tokens.txt" \
-cargo test -p pipecrab-stt-sherpa \
-  --test offline_transcriber \
-  moonshine_v2_transcribes_a_wave_file \
   -- --ignored --nocapture
 ```
 

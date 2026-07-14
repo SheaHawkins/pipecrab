@@ -19,15 +19,40 @@ one final transcript per utterance
 
 Moonshine v2 is exposed by Sherpa's `OfflineRecognizer`, not its
 `OnlineRecognizer`. Sherpa's Moonshine v2 “simulated streaming” applications
-run an offline recognizer over bounded audio windows. PipeCrab instead treats
-its VAD edges as the utterance authority: audio is accumulated between
-`SpeechStarted` and `SpeechStopped`, then decoded once. The example therefore
-prints final transcripts but no partial hypotheses.
+run an offline recognizer over bounded audio windows. PipeCrab treats its VAD
+edges as the utterance authority: audio is accumulated between
+`SpeechStarted` and `SpeechStopped`, then `OfflineSherpaStt` divides it into
+model-safe windows internally. The example therefore prints one merged final
+transcript per VAD utterance but no partial hypotheses.
 
 The VAD profile matches the streaming Sherpa example: a 0.35 threshold, 100 ms
 minimum speech, one second of pre-roll, 500 ms trailing silence, and a
 30-second utterance ceiling. The pre-roll preserves audio that arrived before
 the VAD start decision.
+
+### Long utterances
+
+The Moonshine v2 model files fail when one native decode window exceeds roughly
+9.25 seconds. `OfflineSherpaStt` keeps that implementation limit internal: it
+uses eight-second windows with 500 ms overlap by default, decodes every window
+when the VAD utterance ends, removes repeated overlap text, and emits one final
+transcript. Reaching a model window does not create extra `SpeechStopped` or
+`SpeechStarted` frames.
+
+Applications can tune the window policy without changing VAD boundaries:
+
+```rust
+use std::time::Duration;
+
+use pipecrab_stt_sherpa::MoonshineV2Config;
+
+let mut config = MoonshineV2Config::new(encoder, merged_decoder, tokens);
+config.chunk_duration = Duration::from_secs(8);
+config.chunk_overlap = Duration::from_millis(500);
+```
+
+`chunk_duration` may not exceed nine seconds. The conservative maximum leaves
+room below the failing model shape while supporting different overlap choices.
 
 ## Requirements
 
