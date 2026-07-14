@@ -951,6 +951,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pipecrab-stt-sherpa"
+version = "0.3.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "pipecrab-core",
+ "pipecrab-stt",
+ "sherpa-onnx",
+]
+
+[[package]]
 name = "pipecrab-test-util"
 version = "0.3.0"
 

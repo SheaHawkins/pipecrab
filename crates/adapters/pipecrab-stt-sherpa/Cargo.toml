@@ -1,0 +1,21 @@
+[package]
+name = "pipecrab-stt-sherpa"
+description = "Sherpa ONNX streaming speech-to-text adapter for pipecrab."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.pipecrab]
+layer = "adapter"
+
+[dependencies]
+pipecrab-core = { workspace = true }
+pipecrab-stt  = { workspace = true }
+sherpa-onnx   = { workspace = true }
+futures       = "0.3"
+async-trait   = "0.1"
+
+[dev-dependencies]
+futures = "0.3"
