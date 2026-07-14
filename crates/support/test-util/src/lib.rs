@@ -9,10 +9,12 @@ pub struct Counting;
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
         ALLOCS.with(|c| c.set(c.get() + 1));
-        System.alloc(l)
+        // SAFETY: The caller provides the allocation contract required by `GlobalAlloc`.
+        unsafe { System.alloc(l) }
     }
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
-        System.dealloc(p, l)
+        // SAFETY: The caller provides the deallocation contract required by `GlobalAlloc`.
+        unsafe { System.dealloc(p, l) }
     }
 }
 #[global_allocator]
