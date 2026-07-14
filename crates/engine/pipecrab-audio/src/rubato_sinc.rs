@@ -125,8 +125,7 @@ impl RubatoSincResampler {
                 }
             } else {
                 for frame in 0..output_frames {
-                    converted
-                        .extend(std::iter::repeat(state.output[0][frame]).take(output_channels));
+                    converted.extend(std::iter::repeat_n(state.output[0][frame], output_channels));
                 }
             }
         }
@@ -233,7 +232,7 @@ fn remix_channels(samples: &[f32], input_channels: u16, output_channels: u16) ->
             .copied()
             .sum::<f32>()
             * scale;
-        output.extend(std::iter::repeat(mono).take(output_channels));
+        output.extend(std::iter::repeat_n(mono, output_channels));
     }
     output
 }
