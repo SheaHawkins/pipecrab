@@ -8,6 +8,34 @@ We differ from pipecat in a few ways:
 1. We are explicit about whether Stages `forward` or `drop` frames. It's enforced by the compiler so you can't [accidentally forget to push frames](https://docs.pipecat.ai/pipecat/fundamentals/custom-frame-processor#example-metricsframe-logger).
 1. Pipecat treats InputAudio as a SystemFrame. That's a wart here. There's a system lane for `Interrupt` and Audio rides the data lane with flush resistance. When an interrupt comes through, it flushes non-survivor frames (i.e., flushes everything other than Audio).
 
+## Writing a stage
+
+A stage implements `Processor`. Both `decide_data` and `decide_system` return a `Decision` — which answers two questions at once: *does the incoming frame keep moving downstream?* and *what should this stage emit?*
+
+| You return | Input frame | Emits |
+|---|---|---|
+| `Decision::forward()` | forwarded downstream | nothing |
+| `Decision::drop()` | consumed | nothing |
+| `Decision::drop().emit(x)` | consumed | `x` |
+| `Decision::forward().emit(x)` | forwarded downstream | `x` |
+
+**Transform** (e.g. STT, redactor): `drop().emit(output)` — the input never reaches downstream, only the replacement does.
+
+**Tap** (e.g. VAD, logger): `forward().emit(derived)` — the original frame passes through and is followed by the derived one.
+
+**Pass-through**: don't override `decide_data` / `decide_system` — the default is `Decision::forward()`, so every frame on an ignored lane flows on unchanged.
+
+```rust
+fn decide_data(&mut self, frame: &DataFrame) -> Decision<Self::Effect> {
+    match frame {
+        DataFrame::Audio(a) => Decision::drop().emit(Effect::Transcript(self.stt(a))),
+        _ => Decision::forward(),
+    }
+}
+```
+
+The synchronous `decide_*` half owns state mutation; the async `perform` half does the emitting I/O but cannot mutate state (see "Off-thread work"). To compose stages into a runnable pipeline, see [Writing a pipeline](./README.md#writing-a-pipeline).
+
 ## Crates
 
 Crates are grouped by role under `crates/`, and dependencies point downward
