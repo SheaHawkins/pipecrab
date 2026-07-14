@@ -35,5 +35,7 @@ pipecrab-lm         = { path = "crates/engine/pipecrab-lm", version = "0.3.0" }
 pipecrab-stt        = { path = "crates/engine/pipecrab-stt", version = "0.3.0" }
 pipecrab-tts        = { path = "crates/engine/pipecrab-tts", version = "0.3.0" }
 pipecrab-vad        = { path = "crates/engine/pipecrab-vad", version = "0.3.0" }
+pipecrab-vad-sherpa = { path = "crates/adapters/pipecrab-vad-sherpa", version = "0.3.0" }
 # Dev-only; `publish = false`, so it never needs a version.
 pipecrab-test-util  = { path = "crates/support/test-util" }
+sherpa-onnx         = "=1.13.4"
