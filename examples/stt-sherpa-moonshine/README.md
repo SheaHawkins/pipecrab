@@ -42,16 +42,22 @@ the VAD start decision.
 From the repository root:
 
 ```console
+mkdir -p models
+
 curl -L \
   https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx \
-  -o silero_vad.onnx
+  -o models/silero_vad.onnx
 
 curl -L \
   https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2 \
-  -o sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2
+  -o models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2
 
-tar xvf sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2
+tar xvf models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2 \
+  -C models
 ```
+
+The repository ignores the `models/` directory, so downloaded model artifacts
+do not appear as source changes.
 
 Moonshine v2 packages contain `encoder_model.ort`,
 `decoder_model_merged.ort`, and `tokens.txt`. They do not use the four-model
@@ -60,10 +66,10 @@ Moonshine v1 layout.
 ## Run
 
 ```console
-MODEL=./sherpa-onnx-moonshine-base-en-quantized-2026-02-27
+MODEL=./models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27
 
 cargo run -p stt-sherpa-moonshine -- \
-  --vad-model ./silero_vad.onnx \
+  --vad-model ./models/silero_vad.onnx \
   --encoder "$MODEL/encoder_model.ort" \
   --merged-decoder "$MODEL/decoder_model_merged.ort" \
   --tokens "$MODEL/tokens.txt"
@@ -82,20 +88,23 @@ devices.
 Download and extract it from the repository root:
 
 ```console
+mkdir -p models
+
 curl -L \
   https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2 \
-  -o sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2
+  -o models/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2
 
-tar xvf sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2
+tar xvf models/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2 \
+  -C models
 ```
 
 Run it with the same example and flags:
 
 ```console
-MODEL=./sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27
+MODEL=./models/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27
 
 cargo run -p stt-sherpa-moonshine -- \
-  --vad-model ./silero_vad.onnx \
+  --vad-model ./models/silero_vad.onnx \
   --encoder "$MODEL/encoder_model.ort" \
   --merged-decoder "$MODEL/decoder_model_merged.ort" \
   --tokens "$MODEL/tokens.txt"
@@ -123,9 +132,9 @@ VAD, and Moonshine v2 adapter. The WAV is under `test-resources/audio`; tests do
 not depend on files outside the repository other than the downloaded models.
 
 ```console
-MODEL=./sherpa-onnx-moonshine-base-en-quantized-2026-02-27
+MODEL=./models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27
 
-SHERPA_VAD_MODEL=./silero_vad.onnx \
+SHERPA_VAD_MODEL=./models/silero_vad.onnx \
 SHERPA_MOONSHINE_ENCODER="$MODEL/encoder_model.ort" \
 SHERPA_MOONSHINE_MERGED_DECODER="$MODEL/decoder_model_merged.ort" \
 SHERPA_MOONSHINE_TOKENS="$MODEL/tokens.txt" \

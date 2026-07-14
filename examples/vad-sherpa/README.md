@@ -16,23 +16,28 @@ This example captures the default microphone with cpal, resamples its audio to
 From the repository root:
 
 ```console
+mkdir -p models
+
 curl -L \
   https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx \
-  -o silero_vad.onnx
+  -o models/silero_vad.onnx
 ```
+
+The repository ignores the `models/` directory, so downloaded model artifacts
+do not appear as source changes.
 
 ## Run
 
 Listen until Ctrl-C:
 
 ```console
-cargo run -p vad-sherpa -- --model ./silero_vad.onnx
+cargo run -p vad-sherpa -- --model ./models/silero_vad.onnx
 ```
 
 Use `--seconds` for a bounded run:
 
 ```console
-cargo run -p vad-sherpa -- --model ./silero_vad.onnx --seconds 10
+cargo run -p vad-sherpa -- --model ./models/silero_vad.onnx --seconds 10
 ```
 
 Speak, pause for at least a quarter second, and speak again. Expected output

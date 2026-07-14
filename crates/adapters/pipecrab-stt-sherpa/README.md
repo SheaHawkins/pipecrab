@@ -322,7 +322,7 @@ requires the final transcript to retain its opening words:
 
 ```console
 ROOT="$(pwd)"
-MODEL="$ROOT/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
+MODEL="$ROOT/models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
 
 SHERPA_STT_ENCODER="$MODEL/encoder-epoch-99-avg-1.int8.onnx" \
 SHERPA_STT_DECODER="$MODEL/decoder-epoch-99-avg-1.onnx" \
@@ -349,9 +349,9 @@ final transcript to retain the fixture's opening words:
 
 ```console
 ROOT="$(pwd)"
-MODEL="$ROOT/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
+MODEL="$ROOT/models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
 
-SHERPA_VAD_MODEL="$ROOT/silero_vad.onnx" \
+SHERPA_VAD_MODEL="$ROOT/models/silero_vad.onnx" \
 SHERPA_STT_ENCODER="$MODEL/encoder-epoch-99-avg-1.int8.onnx" \
 SHERPA_STT_DECODER="$MODEL/decoder-epoch-99-avg-1.onnx" \
 SHERPA_STT_JOINER="$MODEL/joiner-epoch-99-avg-1.int8.onnx" \
@@ -365,7 +365,7 @@ cargo test -p stt-sherpa \
 The short fixture contains about 400 milliseconds of speech:
 
 ```console
-SHERPA_VAD_MODEL="$ROOT/silero_vad.onnx" \
+SHERPA_VAD_MODEL="$ROOT/models/silero_vad.onnx" \
 SHERPA_STT_ENCODER="$MODEL/encoder-epoch-99-avg-1.int8.onnx" \
 SHERPA_STT_DECODER="$MODEL/decoder-epoch-99-avg-1.onnx" \
 SHERPA_STT_JOINER="$MODEL/joiner-epoch-99-avg-1.int8.onnx" \
@@ -381,7 +381,7 @@ directly into `SherpaStt`:
 
 ```console
 ROOT="$(pwd)"
-MODEL="$ROOT/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
+MODEL="$ROOT/models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
 
 SHERPA_STT_ENCODER="$MODEL/encoder-epoch-99-avg-1.int8.onnx" \
 SHERPA_STT_DECODER="$MODEL/decoder-epoch-99-avg-1.onnx" \
@@ -399,7 +399,7 @@ This test feeds the committed 16 kHz WAV through `OfflineSherpaStt`:
 
 ```console
 ROOT="$(pwd)"
-MODEL="$ROOT/sherpa-onnx-moonshine-base-en-quantized-2026-02-27"
+MODEL="$ROOT/models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27"
 
 SHERPA_MOONSHINE_ENCODER="$MODEL/encoder_model.ort" \
 SHERPA_MOONSHINE_MERGED_DECODER="$MODEL/decoder_model_merged.ort" \
@@ -416,9 +416,9 @@ This test exercises the microphone topology with a committed 48 kHz WAV:
 
 ```console
 ROOT="$(pwd)"
-MODEL="$ROOT/sherpa-onnx-moonshine-base-en-quantized-2026-02-27"
+MODEL="$ROOT/models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27"
 
-SHERPA_VAD_MODEL="$ROOT/silero_vad.onnx" \
+SHERPA_VAD_MODEL="$ROOT/models/silero_vad.onnx" \
 SHERPA_MOONSHINE_ENCODER="$MODEL/encoder_model.ort" \
 SHERPA_MOONSHINE_MERGED_DECODER="$MODEL/decoder_model_merged.ort" \
 SHERPA_MOONSHINE_TOKENS="$MODEL/tokens.txt" \

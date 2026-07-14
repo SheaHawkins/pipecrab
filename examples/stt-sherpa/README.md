@@ -44,16 +44,22 @@ From the repository root, download Silero VAD and Sherpa's small English
 streaming Zipformer:
 
 ```console
+mkdir -p models
+
 curl -L \
   https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx \
-  -o silero_vad.onnx
+  -o models/silero_vad.onnx
 
 curl -L \
   https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2 \
-  -o sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2
+  -o models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2
 
-tar xvf sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2
+tar xvf models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2 \
+  -C models
 ```
+
+The repository ignores the `models/` directory, so downloaded model artifacts
+do not appear as source changes.
 
 The example below uses the int8 encoder and joiner with the floating-point
 decoder.
@@ -61,10 +67,10 @@ decoder.
 ## Run
 
 ```console
-MODEL=./sherpa-onnx-streaming-zipformer-en-20M-2023-02-17
+MODEL=./models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17
 
 cargo run -p stt-sherpa -- \
-  --vad-model ./silero_vad.onnx \
+  --vad-model ./models/silero_vad.onnx \
   --encoder "$MODEL/encoder-epoch-99-avg-1.int8.onnx" \
   --decoder "$MODEL/decoder-epoch-99-avg-1.onnx" \
   --joiner "$MODEL/joiner-epoch-99-avg-1.int8.onnx" \
@@ -74,10 +80,10 @@ cargo run -p stt-sherpa -- \
 Use `--seconds` for a bounded run or `--stt-threads 1` for a low-power profile:
 
 ```console
-MODEL=./sherpa-onnx-streaming-zipformer-en-20M-2023-02-17
+MODEL=./models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17
 
 cargo run -p stt-sherpa -- \
-  --vad-model ./silero_vad.onnx \
+  --vad-model ./models/silero_vad.onnx \
   --encoder "$MODEL/encoder-epoch-99-avg-1.int8.onnx" \
   --decoder "$MODEL/decoder-epoch-99-avg-1.onnx" \
   --joiner "$MODEL/joiner-epoch-99-avg-1.int8.onnx" \
