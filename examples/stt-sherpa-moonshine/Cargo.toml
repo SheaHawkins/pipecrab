@@ -1,0 +1,24 @@
+[package]
+name = "stt-sherpa-moonshine"
+description = "Transcribe live microphone speech with Sherpa VAD and Moonshine v2."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.pipecrab]
+layer = "app"
+
+[dependencies]
+pipecrab            = { workspace = true }
+pipecrab-audio      = { workspace = true }
+pipecrab-audio-cpal = { workspace = true }
+pipecrab-stt        = { workspace = true }
+pipecrab-stt-sherpa = { workspace = true }
+pipecrab-vad        = { workspace = true }
+pipecrab-vad-sherpa = { workspace = true }
+futures             = "0.3"
+
+[dev-dependencies]
+sherpa-onnx = { workspace = true }
