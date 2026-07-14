@@ -15,6 +15,8 @@ const INPUT_FORMAT: AudioFormat = AudioFormat {
     sample_rate: SAMPLE_RATE,
     channels: 1,
 };
+const FINAL_PADDING_SAMPLES: usize = SAMPLE_RATE as usize * 3 / 10;
+static FINAL_PADDING: [f32; FINAL_PADDING_SAMPLES] = [0.0; FINAL_PADDING_SAMPLES];
 
 type EventsResult = Result<Vec<SttEvent>, SttError>;
 type BeginReply = oneshot::Sender<(u64, Result<(), SttError>)>;
@@ -325,6 +327,11 @@ impl<B: Backend> SttWorker<B> {
                 "SherpaStt::end_utterance called without an active utterance".into(),
             ));
         };
+
+        self.recognizer.accept_waveform(&mut stream, &FINAL_PADDING);
+        if !self.local_stream_is_current(command_generation, generation) {
+            return Ok(Vec::new());
+        }
 
         self.recognizer.input_finished(&mut stream);
         if !self.local_stream_is_current(command_generation, generation) {
