@@ -1,12 +1,12 @@
 use sherpa_onnx::{OnlineRecognizer, OnlineStream};
 
-use crate::{SherpaSttBuildError, SherpaSttConfig};
+use crate::{OnlineSherpaSttConfig, SherpaSttBuildError};
 
 /// The serialized recognizer operations used by the Sherpa STT actor.
 ///
 /// A mutable receiver makes exclusive actor ownership explicit. The associated
 /// stream is created, used, and dropped on that same actor thread.
-pub trait Backend: Send + 'static {
+pub trait OnlineBackend: Send + 'static {
     /// Per-utterance streaming decoder state.
     type Stream: 'static;
 
@@ -29,12 +29,12 @@ pub trait Backend: Send + 'static {
     fn get_result(&mut self, stream: &mut Self::Stream) -> Option<String>;
 }
 
-pub(crate) struct SherpaBackend {
+pub(crate) struct OnlineSherpaBackend {
     recognizer: OnlineRecognizer,
 }
 
-impl SherpaBackend {
-    pub(crate) fn create(config: SherpaSttConfig) -> Result<Self, SherpaSttBuildError> {
+impl OnlineSherpaBackend {
+    pub(crate) fn create(config: OnlineSherpaSttConfig) -> Result<Self, SherpaSttBuildError> {
         let config = config.into_sherpa()?;
         let recognizer = OnlineRecognizer::create(&config).ok_or_else(|| {
             SherpaSttBuildError::CreateRecognizer(
@@ -45,7 +45,7 @@ impl SherpaBackend {
     }
 }
 
-impl Backend for SherpaBackend {
+impl OnlineBackend for OnlineSherpaBackend {
     type Stream = OnlineStream;
 
     fn create_stream(&mut self) -> Self::Stream {

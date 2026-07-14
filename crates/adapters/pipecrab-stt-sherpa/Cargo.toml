@@ -1,6 +1,6 @@
 [package]
 name = "pipecrab-stt-sherpa"
-description = "Sherpa ONNX streaming speech-to-text adapter for pipecrab."
+description = "Sherpa ONNX online and offline speech-to-text adapters for pipecrab."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
