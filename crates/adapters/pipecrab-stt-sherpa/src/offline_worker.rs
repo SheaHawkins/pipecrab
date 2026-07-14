@@ -310,29 +310,21 @@ impl<B: OfflineBackend> SttWorker<B> {
         };
 
         let mut text = String::new();
-        if samples.is_empty() {
-            let next = self.recognizer.transcribe(&samples).unwrap_or_default();
+        let mut start = 0;
+        loop {
+            let end = samples.len().min(start + self.chunking.samples);
+            let next = self
+                .recognizer
+                .transcribe(&samples[start..end])
+                .unwrap_or_default();
             if !self.command_is_current(command_generation, generation) {
                 return Ok(Vec::new());
             }
             merge_transcript(&mut text, &next);
-        } else {
-            let mut start = 0;
-            loop {
-                let end = samples.len().min(start + self.chunking.samples);
-                let next = self
-                    .recognizer
-                    .transcribe(&samples[start..end])
-                    .unwrap_or_default();
-                if !self.command_is_current(command_generation, generation) {
-                    return Ok(Vec::new());
-                }
-                merge_transcript(&mut text, &next);
-                if end == samples.len() {
-                    break;
-                }
-                start = end - self.chunking.overlap;
+            if end == samples.len() {
+                break;
             }
+            start = end - self.chunking.overlap;
         }
         Ok(vec![SttEvent::Final(text.into())])
     }
