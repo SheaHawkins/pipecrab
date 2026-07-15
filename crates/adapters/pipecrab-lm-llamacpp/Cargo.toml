@@ -1,0 +1,27 @@
+[package]
+name = "pipecrab-lm-llamacpp"
+description = "Native llama.cpp language-model adapter for Pipecrab."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["llm", "llama-cpp", "gguf", "mobile"]
+
+[package.metadata.pipecrab]
+layer = "adapter"
+
+[dependencies]
+async-trait = "0.1"
+encoding_rs = "0.8"
+futures = "0.3"
+llama-cpp-2 = { workspace = true, features = ["common"] }
+pipecrab-lm = { workspace = true }
+tempfile = "3"
+thiserror = "2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+llama-cpp-2 = { workspace = true, features = ["android-shared-stdcxx"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+llama-cpp-2 = { workspace = true, features = ["metal"] }

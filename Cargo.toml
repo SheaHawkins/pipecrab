@@ -32,6 +32,7 @@ pipecrab-runtime    = { path = "crates/engine/pipecrab-runtime", version = "0.3.
 pipecrab-audio      = { path = "crates/engine/pipecrab-audio", version = "0.3.0" }
 pipecrab-audio-cpal = { path = "crates/adapters/pipecrab-audio-cpal", version = "0.3.0" }
 pipecrab-lm         = { path = "crates/engine/pipecrab-lm", version = "0.3.0" }
+pipecrab-lm-llamacpp = { path = "crates/adapters/pipecrab-lm-llamacpp", version = "0.3.0" }
 pipecrab-stt        = { path = "crates/engine/pipecrab-stt", version = "0.3.0" }
 pipecrab-stt-sherpa = { path = "crates/adapters/pipecrab-stt-sherpa", version = "0.3.0" }
 pipecrab-tts        = { path = "crates/engine/pipecrab-tts", version = "0.3.0" }
@@ -39,4 +40,5 @@ pipecrab-vad        = { path = "crates/engine/pipecrab-vad", version = "0.3.0" }
 pipecrab-vad-sherpa = { path = "crates/adapters/pipecrab-vad-sherpa", version = "0.3.0" }
 # Dev-only; `publish = false`, so it never needs a version.
 pipecrab-test-util  = { path = "crates/support/test-util" }
+llama-cpp-2         = { version = "=0.1.151", default-features = false }
 sherpa-onnx         = { version = "=1.13.4", default-features = false }
