@@ -13,9 +13,14 @@ layer = "adapter"
 [dependencies]
 pipecrab-core = { workspace = true }
 pipecrab-stt  = { workspace = true }
-sherpa-onnx   = { workspace = true }
 futures       = "0.3"
 async-trait   = "0.1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+sherpa-onnx = { workspace = true, features = ["shared"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+sherpa-onnx = { workspace = true, features = ["static"] }
 
 [dev-dependencies]
 futures = "0.3"
