@@ -54,6 +54,11 @@ which is what lets a later barge-in stop a reply within one token — see the
 
 The first build compiles llama.cpp from source, which takes a few minutes.
 
+The example is verified on macOS. On x86-64 Linux the combined static-sherpa
+and llama.cpp link currently aborts during C++ static initialization before
+`main` runs (each library works alone; only the combined binary fails), so the
+example is excluded from CI's test run.
+
 ## Download the models
 
 From the repository root, download Silero VAD, the quantized Moonshine v2

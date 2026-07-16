@@ -36,7 +36,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # cpal's Linux (ALSA) backend needs the libasound headers to build.
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - run: cargo test --workspace
+      # lm-llamacpp links sherpa's static libraries and llama.cpp into one
+      # binary; on x86-64 Linux that combination aborts in C++ static
+      # initialization (std::bad_alloc) before the harness runs, even though
+      # its only test is model-backed and ignored in CI. Each library links
+      # fine alone — only the combined binary fails. Skip running it here;
+      # the clippy job still builds it.
+      - run: cargo test --workspace --exclude lm-llamacpp
       # Portability gate. The sans-IO core, the runtime-agnostic async layer, and
       # every platform-neutral trait crate must compile for the browser — no
       # host-only dependency may creep in. Concrete backends are exempt: they are
