@@ -156,10 +156,14 @@ The integration test drives a committed 48 kHz WAV through the real resampler,
 VAD, and Moonshine v2 adapter. The WAV is under `test-resources/audio`; tests do
 not depend on files outside the repository other than the downloaded models.
 
-```console
-MODEL=./models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27
+Cargo runs test binaries with the package directory as their working
+directory, so pass the model paths absolute (here via `$PWD`, from the
+repository root):
 
-SHERPA_VAD_MODEL=./models/silero_vad.onnx \
+```console
+MODEL="$PWD/models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27"
+
+SHERPA_VAD_MODEL="$PWD/models/silero_vad.onnx" \
 SHERPA_MOONSHINE_ENCODER="$MODEL/encoder_model.ort" \
 SHERPA_MOONSHINE_MERGED_DECODER="$MODEL/decoder_model_merged.ort" \
 SHERPA_MOONSHINE_TOKENS="$MODEL/tokens.txt" \

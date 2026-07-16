@@ -1,0 +1,27 @@
+[package]
+name = "lm-llamacpp"
+description = "Talk to a local llama.cpp chat model: Sherpa VAD, streaming STT, and a streamed reply."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.pipecrab]
+layer = "app"
+
+[dependencies]
+pipecrab             = { workspace = true }
+pipecrab-audio       = { workspace = true }
+pipecrab-audio-cpal  = { workspace = true }
+pipecrab-lm          = { workspace = true }
+pipecrab-lm-llamacpp = { workspace = true }
+pipecrab-stt         = { workspace = true }
+pipecrab-stt-sherpa  = { workspace = true }
+pipecrab-vad         = { workspace = true }
+pipecrab-vad-sherpa  = { workspace = true }
+futures              = "0.3"
+async-trait          = "0.1"
+
+[dev-dependencies]
+sherpa-onnx = { workspace = true }
