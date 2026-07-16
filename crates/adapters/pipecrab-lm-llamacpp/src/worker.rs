@@ -275,9 +275,19 @@ fn generate(
     let prompt = model
         .apply_chat_template(template, &messages, true)
         .map_err(|error| error.to_string())?;
-    let prompt_tokens = model
+    // `AddBos::Always` maps to llama.cpp's `add_special`, which adds BOS only
+    // when the vocab metadata asks for one — so BOS-less chat vocabs are
+    // already handled. The residual case is a vocab that wants BOS *and* a
+    // template whose rendering also begins with it (Llama-3-style
+    // `<|begin_of_text|>`): that yields a doubled leading BOS, which
+    // llama.cpp's own examples detect the same way and warn about. Collapse it.
+    let mut prompt_tokens = model
         .str_to_token(&prompt, AddBos::Always)
         .map_err(|error| error.to_string())?;
+    let bos = model.token_bos();
+    if prompt_tokens.len() >= 2 && prompt_tokens[0] == bos && prompt_tokens[1] == bos {
+        prompt_tokens.remove(0);
+    }
     if prompt_tokens.is_empty() {
         return Err("chat template produced an empty prompt".into());
     }
@@ -292,13 +302,43 @@ fn generate(
     let requested = params.max_tokens.unwrap_or(config.default_max_tokens.get()) as usize;
     let max_tokens = requested.min(context_size - prompt_tokens.len());
 
-    context.clear_kv_cache();
-    processed_tokens.clear();
+    // Reuse the KV cache across turns: the conversation is append-mostly, so
+    // the previous prompt plus its reply is usually a prefix of this prompt.
+    // Keep the shared prefix, drop the cache past it, and decode only the new
+    // suffix — per-turn prefill cost is then proportional to the new tokens,
+    // not the whole conversation. At least the final prompt token is always
+    // re-decoded so sampling has fresh logits for it.
+    let shared = processed_tokens
+        .iter()
+        .zip(&prompt_tokens)
+        .take_while(|(cached, incoming)| cached == incoming)
+        .count()
+        .min(prompt_tokens.len() - 1);
+    let shared = match context.clear_kv_cache_seq(
+        Some(0),
+        Some(u32::try_from(shared).map_err(|error| error.to_string())?),
+        None,
+    ) {
+        Ok(true) => shared,
+        // Partial removal is unsupported (e.g. non-transformer memory): fall
+        // back to a full re-prefill.
+        Ok(false) | Err(_) => {
+            context.clear_kv_cache();
+            0
+        }
+    };
+    processed_tokens.truncate(shared);
+
     let batch_capacity = config.batch_size.get() as usize;
     let mut batch = LlamaBatch::new(batch_capacity, 1);
-    for (chunk_index, chunk) in prompt_tokens.chunks(batch_capacity).enumerate() {
+    for (chunk_index, chunk) in prompt_tokens[shared..].chunks(batch_capacity).enumerate() {
+        // A barge-in can land mid-prefill; checking between decode chunks
+        // keeps cancellation bounded by one decode step here too.
+        if generation_epoch.load(Ordering::Acquire) != epoch {
+            return Ok(());
+        }
         batch.clear();
-        let base = chunk_index * batch_capacity;
+        let base = shared + chunk_index * batch_capacity;
         for (index, token) in chunk.iter().enumerate() {
             let absolute = base + index;
             let logits = absolute + 1 == prompt_tokens.len();
@@ -314,8 +354,10 @@ fn generate(
         context
             .decode(&mut batch)
             .map_err(|error| error.to_string())?;
+        // Record per chunk, so an early return above leaves this vector
+        // agreeing with what the KV cache actually holds.
+        processed_tokens.extend_from_slice(chunk);
     }
-    processed_tokens.extend_from_slice(&prompt_tokens);
 
     let temperature = params.temperature.unwrap_or(config.default_temperature);
     if !temperature.is_finite() || temperature < 0.0 {
