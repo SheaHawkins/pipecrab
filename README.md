@@ -5,7 +5,19 @@
 ██      ██ ██      ██      ██      ██   ██ ██   ██ ██   ██ 
 ██      ██ ██      ███████  ██████ ██   ██ ██   ██ ██████                                     
 ```
-Pipecrab is a thoughtful grounds-up rewrite of `pipecat` but in Rust. It aims to be for edge devices what pipecat isn't: A voice agent pipeline for low-latency local inference.
+Pipecrab is a thoughtful grounds-up rewrite of `pipecat` but in Rust. It is a cross-platform voice agent pipeline for low-latency local inference.
+
+## Local Inference Runs On
+
+| | VAD | STT | LM | TTS |
+|---|---|---|---|---|
+| macOS | ✅ | ✅ | ✅ | ❌ |
+| iOS | ✅ | ✅ | ✅ | ❌ |
+| Android | ✅ | ✅ | ✅ | ❌ |
+| Linux | ❓ | ❓ | ❓ | ❌ |
+| Windows | ❓ | ❓ | ❓ | ❌ |
+
+❓ = expected to work, not yet verified. ❌ = not yet implemented.
 
 ## Running the examples
 
