@@ -12,8 +12,8 @@ Pipecrab is a thoughtful grounds-up rewrite of `pipecat` but in Rust. It is a cr
 | | VAD | STT | LM | TTS |
 |---|---|---|---|---|
 | macOS | ✅ | ✅ | ✅ | ❌ |
-| iOS | ✅ | ✅ | ✅ | ❌ |
-| Android | ✅ | ✅ | ✅ | ❌ |
+| iOS (iPhone 13 or later) | ✅ | ✅ | ✅ | ❌ |
+| Android (arm64-v8a) | ✅ | ✅ | ✅ | ❌ |
 | Linux | ❓ | ❓ | ❓ | ❌ |
 | Windows | ❓ | ❓ | ❓ | ❌ |
 
@@ -63,8 +63,7 @@ let input = ends.input;        // Outbound — feed the head
 let mut output = ends.output;  // Inbound  — read past the tail
 ```
 
-Send frames into `ends.input` and read results from `ends.output`; they are the
-same `Outbound` / `Inbound` handles every stage sees. Open the run with a `Start`
+Send frames into `ends.input` and read results from `ends.output`. Open the run with a `Start`
 system frame, then push data frames. Dropping `input` closes the head and
 cascades a clean shutdown downstream.
 
