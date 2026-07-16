@@ -9,7 +9,7 @@ Pipecrab is a thoughtful grounds-up rewrite of `pipecat` but in Rust. It aims to
 
 ## Running the examples
 
-Four runnable examples live under [`examples/`](./examples), smallest first.
+Five runnable examples live under [`examples/`](./examples), smallest first.
 Each has its own README with full model-download and setup steps.
 
 | Example | What it shows | Setup |
@@ -18,6 +18,7 @@ Each has its own README with full model-download and setup steps.
 | [`vad-sherpa`](./examples/vad-sherpa) | Sherpa Silero VAD printing speech edges | 1 model file |
 | [`stt-sherpa`](./examples/stt-sherpa) | VAD + streaming Zipformer transcription | VAD + ASR models |
 | [`stt-sherpa-moonshine`](./examples/stt-sherpa-moonshine) | VAD + offline Moonshine v2 transcription | VAD + ASR models |
+| [`lm-llamacpp`](./examples/lm-llamacpp) | VAD + STT + a local llama.cpp chat model streaming replies | VAD + ASR models + chat GGUF |
 
 **Use headphones** 
 

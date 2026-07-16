@@ -781,6 +781,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "lm-llamacpp"
+version = "0.3.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "pipecrab",
+ "pipecrab-audio",
+ "pipecrab-audio-cpal",
+ "pipecrab-lm",
+ "pipecrab-lm-llamacpp",
+ "pipecrab-stt",
+ "pipecrab-stt-sherpa",
+ "pipecrab-vad",
+ "pipecrab-vad-sherpa",
+ "sherpa-onnx",
+]
+
+[[package]]
 name = "log"
 version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
