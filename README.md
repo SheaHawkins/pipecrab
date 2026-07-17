@@ -11,9 +11,9 @@ Pipecrab is a thoughtful grounds-up rewrite of `pipecat` but in Rust. It is a cr
 
 | | VAD | STT | LM | TTS |
 |---|---|---|---|---|
-| macOS | ✅ | ✅ | ✅ | ❌ |
-| iOS (iPhone 13 or later) | ✅ | ✅ | ✅ | ❌ |
-| Android (arm64-v8a) | ✅ | ✅ | ✅ | ❌ |
+| macOS | ✅ | ✅ | ✅ | ✅ |
+| iOS | ✅ | ✅ | ✅ | ❌ |
+| Android | ✅ | ✅ | ✅ | ❌ |
 | Linux | ❓ | ❓ | ❓ | ❌ |
 | Windows | ❓ | ❓ | ❓ | ❌ |
 
@@ -21,7 +21,7 @@ Pipecrab is a thoughtful grounds-up rewrite of `pipecat` but in Rust. It is a cr
 
 ## Running the examples
 
-Five runnable examples live under [`examples/`](./examples), smallest first.
+Six runnable examples live under [`examples/`](./examples), smallest first.
 Each has its own README with full model-download and setup steps.
 
 | Example | What it shows | Setup |
@@ -31,6 +31,7 @@ Each has its own README with full model-download and setup steps.
 | [`stt-sherpa`](./examples/stt-sherpa) | VAD + streaming Zipformer transcription | VAD + ASR models |
 | [`stt-sherpa-moonshine`](./examples/stt-sherpa-moonshine) | VAD + offline Moonshine v2 transcription | VAD + ASR models |
 | [`lm-llamacpp`](./examples/lm-llamacpp) | VAD + STT + a local llama.cpp chat model streaming replies | VAD + ASR models + chat GGUF |
+| [`e2e-voice-agent`](./examples/e2e-voice-agent) | The full loop: VAD + STT + LM + Kokoro TTS speaking replies | VAD + ASR models + chat GGUF + TTS model |
 
 **Use headphones** 
 

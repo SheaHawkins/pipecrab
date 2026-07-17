@@ -1,0 +1,26 @@
+[package]
+name = "e2e-voice-agent"
+description = "A full local voice agent: VAD, STT, a llama.cpp chat model, and Kokoro TTS speaking the replies."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.pipecrab]
+layer = "app"
+
+[dependencies]
+pipecrab             = { workspace = true }
+pipecrab-audio       = { workspace = true }
+pipecrab-audio-cpal  = { workspace = true }
+pipecrab-lm          = { workspace = true }
+pipecrab-lm-llamacpp = { workspace = true }
+pipecrab-stt         = { workspace = true }
+pipecrab-stt-sherpa  = { workspace = true }
+pipecrab-tts         = { workspace = true }
+pipecrab-tts-sherpa  = { workspace = true }
+pipecrab-vad         = { workspace = true }
+pipecrab-vad-sherpa  = { workspace = true }
+futures              = "0.3"
+async-trait          = "0.1"
