@@ -297,6 +297,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "e2e-voice-agent"
+version = "0.3.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "pipecrab",
+ "pipecrab-audio",
+ "pipecrab-audio-cpal",
+ "pipecrab-lm",
+ "pipecrab-lm-llamacpp",
+ "pipecrab-stt",
+ "pipecrab-stt-sherpa",
+ "pipecrab-tts",
+ "pipecrab-tts-sherpa",
+ "pipecrab-vad",
+ "pipecrab-vad-sherpa",
+]
+
+[[package]]
 name = "echo"
 version = "0.3.0"
 dependencies = [
@@ -1087,6 +1106,17 @@ dependencies = [
  "futures",
  "pipecrab-core",
  "pipecrab-runtime",
+]
+
+[[package]]
+name = "pipecrab-tts-sherpa"
+version = "0.3.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "pipecrab-core",
+ "pipecrab-tts",
+ "sherpa-onnx",
 ]
 
 [[package]]

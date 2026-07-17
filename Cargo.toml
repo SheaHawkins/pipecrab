@@ -36,6 +36,7 @@ pipecrab-lm-llamacpp = { path = "crates/adapters/pipecrab-lm-llamacpp", version 
 pipecrab-stt        = { path = "crates/engine/pipecrab-stt", version = "0.3.0" }
 pipecrab-stt-sherpa = { path = "crates/adapters/pipecrab-stt-sherpa", version = "0.3.0" }
 pipecrab-tts        = { path = "crates/engine/pipecrab-tts", version = "0.3.0" }
+pipecrab-tts-sherpa = { path = "crates/adapters/pipecrab-tts-sherpa", version = "0.3.0" }
 pipecrab-vad        = { path = "crates/engine/pipecrab-vad", version = "0.3.0" }
 pipecrab-vad-sherpa = { path = "crates/adapters/pipecrab-vad-sherpa", version = "0.3.0" }
 # Dev-only; `publish = false`, so it never needs a version.
