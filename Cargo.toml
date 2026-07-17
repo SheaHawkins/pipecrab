@@ -16,7 +16,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.86"
 license = "MIT"
@@ -26,19 +26,19 @@ repository = "https://github.com/SheaHawkins/pipecrab"
 # Internal path deps carry a `version` alongside the `path`: the `path` drives
 # local workspace builds, and `cargo publish` rewrites each into a plain
 # crates.io `version` dependency. A path-only dep would block publishing.
-pipecrab            = { path = "crates/engine/pipecrab", version = "0.3.0" }
-pipecrab-core       = { path = "crates/engine/pipecrab-core", version = "0.3.0" }
-pipecrab-runtime    = { path = "crates/engine/pipecrab-runtime", version = "0.3.0" }
-pipecrab-audio      = { path = "crates/engine/pipecrab-audio", version = "0.3.0" }
-pipecrab-audio-cpal = { path = "crates/adapters/pipecrab-audio-cpal", version = "0.3.0" }
-pipecrab-lm         = { path = "crates/engine/pipecrab-lm", version = "0.3.0" }
-pipecrab-lm-llamacpp = { path = "crates/adapters/pipecrab-lm-llamacpp", version = "0.3.0" }
-pipecrab-stt        = { path = "crates/engine/pipecrab-stt", version = "0.3.0" }
-pipecrab-stt-sherpa = { path = "crates/adapters/pipecrab-stt-sherpa", version = "0.3.0" }
-pipecrab-tts        = { path = "crates/engine/pipecrab-tts", version = "0.3.0" }
-pipecrab-tts-sherpa = { path = "crates/adapters/pipecrab-tts-sherpa", version = "0.3.0" }
-pipecrab-vad        = { path = "crates/engine/pipecrab-vad", version = "0.3.0" }
-pipecrab-vad-sherpa = { path = "crates/adapters/pipecrab-vad-sherpa", version = "0.3.0" }
+pipecrab            = { path = "crates/engine/pipecrab", version = "0.4.0" }
+pipecrab-core       = { path = "crates/engine/pipecrab-core", version = "0.4.0" }
+pipecrab-runtime    = { path = "crates/engine/pipecrab-runtime", version = "0.4.0" }
+pipecrab-audio      = { path = "crates/engine/pipecrab-audio", version = "0.4.0" }
+pipecrab-audio-cpal = { path = "crates/adapters/pipecrab-audio-cpal", version = "0.4.0" }
+pipecrab-lm         = { path = "crates/engine/pipecrab-lm", version = "0.4.0" }
+pipecrab-lm-llamacpp = { path = "crates/adapters/pipecrab-lm-llamacpp", version = "0.4.0" }
+pipecrab-stt        = { path = "crates/engine/pipecrab-stt", version = "0.4.0" }
+pipecrab-stt-sherpa = { path = "crates/adapters/pipecrab-stt-sherpa", version = "0.4.0" }
+pipecrab-tts        = { path = "crates/engine/pipecrab-tts", version = "0.4.0" }
+pipecrab-tts-sherpa = { path = "crates/adapters/pipecrab-tts-sherpa", version = "0.4.0" }
+pipecrab-vad        = { path = "crates/engine/pipecrab-vad", version = "0.4.0" }
+pipecrab-vad-sherpa = { path = "crates/adapters/pipecrab-vad-sherpa", version = "0.4.0" }
 # Dev-only; `publish = false`, so it never needs a version.
 pipecrab-test-util  = { path = "crates/support/test-util" }
 llama-cpp-2         = { version = "=0.1.151", default-features = false }
