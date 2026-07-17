@@ -1,0 +1,26 @@
+[package]
+name = "pipecrab-tts-sherpa"
+description = "Sherpa ONNX Kokoro text-to-speech adapter for pipecrab."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.pipecrab]
+layer = "adapter"
+
+[dependencies]
+pipecrab-core = { workspace = true }
+pipecrab-tts  = { workspace = true }
+futures       = "0.3"
+async-trait   = "0.1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+sherpa-onnx = { workspace = true, features = ["shared"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+sherpa-onnx = { workspace = true, features = ["static"] }
+
+[dev-dependencies]
+futures = "0.3"
