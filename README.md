@@ -5,9 +5,11 @@
 ██      ██ ██      ██      ██      ██   ██ ██   ██ ██   ██ 
 ██      ██ ██      ███████  ██████ ██   ██ ██   ██ ██████                                     
 ```
-Pipecrab is a thoughtful grounds-up rewrite of `pipecat` but in Rust. It is a cross-platform voice agent pipeline for low-latency local inference.
+Pipecrab is a cross-platform pipeline for building duplex voice agents. What is a duplex agent?
 
 ## Local Inference Runs On
+
+Pipecrab is a thoughtful grounds-up rewrite of `pipecat` but in Rust. This makes it cross-platform and fast. The same pipeline runs on multiple environments.
 
 | | VAD | STT | LM | TTS |
 |---|---|---|---|---|
