@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API Reference — pipecrab</title>
+  <meta name="description" content="Every published pipecrab crate, documented on docs.rs — the facade, the engine layers, the capability traits, and the adapters.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦀</text></svg>">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="inner">
+    <a class="brand" href="/"><span class="crab">🦀</span>pipecrab</a>
+    <nav class="site-nav">
+      <a href="/quick-start/">Quick Start</a>
+      <a href="/writing-a-pipeline/">Pipelines</a>
+      <a href="/writing-a-stage/">Stages</a>
+      <a class="active" href="/api/">API</a>
+      <a class="gh" href="https://github.com/SheaHawkins/pipecrab">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="docs-wrap">
+  <aside class="docs-sidebar">
+    <div class="group">Guides</div>
+    <a href="/quick-start/">Quick Start</a>
+    <a href="/writing-a-pipeline/">Writing a Pipeline</a>
+    <a href="/writing-a-stage/">Writing a Stage</a>
+    <div class="group">Reference</div>
+    <a class="active" href="/api/">API Reference</a>
+    <a href="https://github.com/SheaHawkins/pipecrab/tree/main/examples">Examples</a>
+    <a href="https://github.com/SheaHawkins/pipecrab/blob/main/ARCHITECTURE.md">Architecture</a>
+  </aside>
+
+  <main class="docs-main">
+    <h1>API Reference</h1>
+    <p class="lede">
+      Full rustdoc for every published crate lives on docs.rs. Most
+      applications depend on the <code>pipecrab</code> facade plus one adapter
+      crate per capability; the trait crates matter when you're implementing
+      an engine of your own.
+    </p>
+
+    <h2 id="start-here">Start here</h2>
+    <table>
+      <thead><tr><th>Crate</th><th>What it is</th><th></th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>pipecrab</code></td>
+          <td>The facade — re-exports core + runtime. <code>PipelineBuilder</code>, <code>Processor</code>, <code>Decision</code>, <code>Stage</code>, frames.</td>
+          <td><a href="https://docs.rs/pipecrab">docs.rs</a></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="engine">Engine layers</h2>
+    <p>Dependencies point strictly downward — core &lt; runtime &lt; traits &lt; adapters — enforced by a workspace layering test.</p>
+    <table>
+      <thead><tr><th>Crate</th><th>What it is</th><th></th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>pipecrab-core</code></td>
+          <td>Sans-IO: frames, <code>Processor</code>, <code>Decision</code>. No async, no I/O, zero deps.</td>
+          <td><a href="https://docs.rs/pipecrab-core">docs.rs</a></td>
+        </tr>
+        <tr>
+          <td><code>pipecrab-runtime</code></td>
+          <td>Async orchestration: <code>Stage</code>, <code>Pipeline</code>, <code>Inbound</code>/<code>Outbound</code>, <code>offload</code>. No executor baked in.</td>
+          <td><a href="https://docs.rs/pipecrab-runtime">docs.rs</a></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="traits">Capability traits</h2>
+    <p>Each capability crate defines the swappable trait plus the stage that adapts an implementation into the pipeline.</p>
+    <table>
+      <thead><tr><th>Crate</th><th>What it is</th><th></th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>pipecrab-audio</code></td>
+          <td><code>AudioSource</code>/<code>AudioSink</code>, hardware-free mocks, and the streaming <code>ResamplerStage</code>.</td>
+          <td><a href="https://docs.rs/pipecrab-audio">docs.rs</a></td>
+        </tr>
+        <tr>
+          <td><code>pipecrab-vad</code></td>
+          <td>Two-tier VAD: <code>VoiceActivityDetector</code> + <code>SpeechScorer</code>, the <code>Debounced</code> lifter, and the <code>VadStage</code> gate.</td>
+          <td><a href="https://docs.rs/pipecrab-vad">docs.rs</a></td>
+        </tr>
+        <tr>
+          <td><code>pipecrab-stt</code></td>
+          <td><code>Transcriber</code> trait + <code>SttStage</code>: replaces <code>Audio</code> with <code>Transcript</code>.</td>
+          <td><a href="https://docs.rs/pipecrab-stt">docs.rs</a></td>
+        </tr>
+        <tr>
+          <td><code>pipecrab-lm</code></td>
+          <td>Language-model capability + <code>LmStage</code>: user transcripts in, streaming agent replies out.</td>
+          <td><a href="https://docs.rs/pipecrab-lm">docs.rs</a></td>
+        </tr>
+        <tr>
+          <td><code>pipecrab-tts</code></td>
+          <td><code>Synthesizer</code> trait, <code>TtsStage</code>, and the <code>SentenceChunker</code> that enables sentence-by-sentence speech.</td>
+          <td><a href="https://docs.rs/pipecrab-tts">docs.rs</a></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="adapters">Adapters</h2>
+    <p>Adapters bridge an external engine or device to a capability trait. Your app depends on these; the pipeline never names a concrete model.</p>
+    <table>
+      <thead><tr><th>Crate</th><th>Bridges</th><th></th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>pipecrab-audio-cpal</code></td>
+          <td>cpal microphones and speakers via a lock-free real-time-safe ring bridge.</td>
+          <td><a href="https://docs.rs/pipecrab-audio-cpal">docs.rs</a></td>
+        </tr>
+        <tr>
+          <td><code>pipecrab-vad-sherpa</code></td>
+          <td>sherpa-onnx Silero VAD → <code>VoiceActivityDetector</code>.</td>
+          <td><a href="https://docs.rs/pipecrab-vad-sherpa">docs.rs</a></td>
+        </tr>
+        <tr>
+          <td><code>pipecrab-stt-sherpa</code></td>
+          <td>sherpa-onnx streaming Zipformer and offline Moonshine v2 → <code>Transcriber</code>.</td>
+          <td><a href="https://docs.rs/pipecrab-stt-sherpa">docs.rs</a></td>
+        </tr>
+        <tr>
+          <td><code>pipecrab-lm-llamacpp</code></td>
+          <td>llama.cpp GGUF chat models → the LM capability.</td>
+          <td><a href="https://docs.rs/pipecrab-lm-llamacpp">docs.rs</a></td>
+        </tr>
+        <tr>
+          <td><code>pipecrab-tts-sherpa</code></td>
+          <td>sherpa-onnx Kokoro TTS → <code>Synthesizer</code>.</td>
+          <td><a href="https://docs.rs/pipecrab-tts-sherpa">docs.rs</a></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="more">More reading</h2>
+    <ul>
+      <li><a href="https://github.com/SheaHawkins/pipecrab/blob/main/ARCHITECTURE.md">ARCHITECTURE.md</a> — the design rationale: two lanes, the decide/perform split, the VAD gate contract, the layering gate.</li>
+      <li><a href="https://github.com/SheaHawkins/pipecrab/tree/main/examples">examples/</a> — six runnable examples, smallest first.</li>
+      <li><a href="https://crates.io/crates/pipecrab">crates.io/crates/pipecrab</a> — versions and release history.</li>
+      <li><a href="https://github.com/SheaHawkins/pipecrab/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> — how to contribute.</li>
+    </ul>
+  </main>
+</div>
+
+<footer class="site-footer">
+  <div class="inner">
+    <span>pipecrab · MIT licensed</span>
+    <span class="links">
+      <a href="https://github.com/SheaHawkins/pipecrab">GitHub</a>
+      <a href="https://crates.io/crates/pipecrab">crates.io</a>
+      <a href="https://docs.rs/pipecrab">docs.rs</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

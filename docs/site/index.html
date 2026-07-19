@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pipecrab — duplex voice agents in Rust</title>
+  <meta name="description" content="pipecrab is a cross-platform pipeline framework for building fully local, interruptible voice agents in Rust — VAD, STT, LM, and TTS on one preemptible thread.">
+  <meta property="og:title" content="pipecrab — duplex voice agents in Rust">
+  <meta property="og:description" content="A cross-platform pipeline framework for building fully local, interruptible voice agents in Rust.">
+  <meta property="og:url" content="https://pipecrab.rs/">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦀</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="inner">
+    <a class="brand" href="/"><span class="crab">🦀</span>pipecrab</a>
+    <nav class="site-nav">
+      <a href="/quick-start/">Quick Start</a>
+      <a href="/writing-a-pipeline/">Pipelines</a>
+      <a href="/writing-a-stage/">Stages</a>
+      <a href="/api/">API</a>
+      <a class="gh" href="https://github.com/SheaHawkins/pipecrab">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div>
+    <h1>Duplex voice agents, <em>in Rust</em>.</h1>
+    <p class="tagline">
+      pipecrab is a cross-platform pipeline framework for building fully local,
+      interruptible voice agents — a thoughtful ground-up rewrite of pipecat
+      that runs the same pipeline on macOS, iOS, Android, and the web.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="/quick-start/">Get started</a>
+      <a class="btn ghost" href="https://github.com/SheaHawkins/pipecrab">View on GitHub</a>
+    </div>
+    <p class="install"><code>cargo add pipecrab</code></p>
+  </div>
+  <div class="code-card">
+    <span class="lang">rust</span>
+<pre><span class="kw">let</span> (ends, driver) = <span class="ty">PipelineBuilder</span>::<span class="fn">new</span>()
+    .<span class="fn">stage</span>(<span class="ty">ResamplerStage</span>::<span class="fn">new</span>(FORMAT)?)  <span class="cm">// → 16 kHz mono</span>
+    .<span class="fn">stage</span>(<span class="ty">VadStage</span>::<span class="fn">with_config</span>(vad, cfg)) <span class="cm">// gate on speech</span>
+    .<span class="fn">stage</span>(<span class="ty">SttStage</span>::<span class="fn">new</span>(transcriber))      <span class="cm">// audio → text</span>
+    .<span class="fn">stage</span>(<span class="ty">LmStage</span>::<span class="fn">new</span>(model, prompt))     <span class="cm">// text → reply</span>
+    .<span class="fn">stage</span>(<span class="ty">TtsStage</span>::<span class="fn">new</span>(synthesizer))      <span class="cm">// reply → audio</span>
+    .<span class="fn">build</span>()
+    .<span class="fn">start</span>();
+
+<span class="cm">// No executor baked in — you drive the future.</span>
+<span class="fn">block_on</span>(<span class="kw">async</span> { futures::<span class="mc">join!</span>(driver, pump_in, drain) });</pre>
+  </div>
+</section>
+
+<section class="section">
+  <h2>The full loop, on your device</h2>
+  <p class="sub">
+    The <a href="/quick-start/">end-to-end example</a> wires microphone to
+    speaker with every model running locally — no network, no cloud keys.
+    Sentence-by-sentence synthesis means the agent starts talking before the
+    language model has finished writing.
+  </p>
+  <div class="flow">
+    <span class="node">🎙 CpalSource<small>microphone</small></span>
+    <span class="arrow">→</span>
+    <span class="node">Resampler<small>16 kHz mono</small></span>
+    <span class="arrow">→</span>
+    <span class="node">VAD<small>Silero · sherpa</small></span>
+    <span class="arrow">→</span>
+    <span class="node">STT<small>Moonshine v2</small></span>
+    <span class="arrow">→</span>
+    <span class="node">LM<small>llama.cpp</small></span>
+    <span class="arrow">→</span>
+    <span class="node">TTS<small>Kokoro</small></span>
+    <span class="arrow">→</span>
+    <span class="node">🔊 CpalSink<small>speaker</small></span>
+  </div>
+</section>
+
+<section class="section">
+  <h2>Designed for barge-in</h2>
+  <p class="sub">
+    A voice agent must stop talking the instant you speak. pipecrab's
+    architecture makes interruption a first-class, state-safe operation instead
+    of an afterthought.
+  </p>
+  <div class="feature-grid">
+    <div class="feature">
+      <h3><span class="dot">◆</span>Two lanes</h3>
+      <p>Every pipeline link is a data lane plus a high-priority system lane.
+      <code>Interrupt</code>, <code>Start</code>/<code>Stop</code>, and
+      <code>Error</code> overtake queued work and can travel upstream; data
+      flows strictly downstream.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="dot">◆</span>Interrupt-safe by construction</h3>
+      <p>State mutates only in the synchronous, uncancellable
+      <code>decide</code> step. The async <code>perform</code> step does the
+      I/O and can be dropped mid-flight without tearing state.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="dot">◆</span>Compiler-enforced flow</h3>
+      <p>Every stage returns a <code>Decision</code> that says whether the
+      frame forwards or drops, and what it emits. You can't accidentally
+      forget to push a frame — the type system won't let you.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="dot">◆</span>Runs everywhere</h3>
+      <p>No executor is baked in and every async trait is
+      wasm-aware, so one stage definition runs under
+      <code>block_on</code> natively and <code>spawn_local</code> in the
+      browser. CI compiles the core for <code>wasm32</code>.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="dot">◆</span>Local inference</h3>
+      <p>Adapter crates bridge sherpa-onnx (VAD, STT, Kokoro TTS),
+      llama.cpp, and cpal behind clean capability traits. The pipeline never
+      names a concrete model.</p>
+    </div>
+    <div class="feature">
+      <h3><span class="dot">◆</span>Layered and enforced</h3>
+      <p>core &lt; runtime &lt; traits &lt; adapters — the dependency
+      direction is an invariant checked by a workspace test, not a
+      convention. Swap engines without touching your pipeline.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <h2>Cross-platform local inference</h2>
+  <p class="sub">The same pipeline definition runs across environments.</p>
+  <table>
+    <thead>
+      <tr><th></th><th class="c">VAD</th><th class="c">STT</th><th class="c">LM</th><th class="c">TTS</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>macOS</td><td class="c">✅</td><td class="c">✅</td><td class="c">✅</td><td class="c">✅</td></tr>
+      <tr><td>iOS</td><td class="c">✅</td><td class="c">✅</td><td class="c">✅</td><td class="c">✅</td></tr>
+      <tr><td>Android</td><td class="c">✅</td><td class="c">✅</td><td class="c">✅</td><td class="c">✅</td></tr>
+      <tr><td>Linux</td><td class="c">❓</td><td class="c">❓</td><td class="c">❓</td><td class="c">❌</td></tr>
+      <tr><td>Windows</td><td class="c">❓</td><td class="c">❓</td><td class="c">❓</td><td class="c">❌</td></tr>
+    </tbody>
+  </table>
+  <p class="legend">❓ expected to work, not yet verified &nbsp;·&nbsp; ❌ not yet implemented</p>
+</section>
+
+<section class="section">
+  <h2>Start building</h2>
+  <p class="sub">Three short guides take you from a running example to your own stages.</p>
+  <div class="next-links">
+    <a href="/quick-start/">
+      <span class="label">01</span>
+      <div class="title">Quick Start</div>
+      <div class="desc">Run the full local voice agent — mic to speaker — in minutes.</div>
+    </a>
+    <a href="/writing-a-pipeline/">
+      <span class="label">02</span>
+      <div class="title">Writing a Pipeline</div>
+      <div class="desc">Compose stages, feed the head, drain the tail, drive the future.</div>
+    </a>
+    <a href="/writing-a-stage/">
+      <span class="label">03</span>
+      <div class="title">Writing a Stage</div>
+      <div class="desc">Implement Processor + Stage: decide synchronously, perform async.</div>
+    </a>
+    <a href="/api/">
+      <span class="label">04</span>
+      <div class="title">API Reference</div>
+      <div class="desc">Every published crate, documented on docs.rs.</div>
+    </a>
+  </div>
+</section>
+
+<footer class="site-footer">
+  <div class="inner">
+    <span>pipecrab · MIT licensed</span>
+    <span class="links">
+      <a href="https://github.com/SheaHawkins/pipecrab">GitHub</a>
+      <a href="https://crates.io/crates/pipecrab">crates.io</a>
+      <a href="https://docs.rs/pipecrab">docs.rs</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

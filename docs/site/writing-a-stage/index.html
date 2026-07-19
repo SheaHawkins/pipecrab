@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Writing a Stage — pipecrab</title>
+  <meta name="description" content="Implement pipecrab's Processor and Stage traits: decide synchronously, perform asynchronously, stay interrupt-safe by construction.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦀</text></svg>">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="inner">
+    <a class="brand" href="/"><span class="crab">🦀</span>pipecrab</a>
+    <nav class="site-nav">
+      <a href="/quick-start/">Quick Start</a>
+      <a href="/writing-a-pipeline/">Pipelines</a>
+      <a class="active" href="/writing-a-stage/">Stages</a>
+      <a href="/api/">API</a>
+      <a class="gh" href="https://github.com/SheaHawkins/pipecrab">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="docs-wrap">
+  <aside class="docs-sidebar">
+    <div class="group">Guides</div>
+    <a href="/quick-start/">Quick Start</a>
+    <a href="/writing-a-pipeline/">Writing a Pipeline</a>
+    <a class="active" href="/writing-a-stage/">Writing a Stage</a>
+    <div class="group">Reference</div>
+    <a href="/api/">API Reference</a>
+    <a href="https://github.com/SheaHawkins/pipecrab/tree/main/examples">Examples</a>
+    <a href="https://github.com/SheaHawkins/pipecrab/blob/main/ARCHITECTURE.md">Architecture</a>
+  </aside>
+
+  <main class="docs-main">
+    <h1>Writing a Stage</h1>
+    <p class="lede">
+      A stage is two halves. The synchronous <code>Processor</code> half owns
+      all state mutation and cannot be cancelled; the async <code>Stage</code>
+      half does the I/O and can be dropped mid-flight — which is exactly what
+      makes barge-in safe.
+    </p>
+
+    <h2 id="decide">Decide: the synchronous half</h2>
+    <p>
+      A stage implements <code>Processor</code>. Both <code>decide_data</code>
+      and <code>decide_system</code> return a <code>Decision</code>, which
+      answers two questions at once: <em>does the incoming frame keep moving
+      downstream?</em> and <em>what should this stage emit?</em>
+    </p>
+    <table>
+      <thead><tr><th>You return</th><th>Input frame</th><th>Emits</th></tr></thead>
+      <tbody>
+        <tr><td><code>Decision::forward()</code></td><td>forwarded downstream</td><td>nothing</td></tr>
+        <tr><td><code>Decision::drop()</code></td><td>consumed</td><td>nothing</td></tr>
+        <tr><td><code>Decision::drop().emit(x)</code></td><td>consumed</td><td><code>x</code></td></tr>
+        <tr><td><code>Decision::forward().emit(x)</code></td><td>forwarded downstream</td><td><code>x</code></td></tr>
+      </tbody>
+    </table>
+    <p>Those four forms map onto three kinds of stage:</p>
+    <ul>
+      <li><strong>Transform</strong> (STT, a redactor):
+        <code>drop().emit(output)</code> — the input never reaches downstream,
+        only the replacement does.</li>
+      <li><strong>Tap</strong> (VAD, a logger):
+        <code>forward().emit(derived)</code> — the original passes through,
+        followed by the derived frame.</li>
+      <li><strong>Pass-through</strong>: don't override
+        <code>decide_data</code>/<code>decide_system</code> — the default is
+        <code>Decision::forward()</code>, so every frame on an ignored lane
+        flows on unchanged.</li>
+    </ul>
+    <div class="code-card"><span class="lang">rust</span>
+<pre><span class="kw">fn</span> <span class="fn">decide_data</span>(&amp;<span class="kw">mut self</span>, frame: &amp;<span class="ty">DataFrame</span>) -&gt; <span class="ty">Decision</span>&lt;<span class="ty">Self</span>::Effect&gt; {
+    <span class="kw">match</span> frame {
+        <span class="ty">DataFrame</span>::Audio(a) =&gt; <span class="ty">Decision</span>::<span class="fn">drop</span>().<span class="fn">emit</span>(<span class="ty">Effect</span>::Transcript(<span class="kw">self</span>.<span class="fn">stt</span>(a))),
+        _ =&gt; <span class="ty">Decision</span>::<span class="fn">forward</span>(),
+    }
+}</pre>
+    </div>
+    <p>
+      Because every arriving frame must be answered with a
+      <code>Decision</code>, forwarding versus dropping is explicit and
+      compiler-enforced — you can't accidentally forget to push a frame the
+      way an imperative <code>push_frame</code> API lets you.
+    </p>
+
+    <h2 id="effects">Effects: the stage's command vocabulary</h2>
+    <p>
+      <code>Processor::Effect</code> is plain data the stage defines for
+      itself — commands describing <em>what should happen</em>. The decide
+      half emits them; the runtime hands each one to <code>perform</code>,
+      which interprets it and does the actual I/O.
+    </p>
+    <p>
+      <code>decide_*</code> must not do I/O. The one carve-out is a
+      <em>control call</em>: a synchronous, non-blocking, idempotent,
+      infallible operation on an owned engine — canonically
+      <code>cancel()</code>, which flips an atomic flag a worker observes.
+      Anything that can block, fail, or allocate unboundedly stays an effect
+      for <code>perform</code>.
+    </p>
+
+    <h2 id="perform">Perform: the async half</h2>
+    <p>
+      <code>Stage</code> extends <code>Processor</code> with the async
+      interpreter:
+    </p>
+    <div class="code-card"><span class="lang">rust</span>
+<pre><span class="kw">async fn</span> <span class="fn">perform</span>(&amp;<span class="kw">self</span>, effect: <span class="ty">Self</span>::Effect, out: &amp;<span class="ty">Outbound</span>) -&gt; <span class="ty">Result</span>&lt;(), <span class="ty">StageError</span>&gt;;</pre>
+    </div>
+    <p>
+      Note the receiver: <code>&amp;self</code>, not
+      <code>&amp;mut self</code>. <code>perform</code> cannot mutate stage
+      state. The run loop races this future against the system lane, so a
+      barge-in <code>Interrupt</code> can drop it mid-flight — and because
+      only <code>decide_*</code> ever mutated state, dropping the future
+      leaves the stage intact. This split is the whole trick: <em>state
+      mutation is uncancellable, cancellable work is stateless.</em>
+    </p>
+
+    <h2 id="example">A complete stage</h2>
+    <p>
+      From the <a href="https://github.com/SheaHawkins/pipecrab/blob/main/examples/e2e-voice-agent/src/main.rs">e2e voice agent</a>:
+      a gate that prints each completed user utterance and drops empty finals
+      so a noise trigger never wakes the language model. Picking the text out
+      is state-side (<code>decide_data</code>); printing is I/O
+      (<code>perform</code>).
+    </p>
+    <div class="code-card"><span class="lang">rust</span>
+<pre><span class="kw">use</span> pipecrab::{
+    <span class="ty">DataFrame</span>, <span class="ty">Decision</span>, <span class="ty">Finality</span>, <span class="ty">Outbound</span>, <span class="ty">Processor</span>, <span class="ty">Role</span>, <span class="ty">Stage</span>,
+    <span class="ty">StageError</span>, <span class="ty">Transcript</span>,
+};
+
+<span class="kw">struct</span> <span class="ty">UserTurnGate</span>;
+
+<span class="cm">/// One completed user utterance to print.</span>
+<span class="kw">struct</span> <span class="ty">PrintUser</span>(<span class="ty">Arc</span>&lt;<span class="ty">str</span>&gt;);
+
+<span class="kw">impl</span> <span class="ty">Processor</span> <span class="kw">for</span> <span class="ty">UserTurnGate</span> {
+    <span class="kw">type</span> <span class="ty">Effect</span> = <span class="ty">PrintUser</span>;
+
+    <span class="kw">fn</span> <span class="fn">decide_data</span>(&amp;<span class="kw">mut self</span>, frame: &amp;<span class="ty">DataFrame</span>) -&gt; <span class="ty">Decision</span>&lt;<span class="ty">PrintUser</span>&gt; {
+        <span class="kw">match</span> frame {
+            <span class="ty">DataFrame</span>::Transcript(<span class="ty">Transcript</span> {
+                role: <span class="ty">Role</span>::User,
+                finality: <span class="ty">Finality</span>::Final,
+                text,
+            }) =&gt; <span class="kw">match</span> text.<span class="fn">trim</span>().<span class="fn">is_empty</span>() {
+                <span class="cm">// A noise trigger scored as blank: consume it so the</span>
+                <span class="cm">// LM does not generate a reply to an empty turn.</span>
+                <span class="kw">true</span> =&gt; <span class="ty">Decision</span>::<span class="fn">drop</span>(),
+                <span class="kw">false</span> =&gt; <span class="ty">Decision</span>::<span class="fn">forward</span>().<span class="fn">emit</span>(<span class="ty">PrintUser</span>(text.<span class="fn">clone</span>())),
+            },
+            _ =&gt; <span class="ty">Decision</span>::<span class="fn">forward</span>(),
+        }
+    }
+}
+
+<span class="mc">#[cfg_attr(target_arch = <span class="st">"wasm32"</span>, async_trait(?Send))]</span>
+<span class="mc">#[cfg_attr(not(target_arch = <span class="st">"wasm32"</span>), async_trait)]</span>
+<span class="kw">impl</span> <span class="ty">Stage</span> <span class="kw">for</span> <span class="ty">UserTurnGate</span> {
+    <span class="kw">async fn</span> <span class="fn">perform</span>(
+        &amp;<span class="kw">self</span>,
+        <span class="ty">PrintUser</span>(text): <span class="ty">PrintUser</span>,
+        _out: &amp;<span class="ty">Outbound</span>,
+    ) -&gt; <span class="ty">Result</span>&lt;(), <span class="ty">StageError</span>&gt; {
+        <span class="mc">println!</span>(<span class="st">"You: {text}"</span>);
+        <span class="ty">Ok</span>(())
+    }
+}</pre>
+    </div>
+    <p>
+      Drop it into a pipeline like any built-in stage:
+      <code>.stage(UserTurnGate)</code>.
+    </p>
+
+    <h2 id="offload">Off-thread work</h2>
+    <p>
+      The pipeline is one <code>!Send</code> thread, and <code>perform</code>
+      must keep yielding so an interrupt can preempt it. Heavy work never runs
+      inline: <code>offload(f).await</code> crosses to a
+      <code>std::thread</code> on native, or a Web Worker on wasm. It is the
+      only API with a <code>Send</code> bound — that bound is the
+      thread-crossing boundary, not the pipeline.
+    </p>
+    <div class="code-card"><span class="lang">rust</span>
+<pre><span class="kw">async fn</span> <span class="fn">perform</span>(&amp;<span class="kw">self</span>, effect: <span class="ty">Self</span>::Effect, out: &amp;<span class="ty">Outbound</span>) -&gt; <span class="ty">Result</span>&lt;(), <span class="ty">StageError</span>&gt; {
+    <span class="kw">let</span> engine = <span class="kw">self</span>.engine.<span class="fn">clone</span>();
+    <span class="kw">let</span> text = <span class="fn">offload</span>(<span class="kw">move</span> || engine.<span class="fn">transcribe</span>(effect.audio)).<span class="kw">await</span>?;
+    out.<span class="fn">send_data</span>(<span class="ty">DataFrame</span>::Transcript(text)).<span class="kw">await</span>?;
+    <span class="ty">Ok</span>(())
+}</pre>
+    </div>
+
+    <h2 id="system">System frames</h2>
+    <p>
+      <code>decide_system</code> receives <code>Start</code>,
+      <code>Stop</code>, <code>Interrupt</code>, and <code>Error</code> along
+      with the direction they're travelling, and defaults to forwarding them.
+      The runtime handles the hard parts for you: system frames are drained
+      before data, an <code>Interrupt</code> drops any in-flight
+      <code>perform</code>, and the queued data backlog is flushed —
+      transport-audio survivors excepted, so a barge-in utterance is never
+      clipped.
+    </p>
+
+    <div class="next-links">
+      <a href="/writing-a-pipeline/">
+        <span class="label">Compose</span>
+        <div class="title">Writing a Pipeline</div>
+        <div class="desc">Put your stage in a graph and drive it.</div>
+      </a>
+      <a href="/api/">
+        <span class="label">Reference</span>
+        <div class="title">API Reference</div>
+        <div class="desc">Processor, Decision, Stage, and offload on docs.rs.</div>
+      </a>
+    </div>
+  </main>
+</div>
+
+<footer class="site-footer">
+  <div class="inner">
+    <span>pipecrab · MIT licensed</span>
+    <span class="links">
+      <a href="https://github.com/SheaHawkins/pipecrab">GitHub</a>
+      <a href="https://crates.io/crates/pipecrab">crates.io</a>
+      <a href="https://docs.rs/pipecrab">docs.rs</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>
