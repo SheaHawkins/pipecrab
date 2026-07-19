@@ -14,8 +14,8 @@ Pipecrab is a thoughtful grounds-up rewrite of `pipecat` but in Rust. This makes
 | | VAD | STT | LM | TTS |
 |---|---|---|---|---|
 | macOS | ✅ | ✅ | ✅ | ✅ |
-| iOS | ✅ | ✅ | ✅ | ❌ |
-| Android | ✅ | ✅ | ✅ | ❌ |
+| iOS | ✅ | ✅ | ✅ | ✅ |
+| Android | ✅ | ✅ | ✅ | ✅ |
 | Linux | ❓ | ❓ | ❓ | ❌ |
 | Windows | ❓ | ❓ | ❓ | ❌ |
 
