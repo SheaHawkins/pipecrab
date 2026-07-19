@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Writing a Pipeline — pipecrab</title>
+  <meta name="description" content="Compose pipecrab stages with PipelineBuilder, feed the head, drain the tail, and drive the pipeline on any executor.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦀</text></svg>">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="inner">
+    <a class="brand" href="/"><span class="crab">🦀</span>pipecrab</a>
+    <nav class="site-nav">
+      <a href="/quick-start/">Quick Start</a>
+      <a class="active" href="/writing-a-pipeline/">Pipelines</a>
+      <a href="/writing-a-stage/">Stages</a>
+      <a href="/api/">API</a>
+      <a class="gh" href="https://github.com/SheaHawkins/pipecrab">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="docs-wrap">
+  <aside class="docs-sidebar">
+    <div class="group">Guides</div>
+    <a href="/quick-start/">Quick Start</a>
+    <a class="active" href="/writing-a-pipeline/">Writing a Pipeline</a>
+    <a href="/writing-a-stage/">Writing a Stage</a>
+    <div class="group">Reference</div>
+    <a href="/api/">API Reference</a>
+    <a href="https://github.com/SheaHawkins/pipecrab/tree/main/examples">Examples</a>
+    <a href="https://github.com/SheaHawkins/pipecrab/blob/main/ARCHITECTURE.md">Architecture</a>
+  </aside>
+
+  <main class="docs-main">
+    <h1>Writing a Pipeline</h1>
+    <p class="lede">
+      A pipeline is an ordered list of stages built with
+      <code>PipelineBuilder</code>. Stages run head-first in the order you add
+      them, and each stage's emitted frames become the next stage's input.
+    </p>
+
+    <h2 id="build">Build and start</h2>
+    <p>
+      <code>build().start()</code> wires the pipeline and hands back its two
+      ends plus a <em>driver</em> future:
+    </p>
+    <div class="code-card"><span class="lang">rust</span>
+<pre><span class="kw">use</span> pipecrab::{<span class="ty">DataFrame</span>, <span class="ty">Direction</span>, <span class="ty">PipelineBuilder</span>, <span class="ty">Received</span>, <span class="ty">SystemFrame</span>};
+
+<span class="kw">let</span> (ends, driver) = <span class="ty">PipelineBuilder</span>::<span class="fn">new</span>()
+    .<span class="fn">stage</span>(<span class="ty">ResamplerStage</span>::<span class="fn">new</span>(SHERPA_FORMAT)?)  <span class="cm">// capture rate → 16 kHz mono</span>
+    .<span class="fn">stage</span>(<span class="ty">VadStage</span>::<span class="fn">with_config</span>(detector, cfg)) <span class="cm">// gate: emit only utterances</span>
+    .<span class="fn">stage</span>(<span class="ty">SttStage</span>::<span class="fn">new</span>(transcriber))           <span class="cm">// Audio → Transcript</span>
+    .<span class="fn">build</span>()
+    .<span class="fn">start</span>();
+
+<span class="kw">let</span> input = ends.input;        <span class="cm">// Outbound — feed the head</span>
+<span class="kw">let mut</span> output = ends.output;  <span class="cm">// Inbound  — read past the tail</span></pre>
+    </div>
+    <ul>
+      <li><code>ends.input</code> is an <code>Outbound</code>: everything you
+        send into it enters the head stage.</li>
+      <li><code>ends.output</code> is an <code>Inbound</code>: everything the
+        tail stage emits comes out of it.</li>
+      <li><code>driver</code> is the future that actually runs every stage —
+        nothing moves until you await it.</li>
+    </ul>
+
+    <h2 id="pump">Feed the head, drain the tail</h2>
+    <p>
+      Open the run with a <code>Start</code> system frame, then push data
+      frames. Dropping <code>input</code> closes the head and cascades a clean
+      shutdown downstream.
+    </p>
+    <div class="code-card"><span class="lang">rust</span>
+<pre><span class="kw">let</span> pump_in = <span class="kw">async move</span> {
+    input.<span class="fn">send_system</span>(<span class="ty">Direction</span>::Down, <span class="ty">SystemFrame</span>::Start).<span class="kw">await</span>.<span class="fn">ok</span>();
+    <span class="kw">while let</span> <span class="ty">Ok</span>(<span class="ty">Some</span>(chunk)) = source.<span class="fn">next_chunk</span>().<span class="kw">await</span> {
+        <span class="kw">if</span> input.<span class="fn">send_data</span>(<span class="ty">DataFrame</span>::Audio(chunk)).<span class="kw">await</span>.<span class="fn">is_err</span>() {
+            <span class="kw">break</span>; <span class="cm">// downstream gone</span>
+        }
+    }
+    <span class="cm">// `input` dropped here → the pipeline shuts down</span>
+};
+
+<span class="kw">let</span> drain = <span class="kw">async move</span> {
+    <span class="kw">while let</span> <span class="ty">Some</span>(received) = output.<span class="fn">recv</span>().<span class="kw">await</span> {
+        <span class="kw">if let</span> <span class="ty">Received</span>::Data(<span class="ty">DataFrame</span>::Transcript(t)) = received {
+            <span class="mc">println!</span>(<span class="st">"{}"</span>, t.text);
+        }
+    }
+};</pre>
+    </div>
+
+    <h2 id="drive">Drive it — on your executor</h2>
+    <p>
+      pipecrab bakes in no executor. The caller runs the future:
+      <code>block_on</code> natively, <code>spawn_local</code> in the browser.
+      Drive the driver and both pumps together on one thread:
+    </p>
+    <div class="code-card"><span class="lang">rust</span>
+<pre><span class="fn">block_on</span>(<span class="kw">async</span> { futures::<span class="mc">join!</span>(driver, pump_in, drain) });</pre>
+    </div>
+    <p>
+      The pipeline is one <code>!Send</code> thread by design. Heavy work
+      inside stages crosses to a <code>std::thread</code> (native) or a Web
+      Worker (wasm) via <code>offload</code> — see
+      <a href="/writing-a-stage/#offload">Writing a Stage</a>.
+    </p>
+
+    <h2 id="lanes">The two lanes</h2>
+    <p>Every link between stages carries two queues:</p>
+    <table>
+      <thead><tr><th>Lane</th><th>Carries</th><th>Direction</th><th>Priority</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Data</strong></td>
+          <td><code>DataFrame</code> — <code>Audio</code>, <code>Transcript</code>, <code>SpeechStarted</code>/<code>SpeechStopped</code>, <code>InputAudio</code>, <code>Custom</code></td>
+          <td>downstream only</td>
+          <td>normal</td>
+        </tr>
+        <tr>
+          <td><strong>System</strong></td>
+          <td><code>SystemFrame</code> — <code>Start</code>, <code>Stop</code>, <code>Interrupt</code>, <code>Error</code></td>
+          <td>both directions</td>
+          <td>drained first; can preempt in-flight work</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      The system lane is only for frames that are allowed to <em>overtake</em>.
+      State changes like speech edges ride the data lane, in order with the
+      audio they bracket. <code>DataFrame</code> and <code>SystemFrame</code>
+      are distinct types with no shared inheritance tree, so you can't
+      accidentally push a system frame into the downstream-only data lane.
+    </p>
+    <p>
+      On an <code>Interrupt</code>, queued data frames are flushed — except
+      <em>survivors</em>: input audio from the transport survives the flush so
+      a barge-in utterance is never clipped.
+    </p>
+
+    <h2 id="nesting">Nesting and backpressure</h2>
+    <p>
+      A <code>Pipeline</code> is itself a <code>Stage</code>, so a whole
+      pipeline can be passed to <code>.stage(..)</code> to nest it inside
+      another. <code>PipelineBuilder::capacity(n)</code> sets the per-lane
+      buffer depth — how many frames may queue on a lane before a send awaits
+      (backpressure).
+    </p>
+    <div class="code-card"><span class="lang">rust</span>
+<pre><span class="kw">let</span> transcribe = <span class="ty">PipelineBuilder</span>::<span class="fn">new</span>()
+    .<span class="fn">stage</span>(<span class="ty">VadStage</span>::<span class="fn">with_config</span>(detector, cfg))
+    .<span class="fn">stage</span>(<span class="ty">SttStage</span>::<span class="fn">new</span>(transcriber))
+    .<span class="fn">build</span>();
+
+<span class="kw">let</span> (ends, driver) = <span class="ty">PipelineBuilder</span>::<span class="fn">new</span>()
+    .<span class="fn">capacity</span>(<span class="nm">32</span>)
+    .<span class="fn">stage</span>(<span class="ty">ResamplerStage</span>::<span class="fn">new</span>(SHERPA_FORMAT)?)
+    .<span class="fn">stage</span>(transcribe)   <span class="cm">// a pipeline nested as one stage</span>
+    .<span class="fn">build</span>()
+    .<span class="fn">start</span>();</pre>
+    </div>
+
+    <p>
+      For a complete, runnable version of the pipeline on this page, see
+      <a href="https://github.com/SheaHawkins/pipecrab/tree/main/examples/stt-sherpa"><code>examples/stt-sherpa</code></a>;
+      for the full duplex loop, the
+      <a href="/quick-start/">Quick Start</a>.
+    </p>
+
+    <div class="next-links">
+      <a href="/writing-a-stage/">
+        <span class="label">Next</span>
+        <div class="title">Writing a Stage</div>
+        <div class="desc">Implement Processor + Stage to put your own logic in the graph.</div>
+      </a>
+      <a href="/api/">
+        <span class="label">Reference</span>
+        <div class="title">API Reference</div>
+        <div class="desc">PipelineBuilder, Inbound, Outbound, and friends on docs.rs.</div>
+      </a>
+    </div>
+  </main>
+</div>
+
+<footer class="site-footer">
+  <div class="inner">
+    <span>pipecrab · MIT licensed</span>
+    <span class="links">
+      <a href="https://github.com/SheaHawkins/pipecrab">GitHub</a>
+      <a href="https://crates.io/crates/pipecrab">crates.io</a>
+      <a href="https://docs.rs/pipecrab">docs.rs</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

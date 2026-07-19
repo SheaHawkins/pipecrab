@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quick Start — pipecrab</title>
+  <meta name="description" content="Run pipecrab's fully local end-to-end voice agent — VAD, STT, LM, and TTS from microphone to speaker — in minutes.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦀</text></svg>">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="inner">
+    <a class="brand" href="/"><span class="crab">🦀</span>pipecrab</a>
+    <nav class="site-nav">
+      <a class="active" href="/quick-start/">Quick Start</a>
+      <a href="/writing-a-pipeline/">Pipelines</a>
+      <a href="/writing-a-stage/">Stages</a>
+      <a href="/api/">API</a>
+      <a class="gh" href="https://github.com/SheaHawkins/pipecrab">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="docs-wrap">
+  <aside class="docs-sidebar">
+    <div class="group">Guides</div>
+    <a class="active" href="/quick-start/">Quick Start</a>
+    <a href="/writing-a-pipeline/">Writing a Pipeline</a>
+    <a href="/writing-a-stage/">Writing a Stage</a>
+    <div class="group">Reference</div>
+    <a href="/api/">API Reference</a>
+    <a href="https://github.com/SheaHawkins/pipecrab/tree/main/examples">Examples</a>
+    <a href="https://github.com/SheaHawkins/pipecrab/blob/main/ARCHITECTURE.md">Architecture</a>
+  </aside>
+
+  <main class="docs-main">
+    <h1>Quick Start</h1>
+    <p class="lede">
+      Talk to a fully local voice agent in minutes. Sherpa VAD brackets each
+      utterance from your microphone, Moonshine v2 transcribes it, a llama.cpp
+      chat model streams a reply, and Kokoro speaks it back — all on your
+      machine, no network calls.
+    </p>
+
+    <div class="callout warn">
+      <p><strong>Use headphones.</strong> Over speakers the microphone
+      re-captures the agent's own voice, the VAD opens, and the agent starts
+      talking to itself.</p>
+    </div>
+
+    <h2 id="what-youll-run">What you'll run</h2>
+    <p>
+      The <a href="https://github.com/SheaHawkins/pipecrab/tree/main/examples/e2e-voice-agent"><code>e2e-voice-agent</code></a>
+      example is the full duplex loop, expressed as one pipeline:
+    </p>
+    <div class="code-card"><span class="lang">pipeline</span>
+<pre>CpalSource (mic)
+    │ device sample rate, mono
+    ▼
+ResamplerStage (16 kHz mono)
+    ▼
+VadStage&lt;SherpaVad&gt;          <span class="cm">gates: emits only utterances</span>
+    ▼
+SttStage&lt;OfflineSherpaStt&gt;   <span class="cm">Audio → user Transcript</span>
+    ▼
+LmStage&lt;LlamaCpp&gt;            <span class="cm">streams agent partials + one final</span>
+    ▼
+SentenceChunker              <span class="cm">one final transcript per sentence</span>
+    ▼
+TtsStage&lt;SherpaTts&gt;          <span class="cm">24 kHz mono audio per sentence</span>
+    ▼
+ResamplerStage (device rate)
+    ▼
+CpalSink (speaker)</pre>
+    </div>
+    <p>
+      The <code>SentenceChunker</code> is why the agent starts talking before
+      the model has finished writing: each completed sentence of the streaming
+      generation is synthesized while the next sentence is still being
+      generated.
+    </p>
+
+    <h2 id="requirements">Requirements</h2>
+    <ul>
+      <li>Rust 1.86 or newer.</li>
+      <li>macOS, Windows, or Linux with a working microphone and output device.</li>
+      <li>Microphone permission for the terminal running Cargo.</li>
+      <li>~1.5 GB of disk for the four model downloads below.</li>
+    </ul>
+
+    <h2 id="clone">1. Clone the repository</h2>
+    <div class="code-card"><span class="lang">console</span>
+<pre><span class="pr">$</span> git clone https://github.com/SheaHawkins/pipecrab.git
+<span class="pr">$</span> cd pipecrab</pre>
+    </div>
+
+    <h2 id="models">2. Download the models</h2>
+    <p>
+      Four local models power the loop: Silero VAD, Moonshine v2 (STT), a small
+      Qwen chat model (LM), and Kokoro (TTS). From the repository root:
+    </p>
+    <div class="code-card"><span class="lang">console</span>
+<pre><span class="pr">$</span> mkdir -p models
+
+<span class="cm"># VAD — Silero</span>
+<span class="pr">$</span> curl -L https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx \
+    -o models/silero_vad.onnx
+
+<span class="cm"># STT — Moonshine v2 (quantized)</span>
+<span class="pr">$</span> curl -L https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2 \
+    -o models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2
+<span class="pr">$</span> tar xvf models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2 -C models
+
+<span class="cm"># LM — Qwen 2.5 0.5B instruct, GGUF</span>
+<span class="pr">$</span> curl -L https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+    -o models/qwen2.5-0.5b-instruct-q4_k_m.gguf
+
+<span class="cm"># TTS — Kokoro en v0.19 (eleven speakers)</span>
+<span class="pr">$</span> curl -L https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2 \
+    -o models/kokoro-en-v0_19.tar.bz2
+<span class="pr">$</span> tar xvf models/kokoro-en-v0_19.tar.bz2 -C models</pre>
+    </div>
+    <p>
+      The repository ignores <code>models/</code>, so the downloads never show
+      up as source changes.
+    </p>
+
+    <h2 id="run">3. Run it</h2>
+    <div class="code-card"><span class="lang">console</span>
+<pre><span class="pr">$</span> ASR=./models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27
+<span class="pr">$</span> TTS=./models/kokoro-en-v0_19
+
+<span class="pr">$</span> cargo run -p e2e-voice-agent -- \
+    --vad-model ./models/silero_vad.onnx \
+    --encoder "$ASR/encoder_model.ort" \
+    --merged-decoder "$ASR/decoder_model_merged.ort" \
+    --tokens "$ASR/tokens.txt" \
+    --lm-model ./models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+    --tts-model "$TTS/model.onnx" \
+    --tts-voices "$TTS/voices.bin" \
+    --tts-tokens "$TTS/tokens.txt" \
+    --tts-data-dir "$TTS/espeak-ng-data"</pre>
+    </div>
+    <p>Then speak. Expected output resembles:</p>
+    <div class="code-card"><span class="lang">output</span>
+<pre>e2e-voice-agent: input = MacBook Pro Microphone @ 48000 Hz mono
+e2e-voice-agent: output = MacBook Pro Speakers @ 48000 Hz
+e2e-voice-agent: kokoro @ 24000 Hz mono, speaker 0, speed 1
+e2e-voice-agent: listening until Ctrl-C
+SpeechStarted
+SpeechStopped (1.92 s)
+<span class="st">You: what is a crab</span>
+<span class="ty">Agent: A crab is a crustacean with a hard shell and ten legs.</span></pre>
+    </div>
+    <p>…followed by the same sentence spoken aloud.</p>
+
+    <h3 id="flags">Useful flags</h3>
+    <ul>
+      <li><code>--speaker 8</code> — pick another Kokoro voice (0–10).</li>
+      <li><code>--speed 1.2</code> — talk faster.</li>
+      <li><code>--system-prompt "…"</code> — change the agent's instructions.</li>
+      <li><code>--seconds 30</code> — bound the run.</li>
+      <li><code>--stt-threads 1</code> — low-power profile.</li>
+    </ul>
+    <p>
+      The first Sherpa build may download matching native libraries; set
+      <code>SHERPA_ONNX_LIB_DIR</code> to reuse an existing Sherpa
+      installation instead.
+    </p>
+
+    <h2 id="smaller">Prefer a smaller first step?</h2>
+    <p>
+      Six runnable examples live under
+      <a href="https://github.com/SheaHawkins/pipecrab/tree/main/examples"><code>examples/</code></a>,
+      smallest first — each layer adds one capability:
+    </p>
+    <table>
+      <thead><tr><th>Example</th><th>What it shows</th><th>Setup</th></tr></thead>
+      <tbody>
+        <tr><td><a href="https://github.com/SheaHawkins/pipecrab/tree/main/examples/echo"><code>echo</code></a></td><td>Capture → playback: the shortest end-to-end path</td><td>none</td></tr>
+        <tr><td><a href="https://github.com/SheaHawkins/pipecrab/tree/main/examples/vad-sherpa"><code>vad-sherpa</code></a></td><td>Silero VAD printing speech edges</td><td>1 model file</td></tr>
+        <tr><td><a href="https://github.com/SheaHawkins/pipecrab/tree/main/examples/stt-sherpa"><code>stt-sherpa</code></a></td><td>VAD + streaming Zipformer transcription</td><td>VAD + ASR models</td></tr>
+        <tr><td><a href="https://github.com/SheaHawkins/pipecrab/tree/main/examples/stt-sherpa-moonshine"><code>stt-sherpa-moonshine</code></a></td><td>VAD + offline Moonshine v2 transcription</td><td>VAD + ASR models</td></tr>
+        <tr><td><a href="https://github.com/SheaHawkins/pipecrab/tree/main/examples/lm-llamacpp"><code>lm-llamacpp</code></a></td><td>VAD + STT + a local llama.cpp chat model</td><td>+ chat GGUF</td></tr>
+        <tr><td><a href="https://github.com/SheaHawkins/pipecrab/tree/main/examples/e2e-voice-agent"><code>e2e-voice-agent</code></a></td><td>The full loop with Kokoro TTS speaking replies</td><td>+ TTS model</td></tr>
+      </tbody>
+    </table>
+
+    <div class="next-links">
+      <a href="/writing-a-pipeline/">
+        <span class="label">Next</span>
+        <div class="title">Writing a Pipeline</div>
+        <div class="desc">Compose stages and drive the pipeline yourself.</div>
+      </a>
+      <a href="/writing-a-stage/">
+        <span class="label">Then</span>
+        <div class="title">Writing a Stage</div>
+        <div class="desc">Add your own processing to the pipeline.</div>
+      </a>
+    </div>
+  </main>
+</div>
+
+<footer class="site-footer">
+  <div class="inner">
+    <span>pipecrab · MIT licensed</span>
+    <span class="links">
+      <a href="https://github.com/SheaHawkins/pipecrab">GitHub</a>
+      <a href="https://crates.io/crates/pipecrab">crates.io</a>
+      <a href="https://docs.rs/pipecrab">docs.rs</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>
