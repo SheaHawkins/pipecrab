@@ -29,10 +29,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
-        with:
-          # Creates the Pages site on first run so no manual settings step is
-          # needed beyond the custom domain.
-          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs/site
