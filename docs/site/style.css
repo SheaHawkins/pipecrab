@@ -27,7 +27,7 @@
 
 * { box-sizing: border-box; }
 
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; overflow-x: clip; }
 
 body {
   margin: 0;
@@ -58,8 +58,8 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .site-header .inner {
   max-width: 1060px;
   margin: 0 auto;
-  padding: 0 24px;
-  height: 58px;
+  padding: 8px 24px;
+  min-height: 58px;
   display: flex;
   align-items: center;
   gap: 28px;
@@ -80,11 +80,14 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 .site-nav {
   display: flex;
-  gap: 22px;
+  flex-wrap: wrap;
+  row-gap: 2px;
+  column-gap: 22px;
   margin-left: auto;
+  justify-content: flex-end;
   font-size: 14.5px;
 }
-.site-nav a { color: var(--muted); }
+.site-nav a { color: var(--muted); white-space: nowrap; }
 .site-nav a:hover { color: var(--text); text-decoration: none; }
 .site-nav a.active { color: var(--accent); }
 .site-nav a.gh { color: var(--text); }
@@ -411,6 +414,16 @@ td.c, th.c { text-align: center; }
 
 /* ---------- responsive ---------- */
 
+/* Grid/flex items refuse to shrink below their content width by default
+   (min-width: auto), which keeps a wide <pre> from ever engaging its own
+   overflow-x scrollbar and drags the whole page wider than the viewport. */
+.hero > div,
+.docs-main,
+.code-card,
+.feature {
+  min-width: 0;
+}
+
 @media (max-width: 900px) {
   .hero { grid-template-columns: 1fr; padding-top: 56px; gap: 36px; }
   .hero h1 { font-size: 36px; }
@@ -421,5 +434,10 @@ td.c, th.c { text-align: center; }
     border-right: none;
     border-bottom: 1px solid var(--line);
     padding: 24px 0;
+  }
+  /* Wide tables scroll within themselves instead of stretching the page. */
+  table {
+    display: block;
+    overflow-x: auto;
   }
 }
