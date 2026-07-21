@@ -2,10 +2,10 @@
 //!
 //! [`LlamaCpp`] is a lightweight, cloneable handle. A dedicated worker thread
 //! owns llama.cpp's model and context for their entire lifetime, streams decoded
-//! text through Pipecrab's [`TokenStream`](pipecrab_lm::TokenStream), and checks
-//! an atomic cancellation flag between tokens. The worker arrangement keeps
-//! native inference state off the pipeline thread and makes barge-in bounded by
-//! one decode step.
+//! text as [`ModelDelta::Text`](pipecrab_lm::ModelDelta::Text) through Pipecrab's
+//! [`ModelStream`](pipecrab_lm::ModelStream), and checks an atomic cancellation
+//! flag between tokens. The worker arrangement keeps native inference state off
+//! the pipeline thread and makes barge-in bounded by one decode step.
 //!
 //! The crate builds llama.cpp with Metal on iOS and the optimized ARM CPU backend
 //! on Android. Android uses the shared C++ runtime expected by an NDK application;

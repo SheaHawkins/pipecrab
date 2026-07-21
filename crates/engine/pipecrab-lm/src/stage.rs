@@ -1,68 +1,83 @@
 //! [`LmStage`]: the generic adapter from any [`LanguageModel`] to a pipeline
-//! [`Stage`], tracking the running [`Conversation`].
+//! [`Stage`], tracking the running [`Conversation`] and turning a model's
+//! [`ModelDelta`] stream into native [`ModelFrame`]s and agent transcripts.
 
+use std::collections::HashSet;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
 use futures::stream::StreamExt;
 use pipecrab_core::{
-    DataFrame, Decision, Direction, Finality, Processor, Role, SystemFrame, Transcript,
+    DataFrame, Decision, Direction, Finality, ModelFrame, ModelInput, Processor, Role, SystemFrame,
+    ToolCall, Transcript,
 };
 use pipecrab_runtime::{Outbound, Stage, StageError};
 
-use crate::{Conversation, GenParams, LanguageModel, LmError, Message, TokenOut};
+use crate::{
+    Conversation, GenParams, LanguageModel, LmConfigError, LmError, Message, ModelDelta,
+    ToolDefinition,
+};
 
 /// Adapts any [`LanguageModel`] into a pipeline [`Stage`]: it accumulates the
-/// running [`Conversation`], and on a **final user** [`Transcript`] it appends
-/// the user's turn and generates a reply, streaming it downstream as agent
-/// [`Transcript`]s — partials as the deltas arrive, then a final.
+/// running [`Conversation`] and, when a turn triggers generation, converts the
+/// model's [`ModelDelta`] stream into native frames — visible text as agent
+/// [`Transcript`]s (partials as the deltas arrive, then a final), tool calls as
+/// [`ModelFrame::ToolCall`], each generation bracketed by
+/// [`GenerationStarted`](ModelFrame::GenerationStarted) /
+/// [`GenerationFinished`](ModelFrame::GenerationFinished).
 ///
-/// The system prompt is injected at construction and is the first message of the
-/// conversation; every completed user utterance and generated reply is appended,
-/// so successive generations see the whole history.
+/// # Inputs
+///
+/// Three inputs drive a turn:
+///
+/// * A **final user** [`Transcript`] appends a user message and generates.
+/// * [`ModelInput::Context`](pipecrab_core::ModelInput::Context) appends a
+///   non-user message *without* generating (background context for a later turn).
+/// * [`ModelInput::Respond`](pipecrab_core::ModelInput::Respond) appends a
+///   non-user message *and* generates.
+///
+/// The system prompt is injected at construction as the first message.
+///
+/// # Tools
+///
+/// The effective tool set — [`LanguageModel::tool_definitions`] merged with tools
+/// configured via [`with_tools`](Self::with_tools) / [`add_tools`](Self::add_tools)
+/// — is validated once at configuration (duplicate names rejected) and passed to
+/// every generation.
 ///
 /// # State and the decide/perform split
 ///
-/// The [`Conversation`] is the stage's state. Following the
-/// [`Processor`]/[`Stage`] split, `decide_data` (sync, `&mut self`) appends the
-/// user turn and emits a [`Generate`] effect; `perform` (`&self`) snapshots the
-/// conversation, runs the generation, and — only *after* the final delta — locks
-/// again to append the assistant turn. Because the conversation lives behind a
-/// [`Mutex`] and is mutated only in synchronous critical sections (the
+/// The [`Conversation`] is the stage's state. `decide_data` (sync, `&mut self`)
+/// appends the incoming turn and emits a [`Generate`] effect where a generation
+/// is wanted; `perform` (`&self`) snapshots the conversation, runs the
+/// generation, and — only *after* the stream completes — locks again to append
+/// the structured assistant turn (visible text plus every tool call). Because the
+/// conversation is mutated only in synchronous critical sections (the
 /// Mutex-after-await idiom), a barge-in that drops an in-flight `perform` leaves
 /// no half-written turn.
 ///
 /// # Barge-in
 ///
-/// Each `.await` in `perform` — pulling the next delta and forwarding it — is a
-/// point the run loop can drop `perform` at, so a barge-in
-/// [`Interrupt`](SystemFrame::Interrupt) stops the reply within one delta. The
-/// [`Interrupt`](SystemFrame::Interrupt) also reaches [`decide_system`], which
-/// issues the [`cancel`](LanguageModel::cancel) control call so the engine's
-/// worker stops decoding too.
-///
-/// # Known v1 limitation
-///
-/// An interrupted generation is **not recorded in the conversation at all**, even
-/// though the user may have heard part of it: the assistant turn is appended only
-/// after the final delta, so a dropped `perform` records nothing. Correct repair
-/// needs a *played-up-to* marker from the audio sink (how much of the reply was
-/// actually voiced before the barge-in) to record the truncated turn — that
-/// marker does not exist yet, so it is out of scope here.
-///
-/// [`decide_data`]: Processor::decide_data
-/// [`decide_system`]: Processor::decide_system
+/// Each `.await` in `perform` is a point the run loop can drop `perform` at, so a
+/// barge-in [`Interrupt`](SystemFrame::Interrupt) stops the reply within one
+/// delta. The interrupt also reaches [`decide_system`](Processor::decide_system),
+/// which issues the [`cancel`](LanguageModel::cancel) control call so the engine's
+/// worker stops decoding too. An interrupted generation commits no assistant turn
+/// and emits no [`GenerationFinished`](ModelFrame::GenerationFinished); the
+/// [`ToolCall`](ModelFrame::ToolCall) frames already emitted are ordinary
+/// surviving pipeline data.
 pub struct LmStage<M: LanguageModel> {
     model: M,
     params: GenParams,
+    tools: Vec<ToolDefinition>,
     convo: Mutex<Conversation>,
 }
 
 impl<M: LanguageModel> LmStage<M> {
     /// Wrap `model` as a stage seeded with `system_prompt`, using default
-    /// [`GenParams`].
+    /// [`GenParams`] and the model's intrinsic tools.
     pub fn new(model: M, system_prompt: impl Into<std::sync::Arc<str>>) -> Self {
-        Self::with_params(model, system_prompt, GenParams::default())
+        Self::build(model, system_prompt, GenParams::default())
     }
 
     /// Wrap `model` as a stage seeded with `system_prompt` and explicit `params`.
@@ -71,15 +86,87 @@ impl<M: LanguageModel> LmStage<M> {
         system_prompt: impl Into<std::sync::Arc<str>>,
         params: GenParams,
     ) -> Self {
-        let convo = Conversation {
-            messages: vec![Message::system(system_prompt)],
-        };
+        Self::build(model, system_prompt, params)
+    }
+
+    /// Wrap `model` as a stage seeded with `system_prompt` and additional stage
+    /// `tools`, merged with the model's intrinsic tools.
+    ///
+    /// Fails if the effective set has an invalid or duplicate tool.
+    pub fn with_tools(
+        model: M,
+        system_prompt: impl Into<std::sync::Arc<str>>,
+        tools: impl IntoIterator<Item = ToolDefinition>,
+    ) -> Result<Self, LmConfigError> {
+        Self::build(model, system_prompt, GenParams::default()).add_tools(tools)
+    }
+
+    /// Add stage tools to the effective set, revalidating it.
+    ///
+    /// Fails if any resulting tool is invalid or two share a name.
+    pub fn add_tools(
+        mut self,
+        tools: impl IntoIterator<Item = ToolDefinition>,
+    ) -> Result<Self, LmConfigError> {
+        self.tools.extend(tools);
+        validate_tool_set(&self.tools)?;
+        Ok(self)
+    }
+
+    /// The effective tool set passed to every generation.
+    pub fn tools(&self) -> &[ToolDefinition] {
+        &self.tools
+    }
+
+    /// Seed a stage with the system prompt and the model's intrinsic tools.
+    fn build(
+        model: M,
+        system_prompt: impl Into<std::sync::Arc<str>>,
+        params: GenParams,
+    ) -> Self {
+        let tools = model.tool_definitions();
         Self {
-            model,
+            convo: Mutex::new(Conversation {
+                messages: vec![Message::system(system_prompt)],
+            }),
+            tools,
             params,
-            convo: Mutex::new(convo),
+            model,
         }
     }
+
+    /// Append a message to conversation history under the lock.
+    fn append(&self, message: Message) {
+        self.convo
+            .lock()
+            .expect("LmStage conversation mutex poisoned")
+            .messages
+            .push(message);
+    }
+}
+
+/// Reject an empty name, a non-object schema, or a duplicate name anywhere in the
+/// effective tool set. The tool fields are public, so the set is revalidated
+/// rather than trusting each [`ToolDefinition`] was built through
+/// [`ToolDefinition::new`].
+fn validate_tool_set(tools: &[ToolDefinition]) -> Result<(), LmConfigError> {
+    let mut seen: HashSet<&str> = HashSet::with_capacity(tools.len());
+    for tool in tools {
+        if tool.name.is_empty() {
+            return Err(LmConfigError::EmptyToolName);
+        }
+        if !tool.parameters.is_object() {
+            return Err(LmConfigError::ToolParametersNotObject {
+                name: tool.name.clone(),
+            });
+        }
+        if !seen.insert(tool.name.as_ref()) {
+            return Err(LmConfigError::DuplicateToolName {
+                name: tool.name.clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Run a generation over the current conversation: [`LmStage`]'s
@@ -99,23 +186,29 @@ impl<M: LanguageModel> Processor for LmStage<M> {
                 finality: Finality::Final,
                 text,
             }) => {
-                self.convo
-                    .lock()
-                    .expect("LmStage conversation mutex poisoned")
-                    .messages
-                    .push(Message::user(text.clone()));
+                self.append(Message::user(text.clone()));
                 Decision::drop().emit(Generate)
             }
             // An in-progress user transcript is not yet actionable in v1 — consume
-            // it. Speculative prefill will hook here to warm the KV cache
-            // from the partial before the final arrives.
+            // it. Speculative prefill will hook here to warm the KV cache from the
+            // partial before the final arrives.
             DataFrame::Transcript(Transcript {
                 role: Role::User,
                 finality: Finality::Partial { .. },
                 ..
             }) => Decision::drop(),
-            // Agent transcripts (our own output looping back), audio, custom
-            // frames: not ours to consume.
+            // Non-user context: append it, but do not generate.
+            DataFrame::Model(ModelFrame::Input(ModelInput::Context(message))) => {
+                self.append(Message::from(message.clone()));
+                Decision::drop()
+            }
+            // Non-user input that warrants a reply: append it and generate.
+            DataFrame::Model(ModelFrame::Input(ModelInput::Respond(message))) => {
+                self.append(Message::from(message.clone()));
+                Decision::drop().emit(Generate)
+            }
+            // Agent transcripts (our own output looping back), our own generation
+            // frames, audio, custom frames: not ours to consume.
             _ => Decision::forward(),
         }
     }
@@ -144,37 +237,52 @@ impl<M: LanguageModel> Stage for LmStage<M> {
                 .clone()
         };
 
-        let mut stream = self.model.generate(&convo, &self.params).await?;
-        let mut reply = String::new();
-        // Each `.next().await` is a preemption point: a barge-in drops this future
-        // here. Because the assistant turn is recorded only after the final delta
-        // (below), a dropped generation leaves the conversation untouched.
-        while let Some(item) = stream.next().await {
-            let TokenOut { delta } = item?;
-            reply.push_str(&delta);
-            // LM output is append-only, so the whole accumulated reply is stable.
-            let partial = Transcript::agent_partial(reply.clone());
-            debug_assert!(
-                matches!(partial.finality, Finality::Partial { stable } if stable == partial.text.len()),
-                "agent partial must be append-only (stable == text.len())",
-            );
-            // Ignore the send error: it only happens once the sink has gone away
-            // during shutdown, matching the runtime's own forward path.
-            let _ = out.send_data(partial.into()).await;
-        }
-        let _ = out
-            .send_data(Transcript::agent_final(reply.clone()).into())
-            .await;
+        // Only start the generation boundary once the stream is in hand: a
+        // failed start emits nothing.
+        let mut stream = self.model.generate(&convo, &self.params, &self.tools).await?;
+        let _ = out.send_data(ModelFrame::GenerationStarted.into()).await;
 
-        // Record the assistant turn now — the Mutex-after-await idiom. This runs
-        // synchronously after the final send's await resolves (no await between),
-        // so a barge-in either drops us earlier — recording nothing — or lets the
-        // whole turn commit; it never leaves a partially recorded message.
-        self.convo
-            .lock()
-            .expect("LmStage conversation mutex poisoned")
-            .messages
-            .push(Message::assistant(reply));
+        let mut reply = String::new();
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
+        // Each `.next().await` and each send is a preemption point: a barge-in
+        // drops this future here. Because the assistant turn is committed only
+        // after the stream completes (below), a dropped generation leaves the
+        // conversation untouched — though any tool call already emitted survives.
+        while let Some(item) = stream.next().await {
+            match item? {
+                ModelDelta::Text(delta) => {
+                    reply.push_str(&delta);
+                    // LM output is append-only, so the whole accumulated reply is
+                    // stable.
+                    let partial = Transcript::agent_partial(reply.clone());
+                    debug_assert!(
+                        matches!(partial.finality, Finality::Partial { stable } if stable == partial.text.len()),
+                        "agent partial must be append-only (stable == text.len())",
+                    );
+                    // Ignore the send error: it only happens once the sink has gone
+                    // away during shutdown, matching the runtime's own forward path.
+                    let _ = out.send_data(partial.into()).await;
+                }
+                ModelDelta::ToolCall(call) => {
+                    tool_calls.push(call.clone());
+                    let _ = out.send_data(ModelFrame::ToolCall(call).into()).await;
+                }
+            }
+        }
+
+        // No empty final transcript — a tool-call-only turn emits none.
+        if !reply.is_empty() {
+            let _ = out
+                .send_data(Transcript::agent_final(reply.clone()).into())
+                .await;
+        }
+        let _ = out.send_data(ModelFrame::GenerationFinished.into()).await;
+
+        // Commit the structured assistant turn now — the Mutex-after-await idiom.
+        // This runs synchronously after the final send's await resolves (no await
+        // between), so a barge-in either drops us earlier — committing nothing — or
+        // lets the whole turn commit; it never leaves a partially recorded message.
+        self.append(Message::assistant_with_tool_calls(reply, tool_calls));
         Ok(())
     }
 }

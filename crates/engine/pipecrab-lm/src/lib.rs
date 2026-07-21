@@ -1,31 +1,46 @@
-//! pipecrab-lm: the language-model interface.
+//! pipecrab-lm: the provider-neutral structured-generation interface.
 //!
 //! [`LanguageModel`] is the swappable LM capability the conversation loop drives:
-//! a [`Conversation`] in, generated text out *incrementally* — every
-//! [`TokenStream`] item is a preemption point, so a barge-in
+//! a [`Conversation`] in, a [`ModelStream`] of [`ModelDelta`]s out
+//! *incrementally* — text to append, or a complete [`ToolCall`]. Every item is a
+//! preemption point, so a barge-in
 //! [`Interrupt`](pipecrab_core::SystemFrame::Interrupt) stops the reply within a
-//! single delta. Concrete engines stay behind it, so the pipeline never names
-//! one.
+//! single delta. Concrete engines stay behind the trait, so the pipeline never
+//! names one.
 //!
-//! [`LmStage`] adapts any [`LanguageModel`] into a pipeline
-//! [`Stage`](pipecrab_runtime::Stage): it tracks the running [`Conversation`]
-//! (system prompt injected at construction), and on a final user
-//! [`Transcript`](pipecrab_core::Transcript) it appends the turn and streams a
-//! generated reply back as agent transcripts — partials as deltas arrive, then a
-//! final.
+//! # `ModelDelta` vs [`ModelFrame`](pipecrab_core::ModelFrame)
 //!
-//! The chat-context types ([`ChatRole`], [`Message`], [`Conversation`]) are the
-//! LM's own view of the dialogue, kept distinct from core's transcript
-//! [`Role`](pipecrab_core::Role) because the LM needs a
-//! [`System`](ChatRole::System) role the transcript stream has no notion of. The
-//! trait carries an optional [`grammar`](GenParams::grammar) constraint but no
-//! tool or dispatch concept — a dispatcher parses constrained output *above* this
-//! layer.
+//! A [`ModelDelta`] is the *internal* protocol between a [`LanguageModel`] and
+//! [`LmStage`], not a pipeline frame. The stage translates deltas into native
+//! frames: visible text becomes agent [`Transcript`](pipecrab_core::Transcript)s
+//! (cumulative partials, then a final) because a transcript is prose; a tool call
+//! becomes [`ModelFrame::ToolCall`](pipecrab_core::ModelFrame::ToolCall) because
+//! it is structured protocol; the lifecycle becomes
+//! [`GenerationStarted`](pipecrab_core::ModelFrame::GenerationStarted) /
+//! [`GenerationFinished`](pipecrab_core::ModelFrame::GenerationFinished).
+//! Tool-call syntax, JSON, and provider metadata never enter a transcript.
+//!
+//! # Tools
+//!
+//! [`ToolDefinition::parameters`] is a [`serde_json::Value`] so a framework's
+//! schema reaches a hosted adapter without a string round trip. Core stays
+//! JSON-free: a [`ToolCall`](pipecrab_core::ToolCall) carries validated arguments
+//! as JSON *text*, and [`ModelDelta::tool_call`] normalizes a JSON object into it.
+//! Provider-specific streaming, tool-call fragments, and constrained output are
+//! parsed *inside* the implementation; the stage sees only complete calls. Tools
+//! reach a generation two ways — [`LanguageModel::tool_definitions`] lifts those
+//! intrinsic to an implementation (e.g. a wrapped Rig agent), and
+//! [`LmStage::with_tools`] / [`add_tools`](LmStage::add_tools) add more — and the
+//! stage merges the two, rejecting duplicate names.
+//!
+//! The chat-context types ([`Message`], [`Conversation`]) preserve structured
+//! assistant turns, tool calls, tool results, and external events so a hosted
+//! adapter can reconstruct valid provider history.
 //!
 //! Platform-neutral and `wasm32`-checkable: the concrete engines live elsewhere
-//! (a native `llama.cpp` context, a browser engine in a Web Worker), each behind
-//! this trait, so the interface itself carries no backend dependency and compiles
-//! for both the host and `wasm32-unknown-unknown`.
+//! (a native `llama.cpp` context, a hosted Rig agent, a browser Worker), each
+//! behind this trait, so the interface itself carries no backend dependency and
+//! compiles for both the host and `wasm32-unknown-unknown`.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
@@ -33,6 +48,8 @@ mod model;
 mod stage;
 
 pub use model::{
-    ChatRole, Conversation, GenParams, LanguageModel, LmError, Message, TokenOut, TokenStream,
+    Conversation, GenParams, LanguageModel, LmConfigError, LmError, Message, ModelDelta,
+    ModelStream, ToolDefinition,
 };
+pub use pipecrab_core::ToolCall;
 pub use stage::{Generate, LmStage};

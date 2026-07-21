@@ -14,12 +14,13 @@ use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel
 use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::token::LlamaToken;
 use pipecrab_lm::{
-    ChatRole, Conversation, GenParams, LanguageModel, LmError, TokenOut, TokenStream,
+    Conversation, GenParams, LanguageModel, LmError, Message, ModelDelta, ModelStream,
+    ToolDefinition,
 };
 
 use crate::{LlamaCppBuildError, LlamaCppConfig};
 
-type TokenSender = mpsc::UnboundedSender<Result<TokenOut, LmError>>;
+type TokenSender = mpsc::UnboundedSender<Result<ModelDelta, LmError>>;
 
 enum Command {
     Generate {
@@ -112,7 +113,10 @@ impl LanguageModel for LlamaCpp {
         &self,
         conversation: &Conversation,
         params: &GenParams,
-    ) -> Result<TokenStream, LmError> {
+        // Native llama.cpp tool parsing is out of scope; the adapter has no
+        // intrinsic tools and ignores any the stage passes.
+        _tools: &[ToolDefinition],
+    ) -> Result<ModelStream, LmError> {
         let (output, receiver) = mpsc::unbounded();
         let epoch = self.inner.generation_epoch.fetch_add(1, Ordering::AcqRel) + 1;
         self.send(Command::Generate {
@@ -259,16 +263,25 @@ fn generate(
     epoch: u64,
     processed_tokens: &mut Vec<LlamaToken>,
 ) -> Result<(), String> {
+    // Tool calls, results, and events feed the hosted adapters; this native path
+    // renders each turn's text under its chat role. An empty-name/kind is dropped
+    // rather than shaping a role llama.cpp's chat template may not know.
     let messages = conversation
         .messages
         .iter()
         .map(|message| {
-            let role = match message.role {
-                ChatRole::System => "system",
-                ChatRole::User => "user",
-                ChatRole::Assistant => "assistant",
+            let (role, content) = match message {
+                Message::System { content } => ("system", content.to_string()),
+                Message::User { content } => ("user", content.to_string()),
+                Message::Assistant { content, .. } => ("assistant", content.to_string()),
+                Message::ToolResult { content, .. } => ("tool", content.to_string()),
+                Message::Event {
+                    source,
+                    kind,
+                    content,
+                } => ("user", format!("[{source}/{kind}] {content}")),
             };
-            LlamaChatMessage::new(role.into(), message.content.to_string())
+            LlamaChatMessage::new(role.into(), content)
         })
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
@@ -395,9 +408,7 @@ fn generate(
             .map_err(|error| error.to_string())?;
         if !delta.is_empty()
             && output
-                .unbounded_send(Ok(TokenOut {
-                    delta: Arc::<str>::from(delta),
-                }))
+                .unbounded_send(Ok(ModelDelta::Text(Arc::<str>::from(delta))))
                 .is_err()
         {
             break;
