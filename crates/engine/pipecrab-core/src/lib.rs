@@ -8,7 +8,8 @@ pub mod frame;
 pub mod processor;
 
 pub use frame::{
-    AudioChunk, AudioFormat, CustomFrame, DataFrame, Direction, Finality, Role, SystemFrame,
+    AudioChunk, AudioFormat, CustomFrame, DataFrame, Direction, DispatchCommand, DispatchEvent,
+    DispatchFrame, Finality, ModelFrame, ModelInput, ModelMessage, Role, SystemFrame, ToolCall,
     Transcript,
 };
 pub use processor::{Decision, Disposition, Processor};

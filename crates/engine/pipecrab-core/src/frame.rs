@@ -1,6 +1,12 @@
 use std::any::Any;
 use std::sync::Arc;
 
+pub mod dispatch;
+pub mod model;
+
+pub use dispatch::{DispatchCommand, DispatchEvent, DispatchFrame};
+pub use model::{ModelFrame, ModelInput, ModelMessage, ToolCall};
+
 /// Extension point for application-defined frame payloads.
 ///
 /// Implement this on your own types and wrap them in [`DataFrame::Custom`] to
@@ -208,8 +214,12 @@ impl Transcript {
 }
 
 /// Data frames: everything flowing downstream (source → sink) in FIFO order —
-/// the media payload plus the in-band voice-activity edges that must stay
-/// ordered with it.
+/// the media payload, the in-band voice-activity edges, and the native
+/// model/dispatch protocol frames that must stay ordered with it.
+///
+/// [`Model`](DataFrame::Model) and [`Dispatch`](DataFrame::Dispatch) frames ride
+/// this lane, not the system lane, because their order carries meaning; see
+/// [`ModelFrame`] for the ordering contract.
 ///
 /// Immutable: don't try to make mutable frames. Instead, aggregate frames and
 /// produce a new one when you're ready.
@@ -238,20 +248,29 @@ pub enum DataFrame {
     /// speech→silence edge, emitted by the VAD stage after the utterance's last
     /// [`Audio`](DataFrame::Audio) frame.
     SpeechStopped,
-    /// Application-defined payload; see [`CustomFrame`].
+    /// Native language-model protocol frame; see [`ModelFrame`].
+    Model(ModelFrame),
+    /// Native asynchronous-dispatch protocol frame; see [`DispatchFrame`].
+    Dispatch(DispatchFrame),
+    /// Application-defined payload; see [`CustomFrame`]. Model and dispatch are
+    /// native variants and need no escape hatch.
     Custom(Arc<dyn CustomFrame>),
 }
 
 impl DataFrame {
-    /// True for frames that must survive an interrupt's data-queue flush —
-    /// input-from-transport media, since a barge-in utterance must not be
-    /// clipped. False for everything else, including the voice-activity edges:
-    /// like a transcript they are derived control, so a barge-in drops any queued
-    /// one and fresh edges are regenerated from the surviving transport audio.
+    /// True for frames that outlive an interrupt's data-queue flush, false for
+    /// those belonging to the interrupted turn. Survivors:
+    /// [`InputAudio`](DataFrame::InputAudio) (don't clip the new utterance),
+    /// [`Model(Input)`](ModelFrame::Input), [`Model(ToolCall)`](ModelFrame::ToolCall),
+    /// and every [`Dispatch`](DataFrame::Dispatch) frame. Dropped: voice edges,
+    /// generated [`Transcript`]s, and the generation boundaries.
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Transcript};
+    /// use pipecrab_core::{
+    ///     AudioChunk, AudioFormat, DataFrame, DispatchEvent, DispatchFrame, ModelFrame,
+    ///     ToolCall, Transcript,
+    /// };
     ///
     /// let input = DataFrame::InputAudio {
     ///     bytes: Arc::from(&[0u8; 4][..]),
@@ -264,9 +283,26 @@ impl DataFrame {
     ///
     /// let audio = AudioChunk::new(Arc::from(&[0.0f32][..]), AudioFormat::new(48_000, 1));
     /// assert!(!DataFrame::Audio(audio).survives_flush());
+    ///
+    /// // Tool calls and dispatch frames survive; generation boundaries don't.
+    /// let call = ToolCall {
+    ///     id: Arc::from("call-1"),
+    ///     name: Arc::from("lookup"),
+    ///     arguments_json: Arc::from("{}"),
+    /// };
+    /// assert!(DataFrame::from(call).survives_flush());
+    /// assert!(!DataFrame::Model(ModelFrame::GenerationStarted).survives_flush());
+    ///
+    /// let event = DispatchEvent::Progress { task_id: Arc::from("t1"), message: Arc::from("50%") };
+    /// assert!(DataFrame::from(DispatchFrame::from(event)).survives_flush());
     /// ```
     pub fn survives_flush(&self) -> bool {
-        matches!(self, DataFrame::InputAudio { .. })
+        match self {
+            DataFrame::InputAudio { .. } => true,
+            DataFrame::Model(frame) => frame.survives_flush(),
+            DataFrame::Dispatch(_) => true,
+            _ => false,
+        }
     }
 }
 
@@ -275,6 +311,27 @@ impl From<Transcript> for DataFrame {
     /// `Transcript::user_final(text).into()` instead of naming the variant.
     fn from(transcript: Transcript) -> Self {
         DataFrame::Transcript(transcript)
+    }
+}
+
+impl From<ModelFrame> for DataFrame {
+    /// Wrap a [`ModelFrame`] as a [`DataFrame::Model`].
+    fn from(frame: ModelFrame) -> Self {
+        DataFrame::Model(frame)
+    }
+}
+
+impl From<ToolCall> for DataFrame {
+    /// Wrap a complete [`ToolCall`] as a [`DataFrame::Model`].
+    fn from(call: ToolCall) -> Self {
+        DataFrame::Model(ModelFrame::ToolCall(call))
+    }
+}
+
+impl From<DispatchFrame> for DataFrame {
+    /// Wrap a [`DispatchFrame`] as a [`DataFrame::Dispatch`].
+    fn from(frame: DispatchFrame) -> Self {
+        DataFrame::Dispatch(frame)
     }
 }
 

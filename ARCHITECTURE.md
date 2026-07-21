@@ -6,7 +6,7 @@ We differ from pipecat in a few ways:
 1. A Stage can manage internal state via the uninterruptable synchronous `decide` function. By contrast, the async `perform` function can be interrupted but cannot modify state. This prevents broken state
 1. SystemFrames are distinct from DataFrames. In pipecrab, they don't share an inheritance tree so you can't accidentally push SystemFrames into the downstream-only data lane.
 1. We are explicit about whether Stages `forward` or `drop` frames. It's enforced by the compiler so you can't [accidentally forget to push frames](https://docs.pipecat.ai/pipecat/fundamentals/custom-frame-processor#example-metricsframe-logger).
-1. Pipecat treats InputAudio as a SystemFrame. That's a wart here. There's a system lane for `Interrupt` and Audio rides the data lane with flush resistance. When an interrupt comes through, it flushes non-survivor frames (i.e., flushes everything other than Audio).
+1. Pipecat treats InputAudio as a SystemFrame. That's a wart here. There's a system lane for `Interrupt` and Audio rides the data lane with flush resistance. When an interrupt comes through, it flushes non-survivor frames (input audio and durable model/dispatch frames survive).
 
 ## Writing a stage
 
@@ -35,6 +35,15 @@ fn decide_data(&mut self, frame: &DataFrame) -> Decision<Self::Effect> {
 ```
 
 The synchronous `decide_*` half owns state mutation; the async `perform` half does the emitting I/O but cannot mutate state (see "Off-thread work"). To compose stages into a runnable pipeline, see [Writing a pipeline](./README.md#writing-a-pipeline).
+
+## Data-lane frame vocabulary
+
+Two native protocol families ride the data lane alongside audio, transcripts, and voice edges:
+
+- **`Model(ModelFrame)`** — one LM generation: `GenerationStarted`/`GenerationFinished`, `ToolCall`, `Input` adds non-user `Context`/`Respond` messages.
+- **`Dispatch(DispatchFrame)`** — async tasks: a `Command` drives one, an `Event` reports state. `tool_call_id` names the invocation; `task_id` (post-`Accepted`) the task.
+
+They use the data lane, not the system lane, because order matters. Text may precede *or* follow a tool call. On interrupt, `survives_flush` keeps `InputAudio`, `Model(Input)`, `Model(ToolCall)`, and every `Dispatch`.
 
 ## Crates
 
