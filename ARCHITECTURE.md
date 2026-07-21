@@ -45,6 +45,17 @@ Two native protocol families ride the data lane alongside audio, transcripts, an
 
 They use the data lane, not the system lane, because order matters. Text may precede *or* follow a tool call. On interrupt, `survives_flush` keeps `InputAudio`, `Model(Input)`, `Model(ToolCall)`, and every `Dispatch`.
 
+The dispatch round-trip closes a loop: the LM emits a `ToolCall`, which leaves via the Transport to a Backend; the Backend's result returns as a Tool Result (a `ModelInput`) and re-enters the LM.
+
+```
+                    ┌──────────┐          ┌───────────┐
+                    │ Backend  │ ◀────────│ Transport │
+                    └────┬─────┘          └─────▲─────┘
+                         │ Tool Result          │ ToolCall (Dispatch)
+                         ▼                      │
+User Speech ─▶ STT ─▶ Transcript ─▶ LM ─▶ ToolCall ─▶ Transcript ─▶ TTS
+```
+
 ## Crates
 
 Crates are grouped by role under `crates/`, and dependencies point downward
