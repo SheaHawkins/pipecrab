@@ -430,7 +430,10 @@ mod tests {
             "required": ["city"],
         });
         let def = ToolDefinition::new("weather", "look up weather", schema.clone()).unwrap();
-        assert_eq!(def.parameters, schema, "the schema value is stored verbatim");
+        assert_eq!(
+            def.parameters, schema,
+            "the schema value is stored verbatim"
+        );
     }
 
     #[test]

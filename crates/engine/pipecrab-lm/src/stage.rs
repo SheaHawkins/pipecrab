@@ -119,11 +119,7 @@ impl<M: LanguageModel> LmStage<M> {
     }
 
     /// Seed a stage with the system prompt and no tools.
-    fn build(
-        model: M,
-        system_prompt: impl Into<std::sync::Arc<str>>,
-        params: GenParams,
-    ) -> Self {
+    fn build(model: M, system_prompt: impl Into<std::sync::Arc<str>>, params: GenParams) -> Self {
         Self {
             convo: Mutex::new(Conversation {
                 messages: vec![Message::system(system_prompt)],
@@ -238,7 +234,10 @@ impl<M: LanguageModel> Stage for LmStage<M> {
 
         // Only start the generation boundary once the stream is in hand: a
         // failed start emits nothing.
-        let mut stream = self.model.generate(&convo, &self.params, &self.tools).await?;
+        let mut stream = self
+            .model
+            .generate(&convo, &self.params, &self.tools)
+            .await?;
         let _ = out.send_data(ModelFrame::GenerationStarted.into()).await;
 
         let mut reply = String::new();

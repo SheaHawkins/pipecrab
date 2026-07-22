@@ -194,7 +194,11 @@ fn user_final(s: &str) -> DataFrame {
 /// Extract the single `Generate` a triggering turn must emit, asserting the input
 /// is consumed rather than forwarded.
 fn take_generate(d: Decision<Generate>) -> Generate {
-    assert_eq!(d.disposition, Disposition::Drop, "a triggering turn is consumed");
+    assert_eq!(
+        d.disposition,
+        Disposition::Drop,
+        "a triggering turn is consumed"
+    );
     d.effects
         .into_iter()
         .next()
@@ -295,7 +299,12 @@ fn final_user_transcript_streams_append_only_partials_then_final() {
             assert_eq!(stable, t.text.len(), "an LM partial is fully stable");
         }
         for w in texts.windows(2) {
-            assert!(w[1].starts_with(w[0]), "partial {:?} must extend {:?}", w[1], w[0]);
+            assert!(
+                w[1].starts_with(w[0]),
+                "partial {:?} must extend {:?}",
+                w[1],
+                w[0]
+            );
         }
 
         // Exactly one final, carrying the whole reply.
@@ -448,9 +457,16 @@ fn barge_in_stops_the_reply_within_one_delta_and_cancels() {
         };
 
         let (_, (partials, finals), _) = futures::join!(feed, drain, driver);
-        assert_eq!(partials, 1, "only the one delta emitted before the barge-in");
+        assert_eq!(
+            partials, 1,
+            "only the one delta emitted before the barge-in"
+        );
         assert_eq!(finals, 0, "emission stops within one delta: no final");
-        assert_eq!(probe.cancels(), 1, "the barge-in must reach the engine's cancel()");
+        assert_eq!(
+            probe.cancels(),
+            1,
+            "the barge-in must reach the engine's cancel()"
+        );
         assert!(
             block_tx.is_canceled(),
             "the in-flight perform must have been dropped"
@@ -504,7 +520,11 @@ fn tool_calls_survive_in_the_assistant_message() {
         stage.perform(gen2, &out2).await.unwrap();
 
         let seen = probe.seen();
-        let Message::Assistant { content, tool_calls } = &seen[1].messages[2] else {
+        let Message::Assistant {
+            content,
+            tool_calls,
+        } = &seen[1].messages[2]
+        else {
             panic!("turn 1 commits an assistant message");
         };
         assert_eq!(&**content, "checking");
@@ -573,12 +593,19 @@ fn user_partials_are_consumed_and_non_input_frames_forward() {
     // prefill yet.
     let partial = stage.decide_data(&Transcript::user_partial("typ", 0).into());
     assert_eq!(partial.disposition, Disposition::Drop);
-    assert!(partial.effects.is_empty(), "a user partial emits nothing in v1");
+    assert!(
+        partial.effects.is_empty(),
+        "a user partial emits nothing in v1"
+    );
 
     // A final user transcript is consumed and triggers exactly one generation.
     let final_user = stage.decide_data(&user_final("done"));
     assert_eq!(final_user.disposition, Disposition::Drop);
-    assert_eq!(final_user.effects.len(), 1, "a final user turn emits one Generate");
+    assert_eq!(
+        final_user.effects.len(),
+        1,
+        "a final user turn emits one Generate"
+    );
 
     // An agent transcript (our own output looping back) and any other frame pass
     // through untouched.
@@ -602,8 +629,15 @@ fn model_input_context_appends_without_generating() {
             },
         )));
         let decision = stage.decide_data(&ctx);
-        assert_eq!(decision.disposition, Disposition::Drop, "context is consumed");
-        assert!(decision.effects.is_empty(), "context does not trigger a generation");
+        assert_eq!(
+            decision.disposition,
+            Disposition::Drop,
+            "context is consumed"
+        );
+        assert!(
+            decision.effects.is_empty(),
+            "context does not trigger a generation"
+        );
 
         // A later user turn shows the context is in history ahead of the user turn.
         let effect = take_generate(stage.decide_data(&user_final("and now?")));
@@ -615,7 +649,9 @@ fn model_input_context_appends_without_generating() {
             &convo.messages[1],
             Message::ToolResult { content, .. } if &**content == "sunny"
         ));
-        assert!(matches!(&convo.messages[2], Message::User { content } if &**content == "and now?"));
+        assert!(
+            matches!(&convo.messages[2], Message::User { content } if &**content == "and now?")
+        );
     });
 }
 
@@ -738,6 +774,10 @@ fn the_stage_tools_are_passed_to_generate() {
         let seen = probe.tools_seen();
         assert_eq!(seen.len(), 1);
         let names: Vec<&str> = seen[0].iter().map(|t| &*t.name).collect();
-        assert_eq!(names, ["book", "cancel"], "every generation receives the stage tools");
+        assert_eq!(
+            names,
+            ["book", "cancel"],
+            "every generation receives the stage tools"
+        );
     });
 }
