@@ -298,7 +298,7 @@ dependencies = [
 
 [[package]]
 name = "e2e-voice-agent"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -317,7 +317,7 @@ dependencies = [
 
 [[package]]
 name = "echo"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -801,7 +801,7 @@ dependencies = [
 
 [[package]]
 name = "lm-llamacpp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -987,7 +987,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pipecrab"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "pipecrab-core",
  "pipecrab-runtime",
@@ -995,14 +995,14 @@ dependencies = [
 
 [[package]]
 name = "pipecrab-arch"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cargo_metadata",
 ]
 
 [[package]]
 name = "pipecrab-audio"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "futures",
  "pipecrab-core",
@@ -1012,7 +1012,7 @@ dependencies = [
 
 [[package]]
 name = "pipecrab-audio-cpal"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "cpal",
@@ -1023,14 +1023,14 @@ dependencies = [
 
 [[package]]
 name = "pipecrab-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "pipecrab-test-util",
 ]
 
 [[package]]
 name = "pipecrab-lm"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1041,7 +1041,7 @@ dependencies = [
 
 [[package]]
 name = "pipecrab-lm-llamacpp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "encoding_rs",
@@ -1054,7 +1054,7 @@ dependencies = [
 
 [[package]]
 name = "pipecrab-runtime"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1064,7 +1064,7 @@ dependencies = [
 
 [[package]]
 name = "pipecrab-smoke"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1076,7 +1076,7 @@ dependencies = [
 
 [[package]]
 name = "pipecrab-stt"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1086,7 +1086,7 @@ dependencies = [
 
 [[package]]
 name = "pipecrab-stt-sherpa"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1097,11 +1097,11 @@ dependencies = [
 
 [[package]]
 name = "pipecrab-test-util"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "pipecrab-tts"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1111,7 +1111,7 @@ dependencies = [
 
 [[package]]
 name = "pipecrab-tts-sherpa"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1122,7 +1122,7 @@ dependencies = [
 
 [[package]]
 name = "pipecrab-vad"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1132,7 +1132,7 @@ dependencies = [
 
 [[package]]
 name = "pipecrab-vad-sherpa"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1440,7 +1440,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stt-sherpa"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "futures",
  "pipecrab",
@@ -1455,7 +1455,7 @@ dependencies = [
 
 [[package]]
 name = "stt-sherpa-moonshine"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "futures",
  "pipecrab",
@@ -1680,7 +1680,7 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "vad-sherpa"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "futures",
  "pipecrab",
