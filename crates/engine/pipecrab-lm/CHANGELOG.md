@@ -13,10 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `ModelStream` replace `TokenOut`/`TokenStream`; `LmStage` translates the
   stream into native `ModelFrame`s — agent transcripts for text,
   `ModelFrame::ToolCall` for calls, bracketed by `GenerationStarted`/`Finished`.
-- Provider-neutral `ToolDefinition` (JSON Schema `parameters`). `LanguageModel`
-  lifts intrinsic tools via `tool_definitions()`; `LmStage::with_tools`/`add_tools`
-  configure more, merged and duplicate-checked into the effective set passed to
-  every generation.
+- Provider-neutral `ToolDefinition` (JSON Schema `parameters`).
+  `LmStage::with_tools`/`add_tools` configure tools on the stage, duplicate-checked
+  and passed to every generation. An adapter wrapping a higher-level agent keeps
+  its own registered tools internal.
 - `ModelInput::Context` (append without generating) and `ModelInput::Respond`
   (append and generate) input paths on `LmStage`.
 - `LmConfigError`, and tool/stream variants on `LmError`.

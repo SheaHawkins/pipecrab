@@ -72,11 +72,10 @@ enum Step {
 }
 
 /// A hardware-free [`LanguageModel`]: yields scripted deltas, records every call,
-/// exposes intrinsic tools, and — when built with [`parking`](ScriptedLm::parking)
-/// — parks its first generation after one delta so a barge-in can drop it.
+/// and — when built with [`parking`](ScriptedLm::parking) — parks its first
+/// generation after one delta so a barge-in can drop it.
 struct ScriptedLm {
     deltas: Vec<ModelDelta>,
-    intrinsic: Vec<ToolDefinition>,
     /// `Some` until the first (parking) generation consumes it; later generations
     /// finish normally.
     park: Mutex<Option<(mpsc::Sender<()>, oneshot::Receiver<()>)>>,
@@ -89,18 +88,9 @@ impl ScriptedLm {
     where
         I: IntoIterator<Item = ModelDelta>,
     {
-        Self::with_intrinsic(deltas, Vec::new())
-    }
-
-    /// A finishing model that also advertises `intrinsic` tool definitions.
-    fn with_intrinsic<I>(deltas: I, intrinsic: Vec<ToolDefinition>) -> (Self, Arc<LmProbe>)
-    where
-        I: IntoIterator<Item = ModelDelta>,
-    {
         let probe = Arc::new(LmProbe::default());
         let me = Self {
             deltas: deltas.into_iter().collect(),
-            intrinsic,
             park: Mutex::new(None),
             probe: probe.clone(),
         };
@@ -121,7 +111,6 @@ impl ScriptedLm {
         let probe = Arc::new(LmProbe::default());
         let me = Self {
             deltas: deltas.into_iter().collect(),
-            intrinsic: Vec::new(),
             park: Mutex::new(Some((reached, block))),
             probe: probe.clone(),
         };
@@ -132,10 +121,6 @@ impl ScriptedLm {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl LanguageModel for ScriptedLm {
-    fn tool_definitions(&self) -> Vec<ToolDefinition> {
-        self.intrinsic.clone()
-    }
-
     async fn generate(
         &self,
         convo: &Conversation,
@@ -692,14 +677,6 @@ fn tool_results_survive_conversation_snapshots() {
 // --- Tool configuration. -----------------------------------------------------
 
 #[test]
-fn intrinsic_model_tools_are_exposed() {
-    let (mock, _probe) = ScriptedLm::with_intrinsic([text("x")], vec![tool("search")]);
-    let stage = LmStage::new(mock, "sys");
-    let names: Vec<&str> = stage.tools().iter().map(|t| &*t.name).collect();
-    assert_eq!(names, ["search"]);
-}
-
-#[test]
 fn stage_added_tools_are_exposed() {
     let (mock, _probe) = ScriptedLm::finishing([text("x")]);
     let stage = LmStage::with_tools(mock, "sys", [tool("book"), tool("cancel")]).unwrap();
@@ -708,15 +685,14 @@ fn stage_added_tools_are_exposed() {
 }
 
 #[test]
-fn intrinsic_and_stage_tools_merge() {
-    let (mock, _probe) = ScriptedLm::with_intrinsic([text("x")], vec![tool("search")]);
-    let stage = LmStage::with_tools(mock, "sys", [tool("book")]).unwrap();
-    let names: Vec<&str> = stage.tools().iter().map(|t| &*t.name).collect();
-    assert_eq!(names, ["search", "book"], "intrinsic first, then stage-added");
+fn new_stage_has_no_tools() {
+    let (mock, _probe) = ScriptedLm::finishing([text("x")]);
+    let stage = LmStage::new(mock, "sys");
+    assert!(stage.tools().is_empty(), "a bare stage carries no tools");
 }
 
 #[test]
-fn add_tools_extends_the_effective_set() {
+fn add_tools_extends_the_tool_set() {
     let (mock, _probe) = ScriptedLm::finishing([text("x")]);
     let stage = LmStage::new(mock, "sys")
         .add_tools([tool("a")])
@@ -738,20 +714,23 @@ fn duplicate_stage_tool_names_are_rejected() {
 }
 
 #[test]
-fn a_stage_tool_duplicating_an_intrinsic_tool_is_rejected() {
-    let (mock, _probe) = ScriptedLm::with_intrinsic([text("x")], vec![tool("search")]);
-    let result = LmStage::with_tools(mock, "sys", [tool("search")]);
+fn a_duplicate_added_after_construction_is_rejected() {
+    let (mock, _probe) = ScriptedLm::finishing([text("x")]);
+    let result = LmStage::new(mock, "sys")
+        .add_tools([tool("book")])
+        .unwrap()
+        .add_tools([tool("book")]);
     assert!(
-        matches!(result, Err(LmConfigError::DuplicateToolName { name }) if &*name == "search"),
-        "a stage tool duplicating an intrinsic tool is rejected",
+        matches!(result, Err(LmConfigError::DuplicateToolName { name }) if &*name == "book"),
+        "re-adding an existing tool name is rejected",
     );
 }
 
 #[test]
-fn the_effective_tool_set_is_passed_to_generate() {
+fn the_stage_tools_are_passed_to_generate() {
     block_on(async {
-        let (mock, probe) = ScriptedLm::with_intrinsic([text("x")], vec![tool("search")]);
-        let mut stage = LmStage::with_tools(mock, "sys", [tool("book")]).unwrap();
+        let (mock, probe) = ScriptedLm::finishing([text("x")]);
+        let mut stage = LmStage::with_tools(mock, "sys", [tool("book"), tool("cancel")]).unwrap();
         let effect = take_generate(stage.decide_data(&user_final("hi")));
         let (out, _in) = link(8);
         stage.perform(effect, &out).await.unwrap();
@@ -759,6 +738,6 @@ fn the_effective_tool_set_is_passed_to_generate() {
         let seen = probe.tools_seen();
         assert_eq!(seen.len(), 1);
         let names: Vec<&str> = seen[0].iter().map(|t| &*t.name).collect();
-        assert_eq!(names, ["search", "book"], "every generation receives the merged set");
+        assert_eq!(names, ["book", "cancel"], "every generation receives the stage tools");
     });
 }

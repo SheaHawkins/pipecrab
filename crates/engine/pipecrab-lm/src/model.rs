@@ -286,16 +286,12 @@ pub type ModelStream = futures::stream::LocalBoxStream<'static, Result<ModelDelt
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait LanguageModel: MaybeSendSync {
-    /// Tool definitions intrinsically configured on this model implementation —
-    /// e.g. the tools already registered on a wrapped Rig agent. The default is
-    /// empty. [`LmStage`](crate::LmStage) merges these with any tools configured
-    /// on the stage before generating.
-    fn tool_definitions(&self) -> Vec<ToolDefinition> {
-        Vec::new()
-    }
-
     /// Generate a reply to `conversation` under `params` with `tools` available,
     /// yielding [`ModelDelta`]s.
+    ///
+    /// `tools` are the tools configured on the stage. An implementation that
+    /// wraps a higher-level agent (e.g. a Rig agent) keeps its own registered
+    /// tools internal and uses them here directly, alongside any in `tools`.
     ///
     /// Takes `&self`: like every [`Stage::perform`](pipecrab_runtime::Stage::perform),
     /// generation must not mutate observable state, so the run loop can drop an

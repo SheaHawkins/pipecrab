@@ -24,14 +24,14 @@
 //!
 //! [`ToolDefinition::parameters`] is a [`serde_json::Value`] so a framework's
 //! schema reaches a hosted adapter without a string round trip. Core stays
-//! JSON-free: a [`ToolCall`](pipecrab_core::ToolCall) carries validated arguments
-//! as JSON *text*, and [`ModelDelta::tool_call`] normalizes a JSON object into it.
+//! JSON-free: a [`ToolCall`] carries validated arguments as JSON *text*, and
+//! [`ModelDelta::tool_call`] normalizes a JSON object into it.
 //! Provider-specific streaming, tool-call fragments, and constrained output are
-//! parsed *inside* the implementation; the stage sees only complete calls. Tools
-//! reach a generation two ways — [`LanguageModel::tool_definitions`] lifts those
-//! intrinsic to an implementation (e.g. a wrapped Rig agent), and
-//! [`LmStage::with_tools`] / [`add_tools`](LmStage::add_tools) add more — and the
-//! stage merges the two, rejecting duplicate names.
+//! parsed *inside* the implementation; the stage sees only complete calls.
+//! [`LmStage::with_tools`] / [`add_tools`](LmStage::add_tools) configure tools on
+//! the stage — validated (duplicate names rejected) and passed to every
+//! generation. An adapter that wraps a higher-level agent (e.g. Rig) keeps its own
+//! registered tools internal, so the stage neither reads nor copies them.
 //!
 //! The chat-context types ([`Message`], [`Conversation`]) preserve structured
 //! assistant turns, tool calls, tool results, and external events so a hosted

@@ -40,10 +40,11 @@ use crate::{
 ///
 /// # Tools
 ///
-/// The effective tool set — [`LanguageModel::tool_definitions`] merged with tools
-/// configured via [`with_tools`](Self::with_tools) / [`add_tools`](Self::add_tools)
-/// — is validated once at configuration (duplicate names rejected) and passed to
-/// every generation.
+/// Tools configured via [`with_tools`](Self::with_tools) /
+/// [`add_tools`](Self::add_tools) are validated once (duplicate names rejected)
+/// and passed to every generation. An adapter that wraps a higher-level agent
+/// (e.g. Rig) keeps its own registered tools internal; the stage neither reads nor
+/// copies them.
 ///
 /// # State and the decide/perform split
 ///
@@ -75,7 +76,7 @@ pub struct LmStage<M: LanguageModel> {
 
 impl<M: LanguageModel> LmStage<M> {
     /// Wrap `model` as a stage seeded with `system_prompt`, using default
-    /// [`GenParams`] and the model's intrinsic tools.
+    /// [`GenParams`] and no stage tools.
     pub fn new(model: M, system_prompt: impl Into<std::sync::Arc<str>>) -> Self {
         Self::build(model, system_prompt, GenParams::default())
     }
@@ -89,10 +90,9 @@ impl<M: LanguageModel> LmStage<M> {
         Self::build(model, system_prompt, params)
     }
 
-    /// Wrap `model` as a stage seeded with `system_prompt` and additional stage
-    /// `tools`, merged with the model's intrinsic tools.
+    /// Wrap `model` as a stage seeded with `system_prompt` and stage `tools`.
     ///
-    /// Fails if the effective set has an invalid or duplicate tool.
+    /// Fails if the set has an invalid or duplicate tool.
     pub fn with_tools(
         model: M,
         system_prompt: impl Into<std::sync::Arc<str>>,
@@ -113,23 +113,22 @@ impl<M: LanguageModel> LmStage<M> {
         Ok(self)
     }
 
-    /// The effective tool set passed to every generation.
+    /// The stage tools passed to every generation.
     pub fn tools(&self) -> &[ToolDefinition] {
         &self.tools
     }
 
-    /// Seed a stage with the system prompt and the model's intrinsic tools.
+    /// Seed a stage with the system prompt and no tools.
     fn build(
         model: M,
         system_prompt: impl Into<std::sync::Arc<str>>,
         params: GenParams,
     ) -> Self {
-        let tools = model.tool_definitions();
         Self {
             convo: Mutex::new(Conversation {
                 messages: vec![Message::system(system_prompt)],
             }),
-            tools,
+            tools: Vec::new(),
             params,
             model,
         }
