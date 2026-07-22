@@ -16,6 +16,9 @@ layer = "trait"
 pipecrab-core    = { workspace = true }
 pipecrab-runtime = { workspace = true }
 async-trait      = "0.1"
-# A lib-level dep (not just dev): the `TokenStream` alias is a boxed
+# A lib-level dep (not just dev): the `ModelStream` alias is a boxed
 # `futures::Stream`, so the trait's public surface names `futures` types.
 futures          = "0.3"
+# The structured-JSON boundary: `ToolDefinition::parameters` is a JSON Schema
+# and `ModelDelta::tool_call` accepts structured arguments. Core stays JSON-free.
+serde_json       = { workspace = true }

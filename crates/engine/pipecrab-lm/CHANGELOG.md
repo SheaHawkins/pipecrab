@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Structured, tool-aware generation. `ModelDelta` (text or a complete `ToolCall`)
+  and `ModelStream` replace `TokenOut`/`TokenStream`; `LmStage` translates the
+  stream into native `ModelFrame`s — agent transcripts for text,
+  `ModelFrame::ToolCall` for calls, bracketed by `GenerationStarted`/`Finished`.
+- Provider-neutral `ToolDefinition` (JSON Schema `parameters`).
+  `LmStage::with_tools`/`add_tools` configure tools on the stage, duplicate-checked
+  and passed to every generation. An adapter wrapping a higher-level agent keeps
+  its own registered tools internal.
+- `ModelInput::Context` (append without generating) and `ModelInput::Respond`
+  (append and generate) input paths on `LmStage`.
+- `LmConfigError`, and tool/stream variants on `LmError`.
+
+### Changed
+
+- `LanguageModel::generate` takes the effective `&[ToolDefinition]`.
+- `Message` is a structured enum (system/user/assistant-with-tool-calls/tool-result/event),
+  replacing the `ChatRole` struct, so conversation history preserves tool calls,
+  tool results, and events. Removed `ChatRole`, `TokenOut`, `TokenStream`.
+
 ## [0.4.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-lm-v0.3.0...pipecrab-lm-v0.4.0) - 2026-07-17
 
 ### Other

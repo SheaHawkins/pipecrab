@@ -1,13 +1,14 @@
-//! `LmStage` adapts a `LanguageModel` into a stage: on a final user `Transcript`
-//! it appends the turn to the running conversation and streams a generated reply
-//! back as agent transcripts — append-only partials, then a final — recording the
-//! assistant turn only once it completes.
+//! `LmStage` adapts a `LanguageModel` into a stage: it appends the triggering
+//! turn to the running conversation and translates the model's `ModelDelta`
+//! stream into native frames — cumulative agent transcript partials then a final
+//! for text, `ModelFrame::ToolCall` for calls, bracketed by
+//! `GenerationStarted`/`GenerationFinished` — committing one structured assistant
+//! turn only once the stream completes.
 //!
-//! The append-only streaming and barge-in integration go through the real
-//! pipeline; the conversation-recording invariants are pinned at the `decide`/
-//! `perform` level, where the (private) conversation is observed indirectly via
-//! the scripted mock's record of what each later generation was asked to generate
-//! from.
+//! Frame ordering and barge-in go through the real pipeline; the conversation
+//! invariants are pinned at the `decide`/`perform` level, where the (private)
+//! conversation is observed indirectly via the scripted mock's record of what
+//! each later generation was asked to generate from.
 //!
 //! Deterministic and tokio-free (`block_on`), so it rides the default
 //! `cargo test --workspace` path.
@@ -22,13 +23,15 @@ use futures::future::FutureExt;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use pipecrab_core::{
-    DataFrame, Decision, Direction, Disposition, Finality, Processor, Role, SystemFrame, Transcript,
+    DataFrame, Decision, Direction, Disposition, Finality, ModelFrame, ModelInput, ModelMessage,
+    Processor, Role, SystemFrame, Transcript,
 };
 use pipecrab_lm::{
-    ChatRole, Conversation, GenParams, Generate, LanguageModel, LmError, LmStage, TokenOut,
-    TokenStream,
+    Conversation, GenParams, Generate, LanguageModel, LmConfigError, LmError, LmStage, Message,
+    ModelDelta, ModelStream, ToolDefinition,
 };
 use pipecrab_runtime::{PipelineBuilder, Received, Stage, link};
+use serde_json::json;
 
 // --- A scripted LanguageModel mock. ------------------------------------------
 
@@ -37,6 +40,7 @@ use pipecrab_runtime::{PipelineBuilder, Received, Stage, link};
 struct LmProbe {
     cancels: AtomicUsize,
     seen: Mutex<Vec<Conversation>>,
+    tools_seen: Mutex<Vec<Vec<ToolDefinition>>>,
 }
 
 impl LmProbe {
@@ -51,12 +55,17 @@ impl LmProbe {
     fn seen(&self) -> Vec<Conversation> {
         self.seen.lock().unwrap().clone()
     }
+
+    /// The effective tool sets passed to `generate`, in call order.
+    fn tools_seen(&self) -> Vec<Vec<ToolDefinition>> {
+        self.tools_seen.lock().unwrap().clone()
+    }
 }
 
 /// One `unfold` step of a parked generation stream.
 enum Step {
     /// Emit this delta, then advance to [`Step::Park`].
-    Emit(Arc<str>, mpsc::Sender<()>, oneshot::Receiver<()>),
+    Emit(ModelDelta, mpsc::Sender<()>, oneshot::Receiver<()>),
     /// Signal the test that the stream has parked, then wait to be released — a
     /// barge-in drops this future (cancelling `block`) before it resolves.
     Park(mpsc::Sender<()>, oneshot::Receiver<()>),
@@ -64,9 +73,9 @@ enum Step {
 
 /// A hardware-free [`LanguageModel`]: yields scripted deltas, records every call,
 /// and — when built with [`parking`](ScriptedLm::parking) — parks its first
-/// generation after one delta so a barge-in can drop it in flight.
+/// generation after one delta so a barge-in can drop it.
 struct ScriptedLm {
-    deltas: Vec<Arc<str>>,
+    deltas: Vec<ModelDelta>,
     /// `Some` until the first (parking) generation consumes it; later generations
     /// finish normally.
     park: Mutex<Option<(mpsc::Sender<()>, oneshot::Receiver<()>)>>,
@@ -75,14 +84,13 @@ struct ScriptedLm {
 
 impl ScriptedLm {
     /// A model that yields `deltas` and completes on every generation.
-    fn finishing<I, S>(deltas: I) -> (Self, Arc<LmProbe>)
+    fn finishing<I>(deltas: I) -> (Self, Arc<LmProbe>)
     where
-        I: IntoIterator<Item = S>,
-        S: Into<Arc<str>>,
+        I: IntoIterator<Item = ModelDelta>,
     {
         let probe = Arc::new(LmProbe::default());
         let me = Self {
-            deltas: deltas.into_iter().map(Into::into).collect(),
+            deltas: deltas.into_iter().collect(),
             park: Mutex::new(None),
             probe: probe.clone(),
         };
@@ -92,18 +100,17 @@ impl ScriptedLm {
     /// A model whose **first** generation yields one delta, signals on `reached`,
     /// then parks on `block` (a barge-in drops the future here); every later
     /// generation finishes normally.
-    fn parking<I, S>(
+    fn parking<I>(
         deltas: I,
         reached: mpsc::Sender<()>,
         block: oneshot::Receiver<()>,
     ) -> (Self, Arc<LmProbe>)
     where
-        I: IntoIterator<Item = S>,
-        S: Into<Arc<str>>,
+        I: IntoIterator<Item = ModelDelta>,
     {
         let probe = Arc::new(LmProbe::default());
         let me = Self {
-            deltas: deltas.into_iter().map(Into::into).collect(),
+            deltas: deltas.into_iter().collect(),
             park: Mutex::new(Some((reached, block))),
             probe: probe.clone(),
         };
@@ -118,8 +125,10 @@ impl LanguageModel for ScriptedLm {
         &self,
         convo: &Conversation,
         _params: &GenParams,
-    ) -> Result<TokenStream, LmError> {
+        tools: &[ToolDefinition],
+    ) -> Result<ModelStream, LmError> {
         self.probe.seen.lock().unwrap().push(convo.clone());
+        self.probe.tools_seen.lock().unwrap().push(tools.to_vec());
         let deltas = self.deltas.clone();
         // The first generation parks (if this mock was built to); later ones run
         // to completion.
@@ -131,7 +140,7 @@ impl LanguageModel for ScriptedLm {
             let stream = futures::stream::unfold(init, |step| async move {
                 match step {
                     Step::Emit(delta, reached, block) => {
-                        Some((Ok(TokenOut { delta }), Step::Park(reached, block)))
+                        Some((Ok(delta), Step::Park(reached, block)))
                     }
                     Step::Park(mut reached, block) => {
                         let _ = reached.send(()).await;
@@ -142,10 +151,7 @@ impl LanguageModel for ScriptedLm {
             });
             Ok(stream.boxed())
         } else {
-            let items: Vec<Result<TokenOut, LmError>> = deltas
-                .into_iter()
-                .map(|delta| Ok(TokenOut { delta }))
-                .collect();
+            let items: Vec<Result<ModelDelta, LmError>> = deltas.into_iter().map(Ok).collect();
             Ok(futures::stream::iter(items).boxed())
         }
     }
@@ -165,28 +171,86 @@ impl LanguageModel for ScriptedLm {
 
 // --- Helpers. ----------------------------------------------------------------
 
-/// A final user transcript as a data frame — the input that drives a generation.
-fn user_final(text: &str) -> DataFrame {
-    Transcript::user_final(text).into()
+/// A text delta.
+fn text(s: &str) -> ModelDelta {
+    ModelDelta::Text(Arc::from(s))
 }
 
-/// Extract the single `Generate` a final user turn must emit, asserting it is
-/// consumed rather than forwarded.
+/// A tool-call delta with empty arguments.
+fn call(id: &str, name: &str) -> ModelDelta {
+    ModelDelta::tool_call(id, name, json!({})).expect("valid tool call")
+}
+
+/// A tool definition with a trivial object schema.
+fn tool(name: &str) -> ToolDefinition {
+    ToolDefinition::new(name, "desc", json!({ "type": "object" })).expect("valid tool")
+}
+
+/// A final user transcript as a data frame — the input that drives a generation.
+fn user_final(s: &str) -> DataFrame {
+    Transcript::user_final(s).into()
+}
+
+/// Extract the single `Generate` a triggering turn must emit, asserting the input
+/// is consumed rather than forwarded.
 fn take_generate(d: Decision<Generate>) -> Generate {
     assert_eq!(
         d.disposition,
         Disposition::Drop,
-        "a final user turn is consumed"
+        "a triggering turn is consumed"
     );
     d.effects
         .into_iter()
         .next()
-        .expect("a final user turn emits one Generate")
+        .expect("a triggering turn emits one Generate")
 }
 
-/// The role sequence of a recorded conversation.
-fn roles(c: &Conversation) -> Vec<ChatRole> {
-    c.messages.iter().map(|m| m.role).collect()
+/// Drive one generation over a fresh channel and return the frames it emitted, in
+/// order.
+async fn run_generation(stage: &LmStage<ScriptedLm>, effect: Generate) -> Vec<DataFrame> {
+    let (out, mut inbound) = link(64);
+    stage.perform(effect, &out).await.unwrap();
+    drop(out); // close the channel so the drain terminates
+    let mut frames = Vec::new();
+    while let Some(received) = inbound.recv().await {
+        if let Received::Data(frame) = received {
+            frames.push(frame);
+        }
+    }
+    frames
+}
+
+/// Classify a frame into a compact tag for order assertions.
+#[derive(Debug, PartialEq, Eq)]
+enum Tag {
+    Started,
+    Finished,
+    Call(String),
+    Partial(String),
+    Final(String),
+}
+
+fn tag(frame: &DataFrame) -> Tag {
+    match frame {
+        DataFrame::Model(ModelFrame::GenerationStarted) => Tag::Started,
+        DataFrame::Model(ModelFrame::GenerationFinished) => Tag::Finished,
+        DataFrame::Model(ModelFrame::ToolCall(c)) => Tag::Call(c.name.to_string()),
+        DataFrame::Transcript(Transcript {
+            role: Role::Agent,
+            finality: Finality::Partial { .. },
+            text,
+        }) => Tag::Partial(text.to_string()),
+        DataFrame::Transcript(Transcript {
+            role: Role::Agent,
+            finality: Finality::Final,
+            text,
+        }) => Tag::Final(text.to_string()),
+        other => panic!("unexpected frame in generation output: {other:?}"),
+    }
+}
+
+fn tags(frames: &[DataFrame]) -> Vec<Tag> {
+    frames.iter().map(tag).collect()
 }
 
 // --- Tests. ------------------------------------------------------------------
@@ -194,7 +258,7 @@ fn roles(c: &Conversation) -> Vec<ChatRole> {
 #[test]
 fn final_user_transcript_streams_append_only_partials_then_final() {
     block_on(async {
-        let (mock, _probe) = ScriptedLm::finishing(["Hel", "lo", " there"]);
+        let (mock, _probe) = ScriptedLm::finishing([text("Hel"), text("lo"), text(" there")]);
         let stage = LmStage::new(mock, "you are a test");
         let (ends, driver) = PipelineBuilder::new().stage(stage).build().start();
         let input = ends.input;
@@ -250,11 +314,113 @@ fn final_user_transcript_streams_append_only_partials_then_final() {
 }
 
 #[test]
+fn text_generation_is_bracketed_by_started_and_finished() {
+    block_on(async {
+        let (mock, _probe) = ScriptedLm::finishing([text("Sure"), text(" thing.")]);
+        let mut stage = LmStage::new(mock, "sys");
+        let effect = take_generate(stage.decide_data(&user_final("hi")));
+        let frames = run_generation(&stage, effect).await;
+
+        assert_eq!(
+            tags(&frames),
+            [
+                Tag::Started,
+                Tag::Partial("Sure".into()),
+                Tag::Partial("Sure thing.".into()),
+                Tag::Final("Sure thing.".into()),
+                Tag::Finished,
+            ]
+        );
+    });
+}
+
+#[test]
+fn text_then_tool_call_preserves_order() {
+    block_on(async {
+        let (mock, _probe) = ScriptedLm::finishing([text("Let me check."), call("c1", "lookup")]);
+        let mut stage = LmStage::new(mock, "sys");
+        let effect = take_generate(stage.decide_data(&user_final("weather?")));
+        let frames = run_generation(&stage, effect).await;
+
+        assert_eq!(
+            tags(&frames),
+            [
+                Tag::Started,
+                Tag::Partial("Let me check.".into()),
+                Tag::Call("lookup".into()),
+                Tag::Final("Let me check.".into()),
+                Tag::Finished,
+            ],
+            "the tool call lands between the partial and the final, preserving stream order",
+        );
+    });
+}
+
+#[test]
+fn tool_call_then_text_preserves_order() {
+    block_on(async {
+        let (mock, _probe) = ScriptedLm::finishing([call("c1", "lookup"), text("On it.")]);
+        let mut stage = LmStage::new(mock, "sys");
+        let effect = take_generate(stage.decide_data(&user_final("weather?")));
+        let frames = run_generation(&stage, effect).await;
+
+        // Text after a tool call is not buffered to the end: the partial follows
+        // the call.
+        assert_eq!(
+            tags(&frames),
+            [
+                Tag::Started,
+                Tag::Call("lookup".into()),
+                Tag::Partial("On it.".into()),
+                Tag::Final("On it.".into()),
+                Tag::Finished,
+            ]
+        );
+    });
+}
+
+#[test]
+fn tool_call_only_response_emits_no_transcript() {
+    block_on(async {
+        let (mock, _probe) = ScriptedLm::finishing([call("c1", "lookup")]);
+        let mut stage = LmStage::new(mock, "sys");
+        let effect = take_generate(stage.decide_data(&user_final("weather?")));
+        let frames = run_generation(&stage, effect).await;
+
+        assert_eq!(
+            tags(&frames),
+            [Tag::Started, Tag::Call("lookup".into()), Tag::Finished],
+            "a tool-call-only turn emits no empty final transcript",
+        );
+    });
+}
+
+#[test]
+fn multiple_tool_calls_each_emit_a_frame() {
+    block_on(async {
+        let (mock, _probe) = ScriptedLm::finishing([call("c1", "lookup"), call("c2", "book")]);
+        let mut stage = LmStage::new(mock, "sys");
+        let effect = take_generate(stage.decide_data(&user_final("plan a trip")));
+        let frames = run_generation(&stage, effect).await;
+
+        assert_eq!(
+            tags(&frames),
+            [
+                Tag::Started,
+                Tag::Call("lookup".into()),
+                Tag::Call("book".into()),
+                Tag::Finished,
+            ]
+        );
+    });
+}
+
+#[test]
 fn barge_in_stops_the_reply_within_one_delta_and_cancels() {
     block_on(async {
         let (reached_tx, mut reached_rx) = mpsc::channel::<()>(1);
         let (block_tx, block_rx) = oneshot::channel::<()>();
-        let (mock, probe) = ScriptedLm::parking(["Hel", "lo"], reached_tx, block_rx);
+        let (mock, probe) = ScriptedLm::parking([text("Hel"), text("lo")], reached_tx, block_rx);
         let stage = LmStage::new(mock, "sys");
         let (ends, driver) = PipelineBuilder::new().stage(stage).build().start();
         let input = ends.input;
@@ -311,7 +477,7 @@ fn barge_in_stops_the_reply_within_one_delta_and_cancels() {
 #[test]
 fn assistant_turn_is_recorded_across_generations() {
     block_on(async {
-        let (mock, probe) = ScriptedLm::finishing(["sure"]);
+        let (mock, probe) = ScriptedLm::finishing([text("sure")]);
         let mut stage = LmStage::new(mock, "sys");
 
         // Turn 1: the user speaks; the stage generates and records the reply.
@@ -326,18 +492,45 @@ fn assistant_turn_is_recorded_across_generations() {
 
         let seen = probe.seen();
         assert_eq!(seen.len(), 2, "one generation per user turn");
-        assert_eq!(roles(&seen[0]), [ChatRole::System, ChatRole::User]);
-        assert_eq!(
-            roles(&seen[1]),
-            [
-                ChatRole::System,
-                ChatRole::User,
-                ChatRole::Assistant,
-                ChatRole::User
-            ],
-            "turn 1's reply is recorded before turn 2 generates",
-        );
-        assert_eq!(&*seen[1].messages[2].content, "sure");
+        assert!(matches!(seen[0].messages[0], Message::System { .. }));
+        assert!(matches!(seen[0].messages[1], Message::User { .. }));
+        // Turn 1's assistant reply is recorded before turn 2 generates.
+        assert!(matches!(
+            &seen[1].messages[2],
+            Message::Assistant { content, tool_calls }
+                if &**content == "sure" && tool_calls.is_empty()
+        ));
+        assert!(matches!(&seen[1].messages[3], Message::User { content } if &**content == "again"));
+    });
+}
+
+#[test]
+fn tool_calls_survive_in_the_assistant_message() {
+    block_on(async {
+        let (mock, probe) = ScriptedLm::finishing([text("checking"), call("c1", "lookup")]);
+        let mut stage = LmStage::new(mock, "sys");
+
+        let gen1 = take_generate(stage.decide_data(&user_final("weather?")));
+        let (out, _in) = link(16);
+        stage.perform(gen1, &out).await.unwrap();
+
+        // A second turn reveals the committed assistant message.
+        let gen2 = take_generate(stage.decide_data(&user_final("thanks")));
+        let (out2, _in2) = link(8);
+        stage.perform(gen2, &out2).await.unwrap();
+
+        let seen = probe.seen();
+        let Message::Assistant {
+            content,
+            tool_calls,
+        } = &seen[1].messages[2]
+        else {
+            panic!("turn 1 commits an assistant message");
+        };
+        assert_eq!(&**content, "checking");
+        assert_eq!(tool_calls.len(), 1, "the tool call is preserved in history");
+        assert_eq!(&*tool_calls[0].id, "c1");
+        assert_eq!(&*tool_calls[0].name, "lookup");
     });
 }
 
@@ -347,7 +540,7 @@ fn a_barge_in_records_no_assistant_turn() {
         let (reached_tx, mut reached_rx) = mpsc::channel::<()>(1);
         // Keep `_block_tx` alive so the parked generation only unparks when dropped.
         let (_block_tx, block_rx) = oneshot::channel::<()>();
-        let (mock, probe) = ScriptedLm::parking(["Hel", "lo"], reached_tx, block_rx);
+        let (mock, probe) = ScriptedLm::parking([text("Hel"), text("lo")], reached_tx, block_rx);
         let mut stage = LmStage::new(mock, "sys");
 
         // Turn 1: drive the generation until it parks mid-stream, then drop it —
@@ -372,17 +565,28 @@ fn a_barge_in_records_no_assistant_turn() {
         stage.perform(gen2, &out2).await.unwrap();
 
         let seen = probe.seen();
+        let roles: Vec<&str> = seen[1]
+            .messages
+            .iter()
+            .map(|m| match m {
+                Message::System { .. } => "system",
+                Message::User { .. } => "user",
+                Message::Assistant { .. } => "assistant",
+                Message::ToolResult { .. } => "tool",
+                Message::Event { .. } => "event",
+            })
+            .collect();
         assert_eq!(
-            roles(&seen[1]),
-            [ChatRole::System, ChatRole::User, ChatRole::User],
+            roles,
+            ["system", "user", "user"],
             "an interrupted generation records no assistant turn (documented v1 limitation)",
         );
     });
 }
 
 #[test]
-fn user_partials_are_consumed_and_non_user_frames_forward() {
-    let (mock, _probe) = ScriptedLm::finishing(["x"]);
+fn user_partials_are_consumed_and_non_input_frames_forward() {
+    let (mock, _probe) = ScriptedLm::finishing([text("x")]);
     let mut stage = LmStage::new(mock, "sys");
 
     // A partial user transcript is consumed with no effect — v1 has no speculative
@@ -408,4 +612,172 @@ fn user_partials_are_consumed_and_non_user_frames_forward() {
     let agent = stage.decide_data(&Transcript::agent_final("hello").into());
     assert_eq!(agent.disposition, Disposition::Forward);
     assert!(agent.effects.is_empty());
+}
+
+#[test]
+fn model_input_context_appends_without_generating() {
+    block_on(async {
+        let (mock, probe) = ScriptedLm::finishing([text("ok")]);
+        let mut stage = LmStage::new(mock, "sys");
+
+        // A Context tool result is appended but does not generate.
+        let ctx = DataFrame::Model(ModelFrame::Input(ModelInput::Context(
+            ModelMessage::ToolResult {
+                tool_call_id: Arc::from("c1"),
+                name: Arc::from("lookup"),
+                content: Arc::from("sunny"),
+            },
+        )));
+        let decision = stage.decide_data(&ctx);
+        assert_eq!(
+            decision.disposition,
+            Disposition::Drop,
+            "context is consumed"
+        );
+        assert!(
+            decision.effects.is_empty(),
+            "context does not trigger a generation"
+        );
+
+        // A later user turn shows the context is in history ahead of the user turn.
+        let effect = take_generate(stage.decide_data(&user_final("and now?")));
+        let (out, _in) = link(8);
+        stage.perform(effect, &out).await.unwrap();
+
+        let convo = &probe.seen()[0];
+        assert!(matches!(
+            &convo.messages[1],
+            Message::ToolResult { content, .. } if &**content == "sunny"
+        ));
+        assert!(
+            matches!(&convo.messages[2], Message::User { content } if &**content == "and now?")
+        );
+    });
+}
+
+#[test]
+fn model_input_respond_appends_and_generates() {
+    block_on(async {
+        let (mock, probe) = ScriptedLm::finishing([text("answering")]);
+        let mut stage = LmStage::new(mock, "sys");
+
+        let respond = DataFrame::Model(ModelFrame::Input(ModelInput::Respond(
+            ModelMessage::Event {
+                source: Arc::from("dispatch"),
+                kind: Arc::from("question"),
+                content: Arc::from("which seat?"),
+            },
+        )));
+        let effect = take_generate(stage.decide_data(&respond));
+        let (out, _in) = link(16);
+        stage.perform(effect, &out).await.unwrap();
+
+        let convo = &probe.seen()[0];
+        assert!(matches!(
+            &convo.messages[1],
+            Message::Event { source, kind, content }
+                if &**source == "dispatch" && &**kind == "question" && &**content == "which seat?"
+        ));
+    });
+}
+
+#[test]
+fn tool_results_survive_conversation_snapshots() {
+    block_on(async {
+        let (mock, probe) = ScriptedLm::finishing([text("done")]);
+        let mut stage = LmStage::new(mock, "sys");
+
+        // A tool call, then its result arriving as context, then a follow-up.
+        let _ = stage.decide_data(&user_final("weather?"));
+        let ctx = DataFrame::Model(ModelFrame::Input(ModelInput::Context(
+            ModelMessage::ToolResult {
+                tool_call_id: Arc::from("c1"),
+                name: Arc::from("lookup"),
+                content: Arc::from("sunny"),
+            },
+        )));
+        let _ = stage.decide_data(&ctx);
+        let effect = take_generate(stage.decide_data(&user_final("thanks")));
+        let (out, _in) = link(8);
+        stage.perform(effect, &out).await.unwrap();
+
+        let convo = &probe.seen()[0];
+        let has_tool_result = convo.messages.iter().any(|m| {
+            matches!(m, Message::ToolResult { tool_call_id, content, .. }
+                if &**tool_call_id == "c1" && &**content == "sunny")
+        });
+        assert!(has_tool_result, "the tool result persists in the snapshot");
+    });
+}
+
+// --- Tool configuration. -----------------------------------------------------
+
+#[test]
+fn stage_added_tools_are_exposed() {
+    let (mock, _probe) = ScriptedLm::finishing([text("x")]);
+    let stage = LmStage::with_tools(mock, "sys", [tool("book"), tool("cancel")]).unwrap();
+    let names: Vec<&str> = stage.tools().iter().map(|t| &*t.name).collect();
+    assert_eq!(names, ["book", "cancel"]);
+}
+
+#[test]
+fn new_stage_has_no_tools() {
+    let (mock, _probe) = ScriptedLm::finishing([text("x")]);
+    let stage = LmStage::new(mock, "sys");
+    assert!(stage.tools().is_empty(), "a bare stage carries no tools");
+}
+
+#[test]
+fn add_tools_extends_the_tool_set() {
+    let (mock, _probe) = ScriptedLm::finishing([text("x")]);
+    let stage = LmStage::new(mock, "sys")
+        .add_tools([tool("a")])
+        .unwrap()
+        .add_tools([tool("b")])
+        .unwrap();
+    let names: Vec<&str> = stage.tools().iter().map(|t| &*t.name).collect();
+    assert_eq!(names, ["a", "b"]);
+}
+
+#[test]
+fn duplicate_stage_tool_names_are_rejected() {
+    let (mock, _probe) = ScriptedLm::finishing([text("x")]);
+    let result = LmStage::with_tools(mock, "sys", [tool("dup"), tool("dup")]);
+    assert!(
+        matches!(result, Err(LmConfigError::DuplicateToolName { name }) if &*name == "dup"),
+        "two stage tools sharing a name are rejected",
+    );
+}
+
+#[test]
+fn a_duplicate_added_after_construction_is_rejected() {
+    let (mock, _probe) = ScriptedLm::finishing([text("x")]);
+    let result = LmStage::new(mock, "sys")
+        .add_tools([tool("book")])
+        .unwrap()
+        .add_tools([tool("book")]);
+    assert!(
+        matches!(result, Err(LmConfigError::DuplicateToolName { name }) if &*name == "book"),
+        "re-adding an existing tool name is rejected",
+    );
+}
+
+#[test]
+fn the_stage_tools_are_passed_to_generate() {
+    block_on(async {
+        let (mock, probe) = ScriptedLm::finishing([text("x")]);
+        let mut stage = LmStage::with_tools(mock, "sys", [tool("book"), tool("cancel")]).unwrap();
+        let effect = take_generate(stage.decide_data(&user_final("hi")));
+        let (out, _in) = link(8);
+        stage.perform(effect, &out).await.unwrap();
+
+        let seen = probe.tools_seen();
+        assert_eq!(seen.len(), 1);
+        let names: Vec<&str> = seen[0].iter().map(|t| &*t.name).collect();
+        assert_eq!(
+            names,
+            ["book", "cancel"],
+            "every generation receives the stage tools"
+        );
+    });
 }

@@ -1036,6 +1036,7 @@ dependencies = [
  "futures",
  "pipecrab-core",
  "pipecrab-runtime",
+ "serde_json",
 ]
 
 [[package]]

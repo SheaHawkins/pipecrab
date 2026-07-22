@@ -1,7 +1,7 @@
 use std::num::NonZeroU32;
 
 use futures::{StreamExt, executor::block_on};
-use pipecrab_lm::{Conversation, GenParams, LanguageModel, Message};
+use pipecrab_lm::{Conversation, GenParams, LanguageModel, Message, ModelDelta};
 use pipecrab_lm_llamacpp::{LlamaCpp, LlamaCppConfig};
 
 #[test]
@@ -24,14 +24,17 @@ fn streams_text_from_a_real_model() {
 
     let deltas = block_on(async {
         model
-            .generate(&conversation, &GenParams::default())
+            .generate(&conversation, &GenParams::default(), &[])
             .await
             .expect("start generation")
             .collect::<Vec<_>>()
             .await
     });
     let text = deltas.into_iter().fold(String::new(), |mut text, delta| {
-        text.push_str(&delta.expect("decode token").delta);
+        match delta.expect("decode token") {
+            ModelDelta::Text(piece) => text.push_str(&piece),
+            ModelDelta::ToolCall(_) => panic!("native adapter emits only text"),
+        }
         text
     });
     assert!(!text.trim().is_empty(), "model returned no text");
