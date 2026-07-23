@@ -32,6 +32,7 @@ pipecrab-runtime    = { path = "crates/engine/pipecrab-runtime", version = "0.5.
 pipecrab-audio      = { path = "crates/engine/pipecrab-audio", version = "0.5.0" }
 pipecrab-audio-cpal = { path = "crates/adapters/pipecrab-audio-cpal", version = "0.5.0" }
 pipecrab-lm         = { path = "crates/engine/pipecrab-lm", version = "0.5.0" }
+pipecrab-dispatch   = { path = "crates/engine/pipecrab-dispatch", version = "0.5.0" }
 pipecrab-lm-llamacpp = { path = "crates/adapters/pipecrab-lm-llamacpp", version = "0.5.0" }
 pipecrab-stt        = { path = "crates/engine/pipecrab-stt", version = "0.5.0" }
 pipecrab-stt-sherpa = { path = "crates/adapters/pipecrab-stt-sherpa", version = "0.5.0" }

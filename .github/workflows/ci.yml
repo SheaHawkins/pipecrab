@@ -67,3 +67,7 @@ jobs:
       # The LM interface is engine-free — the LanguageModel trait plus the LmStage
       # adapter — so it must build for the browser, where the engine runs in a Worker.
       - run: cargo check -p pipecrab-lm --target wasm32-unknown-unknown
+      # Dispatch is transport-neutral — the ingress/egress stages plus the
+      # DispatchSource/DispatchSink traits, no concrete transport — so it must
+      # build for the browser, where a transport is e.g. a WebSocket adapter.
+      - run: cargo check -p pipecrab-dispatch --target wasm32-unknown-unknown

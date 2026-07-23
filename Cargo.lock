@@ -1029,6 +1029,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pipecrab-dispatch"
+version = "0.5.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "pipecrab-core",
+ "pipecrab-lm",
+ "pipecrab-runtime",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pipecrab-lm"
 version = "0.5.0"
 dependencies = [

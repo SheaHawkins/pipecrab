@@ -7,8 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# The umbrella facade: re-exports core + runtime. Sits at the same rank as the
-# trait crates (may depend on core/runtime, nothing may depend back on it).
+# The umbrella facade: re-exports core + runtime. The facade layer sits above
+# the trait crates (may depend on core/runtime/trait; nothing lower depends back
+# on it).
 [package.metadata.pipecrab]
 layer = "facade"
 
