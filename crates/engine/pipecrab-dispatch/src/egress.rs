@@ -4,10 +4,7 @@
 //!
 //! Egress is pure mechanism — a per-tool-call translator. It holds no state: no
 //! task map, no `task_id`s, no generation bookkeeping. Durable task state lives
-//! in the backend behind the transport. Behavioral guidance (e.g. "speak an
-//! acknowledgement before dispatching") is the model's job and lives in the tool
-//! *descriptions*, not in a hard gate here — gating would reject a valid
-//! tool-call-only generation and silently drop the user's task.
+//! in the backend behind the transport.
 
 use std::sync::Arc;
 
@@ -112,6 +109,8 @@ struct UpdateTaskArgs {
 fn parse_dispatch_task(call: &ToolCall) -> Result<DispatchCommand, Arc<str>> {
     let args: DispatchTaskArgs = serde_json::from_str(&call.arguments_json)
         .map_err(|e| Arc::<str>::from(format!("malformed dispatch_task arguments: {e}")))?;
+    // TODO: try a simplified dispatch_task signature that drops `tool_call_id`
+    // and `context` — just `task`.
     Ok(DispatchCommand::Create {
         tool_call_id: call.id.clone(),
         task: Arc::from(args.task),

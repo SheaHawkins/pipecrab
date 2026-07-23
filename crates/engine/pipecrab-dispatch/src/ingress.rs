@@ -51,13 +51,10 @@ use crate::transport::DispatchSource;
 ///   [`StageError`](pipecrab_runtime::StageError) per its
 ///   [`DispatchError`] classification; a fatal one terminates ingress.
 pub struct DispatchIngress<S> {
-    // The source is wrapped in a `Mutex` for one reason: a `Stage` must be
-    // `MaybeSendSync` (`Send + Sync`), but a `DispatchSource` is only
-    // `MaybeSend` (`Send`) — it is owned and driven single-threaded, never
-    // shared. `Mutex<S>: Sync` needs only `S: Send`, so the wrapper makes the
-    // stage `Sync` without demanding `Sync` of the source. It is never
-    // contended: `run` takes ownership via `into_inner` and drives the source
-    // directly.
+    // A `Stage` must be `Send + Sync`, but a `DispatchSource` is only `Send`.
+    // `Mutex<S>` is `Sync` when `S: Send`, so it makes the stage `Sync` without
+    // demanding `Sync` of the source. Never locked — `run` takes ownership via
+    // `into_inner`.
     source: Mutex<S>,
 }
 
