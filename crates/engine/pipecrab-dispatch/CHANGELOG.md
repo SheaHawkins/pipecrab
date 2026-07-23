@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-dispatch-v0.5.0...pipecrab-dispatch-v0.5.1) - 2026-07-23
+
+### Added
+
+- dispatch task interface ([#65](https://github.com/SheaHawkins/pipecrab/pull/65))
+
 ### Added
 
 - Initial `pipecrab-dispatch` crate: the facade layer connecting native
