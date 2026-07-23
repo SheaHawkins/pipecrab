@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-v0.5.0...pipecrab-v0.5.1) - 2026-07-23
+
+### Added
+
+- dispatch task interface ([#65](https://github.com/SheaHawkins/pipecrab/pull/65))
+
 ## [0.3.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-v0.2.0...pipecrab-v0.3.0) - 2026-07-13
 
 ### Other
