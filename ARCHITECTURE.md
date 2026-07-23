@@ -77,6 +77,7 @@ external model runtime an adapter wraps.
 - `pipecrab-core` — sans-IO: frames, `Processor`, `Decision`. No async, no I/O.
 - `pipecrab-runtime` — async orchestration: `Stage`, `Pipeline`, `Inbound`/`Outbound`, `offload`. No executor baked in.
 - `pipecrab` — facade; re-exports core + runtime.
+- `pipecrab-dispatch` — facade; connects native `Dispatch` frames to model tool calls and external async-task transports: the tool definitions, the active ingress stage, the tool-call-to-command egress stage, and the `DispatchSource`/`DispatchSink` transport traits. Depends on the generic LM interface (`pipecrab-lm`) while LM stays dispatch-free.
 - `pipecrab-audio` — `AudioSource`/`AudioSink` traits, hardware-free mocks, and
   the streaming `ResamplerStage`.
 - `pipecrab-audio-cpal` — cpal backend behind those traits.
@@ -91,7 +92,7 @@ Every crate declares its layer in its own manifest:
 
 ```toml
 [package.metadata.pipecrab]
-layer = "runtime"   # core < runtime < {trait, facade} < adapter < app
+layer = "runtime"   # core < runtime < trait < facade < adapter < app
 ```
 
 `crates/support/arch/tests/layering.rs` reads the resolved package graph

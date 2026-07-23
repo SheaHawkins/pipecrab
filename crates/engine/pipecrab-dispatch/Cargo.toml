@@ -1,0 +1,32 @@
+[package]
+name = "pipecrab-dispatch"
+description = "Connects native pipecrab Dispatch frames to model tool calls and external asynchronous-task transports: tool definitions, active ingress, tool-call-to-command egress, and the transport capability traits."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["dispatch", "tools", "async-tasks", "voice-agent", "ai"]
+
+# The facade layer: pipecrab-dispatch stitches the generic LM interface
+# (`trait`) onto the native dispatch frames, so it sits *above* the trait crates
+# while LM stays independent of dispatch.
+[package.metadata.pipecrab]
+layer = "facade"
+
+[dependencies]
+pipecrab-core    = { workspace = true }
+pipecrab-runtime = { workspace = true }
+# The generic LM interface: `ToolDefinition` is a `pipecrab_lm` type, and the
+# tool definitions this crate exports feed `LmStage::with_tools`. No Rig or other
+# provider type appears here.
+pipecrab-lm      = { workspace = true }
+async-trait      = "0.1"
+# The transport traits and the ingress run loop name `futures` types (channels,
+# `select_biased!`).
+futures          = "0.3"
+# Tool-call argument parsing: `#[derive(Deserialize)]` on the argument structs.
+serde            = { version = "1", features = ["derive"] }
+# The structured-JSON boundary: argument parsing and the accepted-result
+# projection.
+serde_json       = { workspace = true }

@@ -13,12 +13,15 @@
 //! for anything). The order, lowest first:
 //!
 //! ```text
-//! core  <  runtime  <  { trait, facade }  <  adapter  <  app
+//! core  <  runtime  <  trait  <  facade  <  adapter  <  app
 //! ```
 //!
-//! `trait` and `facade` share a rank: they never depend on each other, and a
-//! strictly-lower rule forbids same-rank edges, so if that ever changes the
-//! gate will flag it — the signal to split a layer, not to loosen the rule.
+//! `facade` sits above `trait` so a facade crate (e.g. `pipecrab-dispatch`) may
+//! depend on a trait crate (the generic LM interface) while the trait crate
+//! stays independent of it. The umbrella `pipecrab` is also `facade`; a
+//! strictly-lower rule forbids facade→facade edges, so if two facade crates ever
+//! need to depend on each other the gate will flag it — the signal to split a
+//! layer, not to loosen the rule.
 //!
 //! `support` is exempt from the ordering entirely (dev-only tooling), but it
 //! is still a *declared* layer: the gate **fails closed**, so any workspace
@@ -36,9 +39,10 @@ fn rank(layer: &str) -> Option<i32> {
     match layer {
         "core" => Some(0),
         "runtime" => Some(1),
-        "trait" | "facade" => Some(2),
-        "adapter" => Some(3),
-        "app" => Some(4),
+        "trait" => Some(2),
+        "facade" => Some(3),
+        "adapter" => Some(4),
+        "app" => Some(5),
         _ => None,
     }
 }
