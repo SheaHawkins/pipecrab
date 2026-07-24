@@ -7,9 +7,10 @@
 //!   cargo test -p pipecrab-dispatch-hermes --test smoke -- --ignored --nocapture
 //! ```
 //!
-//! Without both variables the test skips rather than fails, so an unguarded
+//! Without both variables the tests skip rather than fail, so an unguarded
 //! `--ignored` run in CI stays green.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
