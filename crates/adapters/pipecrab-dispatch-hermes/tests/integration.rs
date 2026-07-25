@@ -238,6 +238,30 @@ async fn update_after_completion_chains_a_new_run_under_the_same_task() {
         }
         _ => unreachable!(),
     }
+
+    // The follow-up run replays the task's turns: a `session_id` alone carries
+    // no conversation, so without this the agent would have no idea what the
+    // errand was.
+    let requests = server.received_requests().await.unwrap();
+    let posts: Vec<serde_json::Value> = requests
+        .iter()
+        .filter(|r| r.method == wiremock::http::Method::POST)
+        .map(|r| serde_json::from_slice(&r.body).expect("a JSON body"))
+        .collect();
+    assert_eq!(posts.len(), 2);
+    assert!(
+        posts[0].get("conversation_history").is_none(),
+        "the first run opens the conversation, so it replays nothing"
+    );
+    assert_eq!(
+        posts[1]["conversation_history"],
+        json!([
+            { "role": "user", "content": "first" },
+            { "role": "assistant", "content": "first answer" },
+        ]),
+        "the follow-up carries the original task and its answer"
+    );
+    assert_eq!(posts[1]["input"], "again");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

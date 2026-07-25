@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use pipecrab_core::DispatchEvent;
+use serde::Serialize;
 use uuid::Uuid;
 
 /// How many `(SystemTime, DispatchEvent)` pairs a task's [`EventRing`] retains.
@@ -108,10 +109,36 @@ impl EventRing {
     }
 }
 
+/// One turn of a task's conversation, in the shape `POST /v1/runs` accepts as an
+/// element of `conversation_history`.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub(crate) struct HistoryTurn {
+    /// `"user"` or `"assistant"`.
+    pub(crate) role: &'static str,
+    /// The turn's text.
+    pub(crate) content: String,
+}
+
+impl HistoryTurn {
+    pub(crate) fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: "user",
+            content: content.into(),
+        }
+    }
+
+    pub(crate) fn assistant(content: impl Into<String>) -> Self {
+        Self {
+            role: "assistant",
+            content: content.into(),
+        }
+    }
+}
+
 /// One dispatched task as the adapter tracks it: the run currently executing on
 /// its behalf (if any), the last status observed for that run (to dedupe
-/// [`Progress`](DispatchEvent::Progress)), and the bounded trail of what has been
-/// emitted for it.
+/// [`Progress`](DispatchEvent::Progress)), the conversation the task has
+/// accumulated, and the bounded trail of what has been emitted for it.
 ///
 /// The owning [`TaskId`] is the map key, so it is not duplicated here. Created by
 /// a `Create`, re-armed by an `Update`; a terminal status clears
@@ -124,16 +151,20 @@ pub(crate) struct TaskEntry {
     /// The last status seen for `active_run`; `None` re-arms `Progress` dedupe
     /// when a new run starts.
     pub(crate) last_status: Option<String>,
+    /// What has been said on this task so far, replayed to every follow-up run.
+    pub(crate) history: Vec<HistoryTurn>,
     /// The bounded trail of events emitted for this task.
     pub(crate) events: EventRing,
 }
 
 impl TaskEntry {
-    /// A new entry whose first run is `run`.
-    pub(crate) fn new(run: RunId) -> Self {
+    /// A new entry whose first run is `run`, opening the conversation with the
+    /// input that run was given.
+    pub(crate) fn new(run: RunId, input: impl Into<String>) -> Self {
         Self {
             active_run: Some(run),
             last_status: None,
+            history: vec![HistoryTurn::user(input)],
             events: EventRing::default(),
         }
     }

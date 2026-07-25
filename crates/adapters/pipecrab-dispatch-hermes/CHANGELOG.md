@@ -18,8 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `failed` → non-retryable `Failure`, `cancelled` → retryable `Failure`, a 404
     on a tracked run → expired-state `Failure`, and any other status change → a
     deduped `Progress`. Network blips and 5xx/401 responses are retried silently.
-  - `update_task` chains a new run into the same session under the same
-    `task_id`; an unknown task, or one whose run is still executing, is
-    `Rejected`.
+  - `update_task` chains a new run under the same `task_id`, replaying the
+    task's turns as `conversation_history` so the follow-up carries the original
+    errand — a `session_id` alone does not chain conversation. An unknown task,
+    or one whose run is still executing, is `Rejected`.
   - `cancel()` stops the poller and closes the source, deliberately leaving
     remote runs running — external task state outlives the turn.

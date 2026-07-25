@@ -15,7 +15,7 @@ use tokio::sync::{Notify, mpsc};
 
 use crate::classify::{Classified, classify};
 use crate::client::{HermesClient, PollResult, compose_input};
-use crate::task::{RunId, TaskEntry, TaskId};
+use crate::task::{HistoryTurn, RunId, TaskEntry, TaskId};
 
 /// Bounded capacity of the event channel. The poller *awaits* its sends, so a
 /// slow-draining pipeline fills this and pauses polling — natural backpressure,
@@ -130,9 +130,10 @@ impl Inner {
     ) -> Result<(), DispatchError> {
         let task_id = TaskId::mint();
         let input = compose_input(&task, context.as_deref());
+        // A first run opens the conversation, so it replays no history.
         match self
             .client
-            .create_run(&input, task_id.as_str(), &tool_call_id)
+            .create_run(&input, task_id.as_str(), &tool_call_id, &[])
             .await
         {
             Ok(run_id) => {
@@ -141,7 +142,7 @@ impl Inner {
                 self.registry
                     .lock()
                     .unwrap()
-                    .insert(task_id.clone(), TaskEntry::new(run_id));
+                    .insert(task_id.clone(), TaskEntry::new(run_id, input));
                 let accepted = DispatchEvent::Accepted {
                     tool_call_id,
                     task_id: task_id.as_arc(),
@@ -171,13 +172,14 @@ impl Inner {
         message: std::sync::Arc<str>,
     ) -> Result<(), DispatchError> {
         let task_id = TaskId::from(task_id);
-        // Classify the task's readiness under the lock, then drop it.
+        // Classify readiness and snapshot the history under the lock, then drop
+        // it — the POST below must not hold it.
         let readiness = {
             let registry = self.registry.lock().unwrap();
             match registry.get(&task_id) {
                 None => Readiness::Unknown,
                 Some(entry) if entry.active_run.is_some() => Readiness::Running,
-                Some(_) => Readiness::Idle,
+                Some(entry) => Readiness::Idle(entry.history.clone()),
             }
         };
 
@@ -193,14 +195,15 @@ impl Inner {
                 self.emit(DispatchEvent::Rejected {
                     tool_call_id,
                     message: std::sync::Arc::from(
-                        "task is still running; a polling transport cannot deliver input mid-run",
+                        "task is still running; the Hermes runs API has no endpoint \
+                         that delivers input to an in-flight run",
                     ),
                 })
                 .await
             }
-            Readiness::Idle => match self
+            Readiness::Idle(history) => match self
                 .client
-                .create_run(&message, task_id.as_str(), &tool_call_id)
+                .create_run(&message, task_id.as_str(), &tool_call_id, &history)
                 .await
             {
                 Ok(run_id) => {
@@ -208,6 +211,7 @@ impl Inner {
                         entry.active_run = Some(run_id);
                         // Re-arm progress dedupe for the new run.
                         entry.last_status = None;
+                        entry.history.push(HistoryTurn::user(message.to_string()));
                     }
                     self.wake.notify_one();
                     Ok(())
@@ -291,6 +295,8 @@ impl Inner {
         match classified {
             Classified::Completed { message } => {
                 entry.active_run = None;
+                // The answer becomes context for any follow-up run.
+                entry.history.push(HistoryTurn::assistant(message.clone()));
                 Some(DispatchEvent::Completion {
                     task_id: task_id.as_arc(),
                     message: std::sync::Arc::from(message),
@@ -354,10 +360,10 @@ impl Inner {
 enum Readiness {
     /// No such task.
     Unknown,
-    /// A run is executing; a polling transport cannot inject input mid-run.
+    /// A run is executing; the runs API cannot inject input into one.
     Running,
-    /// Between runs; a new run can be chained.
-    Idle,
+    /// Between runs; a new run can be chained, replaying this history.
+    Idle(Vec<HistoryTurn>),
 }
 
 /// The `task_id` an event concerns, or `None` for a pre-task `Rejected`.
@@ -386,11 +392,10 @@ mod tests {
     }
 
     fn seed(inner: &Inner, task_id: &TaskId, run: &str) {
-        inner
-            .registry
-            .lock()
-            .unwrap()
-            .insert(task_id.clone(), TaskEntry::new(RunId::from(run.to_owned())));
+        inner.registry.lock().unwrap().insert(
+            task_id.clone(),
+            TaskEntry::new(RunId::from(run.to_owned()), "the original task"),
+        );
     }
 
     #[test]
@@ -450,6 +455,56 @@ mod tests {
             .get(&task)
             .expect("entry preserved after completion");
         assert!(entry.active_run.is_none(), "active run cleared");
+    }
+
+    #[test]
+    fn a_completion_records_the_answer_for_follow_up_runs() {
+        let inner = inner();
+        let task = TaskId::from("t-hist");
+        let run = RunId::from("run-h".to_owned());
+        seed(&inner, &task, "run-h");
+
+        inner.apply(
+            &task,
+            &run,
+            Classified::Completed {
+                message: "the answer".into(),
+            },
+        );
+
+        let registry = inner.registry.lock().unwrap();
+        let history = &registry.get(&task).unwrap().history;
+        assert_eq!(
+            history,
+            &vec![
+                HistoryTurn::user("the original task"),
+                HistoryTurn::assistant("the answer"),
+            ],
+            "a follow-up run replays the task and its answer"
+        );
+    }
+
+    #[test]
+    fn a_failure_records_no_assistant_turn() {
+        let inner = inner();
+        let task = TaskId::from("t-fail");
+        let run = RunId::from("run-f".to_owned());
+        seed(&inner, &task, "run-f");
+
+        inner.apply(
+            &task,
+            &run,
+            Classified::Failed {
+                message: "boom".into(),
+            },
+        );
+
+        let registry = inner.registry.lock().unwrap();
+        assert_eq!(
+            registry.get(&task).unwrap().history,
+            vec![HistoryTurn::user("the original task")],
+            "a run that produced no answer adds nothing to say"
+        );
     }
 
     #[test]

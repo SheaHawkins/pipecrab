@@ -19,9 +19,13 @@
 //!   `cancelled` → retryable `Failure`, a 404 on a tracked run →
 //!   expired-state `Failure`, and any other status change → a deduped
 //!   `Progress`. Network blips and 5xx/401 responses are retried silently.
+//! * `update_task` chains a *new* run and replays the task's turns as
+//!   `conversation_history`, since a `session_id` correlates runs without
+//!   carrying any conversation. It works only between runs: the runs API has no
+//!   endpoint that delivers input to an executing run, so an update mid-run is
+//!   rejected rather than silently deferred.
 //! * A failed create/update surfaces as a `Rejected` event (respond-worthy to
-//!   the model), never a pipeline error. `update_task` while a run is executing
-//!   is rejected: a polling transport has no mid-run input path.
+//!   the model), never a pipeline error.
 //!
 //! # Scope
 //!
@@ -49,6 +53,10 @@
 //! * A completed run's body carries `output` and `usage`; a terminal run is
 //!   retained well beyond the default 1s poll interval. A 404 is an
 //!   OpenAI-shaped error envelope.
+//! * A `session_id` does **not** chain conversation: a second run in the same
+//!   session starts blank, and `previous_response_id` set to a prior `run_id`
+//!   does not help either. Only an explicit `conversation_history` array carries
+//!   context, which is why follow-up runs replay one.
 //! * `Idempotency-Key` is **not** honored on `/v1/runs`: a repost with the same
 //!   key yields a new run. It is still sent, but nothing depends on it.
 //! * No error-detail field name is documented for a failed run, so the adapter

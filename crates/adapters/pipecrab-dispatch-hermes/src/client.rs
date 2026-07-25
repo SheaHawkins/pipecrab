@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use url::Url;
 
 use crate::config::HermesConfig;
-use crate::task::RunId;
+use crate::task::{HistoryTurn, RunId};
 
 /// How many characters of an error-response body to keep in a rejection message.
 const BODY_EXCERPT_LIMIT: usize = 200;
@@ -136,8 +136,14 @@ impl HermesClient {
         input: &str,
         session_id: &str,
         idempotency_key: &str,
+        history: &[HistoryTurn],
     ) -> Result<RunId, Arc<str>> {
-        let body = json!({ "input": input, "session_id": session_id });
+        let mut body = json!({ "input": input, "session_id": session_id });
+        // A `session_id` correlates runs but carries no conversation, so a
+        // follow-up run must replay the task's turns to have any context.
+        if !history.is_empty() {
+            body["conversation_history"] = json!(history);
+        }
         let response = self
             .client
             .post(self.runs_url())

@@ -126,3 +126,173 @@ async fn live_gateway_round_trip() {
         .expect("no error on close");
     assert!(closed.is_none(), "cancel closes the source");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a live hermes gateway; set HERMES_SMOKE_URL and HERMES_SMOKE_KEY"]
+async fn live_update_task_carries_the_original_errand() {
+    let Some(config) = smoke_config() else {
+        eprintln!("skipping: set HERMES_SMOKE_URL and HERMES_SMOKE_KEY to run this test");
+        return;
+    };
+
+    let (mut source, sink) = connect(config);
+    sink.send_command(DispatchCommand::Create {
+        tool_call_id: Arc::from("smoke-ctx-1"),
+        task: Arc::from("Remember the code word ZANZIBAR. Acknowledge briefly."),
+        context: None,
+    })
+    .await
+    .expect("create is accepted");
+
+    let accepted = wait_for(&mut source, Duration::from_secs(60), |e| {
+        matches!(e, DispatchEvent::Accepted { .. })
+    })
+    .await;
+    let DispatchEvent::Accepted { task_id, .. } = accepted else {
+        unreachable!()
+    };
+    wait_for(&mut source, Duration::from_secs(180), |e| {
+        matches!(e, DispatchEvent::Completion { .. })
+    })
+    .await;
+
+    sink.send_command(DispatchCommand::Update {
+        tool_call_id: Arc::from("smoke-ctx-2"),
+        task_id: task_id.clone(),
+        message: Arc::from("What code word did I give you? Answer with just the word."),
+    })
+    .await
+    .expect("update is accepted");
+
+    let second = wait_for(&mut source, Duration::from_secs(180), |e| {
+        matches!(
+            e,
+            DispatchEvent::Completion { .. }
+                | DispatchEvent::Failure { .. }
+                | DispatchEvent::Rejected { .. }
+        )
+    })
+    .await;
+    match &second {
+        DispatchEvent::Completion { message, .. } => assert!(
+            message.to_uppercase().contains("ZANZIBAR"),
+            "the follow-up run must see the original errand, got {message:?}"
+        ),
+        other => panic!("the follow-up did not complete: {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a live hermes gateway; set HERMES_SMOKE_URL and HERMES_SMOKE_KEY"]
+async fn live_concurrent_tasks_are_polled_independently() {
+    let Some(config) = smoke_config() else {
+        eprintln!("skipping: set HERMES_SMOKE_URL and HERMES_SMOKE_KEY to run this test");
+        return;
+    };
+
+    // Three runs in flight at once: the poller sweeps them all each tick and
+    // must keep their events apart.
+    let words = ["alpha", "beta", "gamma"];
+    let (mut source, sink) = connect(config);
+    for (i, word) in words.iter().enumerate() {
+        sink.send_command(DispatchCommand::Create {
+            tool_call_id: Arc::from(format!("smoke-concurrent-{i}")),
+            task: Arc::from(format!("Reply with exactly the word: {word}")),
+            context: None,
+        })
+        .await
+        .expect("create is accepted");
+    }
+
+    let mut expected: HashMap<Arc<str>, &str> = HashMap::new();
+    for _ in 0..words.len() {
+        let accepted = wait_for(&mut source, Duration::from_secs(60), |e| {
+            matches!(e, DispatchEvent::Accepted { .. })
+        })
+        .await;
+        let DispatchEvent::Accepted {
+            tool_call_id,
+            task_id,
+        } = accepted
+        else {
+            unreachable!()
+        };
+        let i: usize = tool_call_id
+            .rsplit('-')
+            .next()
+            .and_then(|n| n.parse().ok())
+            .expect("the tool call id ends in its index");
+        assert!(
+            expected.insert(task_id, words[i]).is_none(),
+            "each task gets a distinct id"
+        );
+    }
+    assert_eq!(expected.len(), words.len());
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(240);
+    let mut done: HashSet<Arc<str>> = HashSet::new();
+    while done.len() < words.len() {
+        let event = tokio::time::timeout_at(deadline, source.next_event())
+            .await
+            .expect("all tasks complete before the deadline")
+            .expect("the source must not error")
+            .expect("the source stayed open");
+        println!("  event: {event:?}");
+        match event {
+            DispatchEvent::Completion { task_id, message } => {
+                let want = expected.get(&task_id).expect("a task we dispatched");
+                assert!(
+                    message.to_lowercase().contains(want),
+                    "task {task_id} answered {message:?}, expected {want:?}"
+                );
+                done.insert(task_id);
+            }
+            DispatchEvent::Failure {
+                task_id, message, ..
+            } => {
+                panic!("task {task_id} failed: {message}")
+            }
+            _ => {}
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a live hermes gateway; set HERMES_SMOKE_URL and HERMES_SMOKE_KEY"]
+async fn live_bad_api_key_is_rejected_not_an_error() {
+    let Some(mut config) = smoke_config() else {
+        eprintln!("skipping: set HERMES_SMOKE_URL and HERMES_SMOKE_KEY to run this test");
+        return;
+    };
+    config.api_key = Arc::from("definitely-not-a-valid-api-key");
+
+    let (mut source, sink) = connect(config);
+    sink.send_command(DispatchCommand::Create {
+        tool_call_id: Arc::from("smoke-badkey"),
+        task: Arc::from("this should never run"),
+        context: None,
+    })
+    .await
+    .expect("a rejected create is still Ok at the sink");
+
+    let rejected = wait_for(&mut source, Duration::from_secs(30), |e| {
+        matches!(e, DispatchEvent::Rejected { .. })
+    })
+    .await;
+    let DispatchEvent::Rejected {
+        tool_call_id,
+        message,
+    } = rejected
+    else {
+        unreachable!()
+    };
+    assert_eq!(&*tool_call_id, "smoke-badkey");
+    assert!(
+        message.contains("401"),
+        "message names the status: {message}"
+    );
+    assert!(
+        !message.contains("definitely-not-a-valid-api-key"),
+        "the key must never reach an error message: {message}"
+    );
+}
