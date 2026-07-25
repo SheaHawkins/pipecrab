@@ -1,7 +1,5 @@
 ## You own the changes you make.
-AI use in this project is tolerated, but architectural decisions have rippling effects and implementations need to be sound. This project does not tolerate "AI Slop", either from the reporter or contributor's perspective. 
-
-AI should be used for finite, well-reasoned changes. PRs need to be compartmental and singular in purpose. The entire change being made should be understood by _you_, not a bot. Benchmarks should be included when they touch sensitive components. 
+AI use in this project is tolerated, but architectural decisions have rippling effects and implementations need to be sound. AI should be used for finite, well-reasoned changes. PRs need to be compartmental and singular in purpose. The entire change being made should be understood by _you_, not a bot. Benchmarks should be included when they touch sensitive components. 
 
 ## Commit and PR conventions
 We follow conventionalcommits.org. The essential rules are attached below. Follow the same conventions for PR names:

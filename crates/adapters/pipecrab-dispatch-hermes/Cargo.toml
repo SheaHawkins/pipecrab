@@ -1,0 +1,42 @@
+[package]
+name = "pipecrab-dispatch-hermes"
+description = "Hermes Agent runs-API transport for pipecrab dispatch: a polling DispatchSource / DispatchSink pair over the NousResearch Hermes gateway."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["dispatch", "hermes", "async-tasks", "voice-agent", "ai"]
+
+# An adapter: bridges the Hermes Agent runs API (an external engine) to the
+# pipecrab-dispatch transport traits. May depend on core/facade; nothing in
+# engine/ may depend back on it.
+[package.metadata.pipecrab]
+layer = "adapter"
+
+[dependencies]
+# The transport traits (DispatchSource / DispatchSink), the DispatchError, and
+# the native DispatchEvent / DispatchCommand frames they carry.
+pipecrab-dispatch = { workspace = true }
+pipecrab-core     = { workspace = true }
+async-trait       = "0.1"
+thiserror         = "2"
+serde             = { version = "1", features = ["derive"] }
+serde_json        = { workspace = true }
+# A stable session key per task, minted adapter-side and sent as `session_id`.
+uuid              = { version = "1", features = ["v4"] }
+# The public base-URL type.
+url               = "2"
+# Native-only, like pipecrab-audio-cpal: the poller is a detached tokio task
+# feeding a bounded mpsc; reqwest (rustls, no system OpenSSL) is the HTTP client.
+# This crate is not part of the wasm CI matrix.
+tokio             = { version = "1", features = ["rt", "sync", "time", "macros"] }
+reqwest           = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[dev-dependencies]
+tokio    = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+# Pinned: 0.6.5 uses let-chains, which need rustc 1.88 — past this crate's MSRV.
+wiremock = "=0.6.4"
+# The end-to-end test drives the real DispatchIngress/DispatchEgress stages over
+# this transport through a PipelineBuilder.
+pipecrab-runtime = { workspace = true }
