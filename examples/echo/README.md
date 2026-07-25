@@ -5,7 +5,7 @@ PipeCrab pipeline, and plays it through the default output device.
 
 ## Requirements
 
-- Rust 1.86 or newer.
+- Rust 1.88 or newer.
 - macOS, Windows, or Linux with working input and output audio devices.
 - Microphone permission for the terminal or application running Cargo.
 - Headphones. Using speakers can create a loud feedback loop.

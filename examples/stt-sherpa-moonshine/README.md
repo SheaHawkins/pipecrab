@@ -56,7 +56,7 @@ room below the failing model shape while supporting different overlap choices.
 
 ## Requirements
 
-- Rust 1.86 or newer.
+- Rust 1.88 or newer.
 - macOS, Windows, or Linux with a working microphone.
 - Microphone permission for the terminal or application running Cargo.
 - A Sherpa-compatible 16 kHz Silero VAD model.
