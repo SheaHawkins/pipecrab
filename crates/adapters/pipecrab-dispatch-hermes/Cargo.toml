@@ -35,8 +35,7 @@ reqwest           = { version = "0.12", default-features = false, features = ["j
 
 [dev-dependencies]
 tokio    = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
-# Pinned: 0.6.5 uses let-chains, which need rustc 1.88 — past this crate's MSRV.
-wiremock = "=0.6.4"
+wiremock = "0.6"
 # The end-to-end test drives the real DispatchIngress/DispatchEgress stages over
 # this transport through a PipelineBuilder.
 pipecrab-runtime = { workspace = true }

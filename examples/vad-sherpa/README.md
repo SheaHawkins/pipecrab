@@ -6,7 +6,7 @@ This example captures the default microphone with cpal, resamples its audio to
 
 ## Requirements
 
-- Rust 1.86 or newer.
+- Rust 1.88 or newer.
 - macOS, Windows, or Linux with a working microphone.
 - Microphone permission for the terminal or application running Cargo.
 - A Sherpa-compatible 16 kHz Silero VAD ONNX model.
