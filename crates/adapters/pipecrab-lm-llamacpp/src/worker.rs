@@ -18,7 +18,9 @@ use pipecrab_lm::{
     ToolDefinition,
 };
 
-use crate::{LlamaCppBuildError, LlamaCppConfig};
+use crate::dialect::{TOOL_CALL_ROOT, regex_escape};
+use crate::intercept::{CallInterceptor, Intercepted, mint_call_id};
+use crate::{ChatMlXml, LlamaCppBuildError, LlamaCppConfig, ToolDialect};
 
 type TokenSender = mpsc::UnboundedSender<Result<ModelDelta, LmError>>;
 
@@ -27,6 +29,7 @@ enum Command {
         epoch: u64,
         conversation: Conversation,
         params: GenParams,
+        tools: Vec<ToolDefinition>,
         output: TokenSender,
     },
     SaveState(oneshot::Sender<Result<Vec<u8>, LmError>>),
@@ -113,9 +116,7 @@ impl LanguageModel for LlamaCpp {
         &self,
         conversation: &Conversation,
         params: &GenParams,
-        // Native llama.cpp tool parsing is out of scope; the adapter has no
-        // intrinsic tools and ignores any the stage passes.
-        _tools: &[ToolDefinition],
+        tools: &[ToolDefinition],
     ) -> Result<ModelStream, LmError> {
         let (output, receiver) = mpsc::unbounded();
         let epoch = self.inner.generation_epoch.fetch_add(1, Ordering::AcqRel) + 1;
@@ -123,6 +124,7 @@ impl LanguageModel for LlamaCpp {
             epoch,
             conversation: conversation.clone(),
             params: params.clone(),
+            tools: tools.to_vec(),
             output,
         })?;
         Ok(receiver.boxed())
@@ -210,13 +212,29 @@ fn worker_main(
         return;
     }
 
-    let mut processed_tokens = Vec::new();
+    let mut session = Session {
+        dialect: config
+            .tool_dialect
+            .clone()
+            .unwrap_or_else(|| Arc::new(ChatMlXml)),
+        // A dialect the caller named is their assertion that it fits, and a GGUF
+        // that declares no name says nothing either way; only a defaulted
+        // dialect facing a named model is measured.
+        model_name: config
+            .tool_dialect
+            .is_none()
+            .then(|| model.meta_val_str("general.name").ok())
+            .flatten(),
+        processed_tokens: Vec::new(),
+        tools: None,
+    };
     for command in commands {
         match command {
             Command::Generate {
                 epoch,
                 conversation,
                 params,
+                tools,
                 output,
             } => {
                 if let Err(error) = generate(
@@ -226,23 +244,131 @@ fn worker_main(
                     &config,
                     &conversation,
                     &params,
+                    &tools,
                     &output,
                     &generation_epoch,
                     epoch,
-                    &mut processed_tokens,
+                    &mut session,
                 ) {
                     let _ = output.unbounded_send(Err(LmError::Engine(error)));
                 }
             }
             Command::SaveState(reply) => {
-                let _ = reply.send(save_state(&context, &processed_tokens));
+                let _ = reply.send(save_state(&context, &session.processed_tokens));
             }
             Command::LoadState { blob, reply } => {
-                let result = load_state(&mut context, &blob, &mut processed_tokens);
+                let result = load_state(&mut context, &blob, &mut session.processed_tokens);
                 let _ = reply.send(result);
             }
             Command::Shutdown => break,
         }
+    }
+}
+
+/// Render the conversation as the role/content pairs llama.cpp's chat template
+/// takes, folding the dialect's tool blocks into roles that template knows.
+///
+/// llama.cpp's built-in ChatML renderer passes a role through verbatim, so
+/// `tool` would emit `<|im_start|>tool` — a sequence no ChatML model was
+/// trained on. The dialect names the role each of its blocks belongs under.
+fn render_messages(
+    conversation: &Conversation,
+    dialect: &dyn ToolDialect,
+    tools: Option<&ToolPrompt>,
+) -> Result<Vec<LlamaChatMessage>, String> {
+    let mut turns: Vec<(&str, String)> = Vec::with_capacity(conversation.messages.len() + 1);
+    for message in &conversation.messages {
+        turns.push(match message {
+            Message::System { content } => ("system", content.to_string()),
+            Message::User { content } => ("user", content.to_string()),
+            // Dropping the calls here would erase them from history, and the
+            // model would re-issue what it already asked for.
+            Message::Assistant {
+                content,
+                tool_calls,
+            } => (
+                "assistant",
+                match tools {
+                    Some(_) => content.to_string() + &dialect.tool_calls(tool_calls),
+                    None => content.to_string(),
+                },
+            ),
+            Message::ToolResult { content, .. } => match tools {
+                Some(_) => dialect.tool_result(content),
+                None => ("tool", content.to_string()),
+            },
+            Message::Event {
+                source,
+                kind,
+                content,
+            } => ("user", format!("[{source}/{kind}] {content}")),
+        });
+    }
+    if let Some(tools) = tools {
+        match turns.iter_mut().find(|(role, _)| *role == "system") {
+            Some((_, content)) => content.push_str(&tools.declarations),
+            // llama.cpp's ChatML renderer injects no system turn of its own, so
+            // without one the declarations would never reach the model.
+            None => turns.insert(0, ("system", tools.declarations.trim_start().to_string())),
+        }
+    }
+    turns
+        .into_iter()
+        .map(|(role, content)| LlamaChatMessage::new(role.into(), content))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
+/// Emit one interception, reporting whether the stream should keep going.
+fn emit(output: &TokenSender, dialect: &dyn ToolDialect, item: Intercepted) -> bool {
+    let delta = match item {
+        Intercepted::Text(text) if text.is_empty() => return true,
+        Intercepted::Text(text) => Ok(ModelDelta::Text(Arc::from(text))),
+        Intercepted::Call(body) => dialect
+            .parse(&body)
+            .and_then(|(name, arguments)| ModelDelta::tool_call(mint_call_id(), name, arguments)),
+    };
+    match delta {
+        Ok(delta) => output.unbounded_send(Ok(delta)).is_ok(),
+        // A body the grammar could not fully constrain: report it and stop
+        // rather than pushing half a call down the pipeline.
+        Err(error) => {
+            let _ = output.unbounded_send(Err(error));
+            false
+        }
+    }
+}
+
+/// Worker state that outlives one turn.
+struct Session {
+    dialect: Arc<dyn ToolDialect>,
+    /// The GGUF's `general.name`, present only while the dialect is unverified.
+    model_name: Option<String>,
+    processed_tokens: Vec<LlamaToken>,
+    tools: Option<ToolPrompt>,
+}
+
+/// Everything one tool set contributes to a turn.
+///
+/// Cached because both halves are prompt- and cache-sensitive: the declarations
+/// are a prompt prefix, so a byte that moves between turns costs a full
+/// re-prefill, and converting the schemas to GBNF crosses into llama.cpp.
+struct ToolPrompt {
+    tools: Vec<ToolDefinition>,
+    declarations: String,
+    grammar: String,
+    /// The open delimiter as a trigger pattern, sized for `grammar_lazy_patterns`.
+    trigger: [String; 1],
+}
+
+impl ToolPrompt {
+    fn build(dialect: &dyn ToolDialect, tools: &[ToolDefinition]) -> Result<Self, LmError> {
+        Ok(Self {
+            declarations: dialect.declarations(tools),
+            grammar: dialect.grammar(tools)?,
+            trigger: [regex_escape(dialect.open())],
+            tools: tools.to_vec(),
+        })
     }
 }
 
@@ -258,33 +384,43 @@ fn generate(
     config: &LlamaCppConfig,
     conversation: &Conversation,
     params: &GenParams,
+    tools: &[ToolDefinition],
     output: &TokenSender,
     generation_epoch: &AtomicU64,
     epoch: u64,
-    processed_tokens: &mut Vec<LlamaToken>,
+    session: &mut Session,
 ) -> Result<(), String> {
-    // Tool calls, results, and events feed the hosted adapters; this native path
-    // renders each turn's text under its chat role. An empty-name/kind is dropped
-    // rather than shaping a role llama.cpp's chat template may not know.
-    let messages = conversation
-        .messages
-        .iter()
-        .map(|message| {
-            let (role, content) = match message {
-                Message::System { content } => ("system", content.to_string()),
-                Message::User { content } => ("user", content.to_string()),
-                Message::Assistant { content, .. } => ("assistant", content.to_string()),
-                Message::ToolResult { content, .. } => ("tool", content.to_string()),
-                Message::Event {
-                    source,
-                    kind,
-                    content,
-                } => ("user", format!("[{source}/{kind}] {content}")),
-            };
-            LlamaChatMessage::new(role.into(), content)
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
+    let Session {
+        dialect,
+        model_name,
+        processed_tokens,
+        tools: cached_tools,
+    } = session;
+    let dialect = dialect.as_ref();
+
+    // Without tools nothing here applies: no declarations, no grammar, no
+    // interception — the turn renders and streams as it would with no dialect.
+    let tool_prompt = if tools.is_empty() {
+        None
+    } else {
+        if let Some(name) = model_name.as_deref().filter(|name| !dialect.supports(name)) {
+            return Err(format!(
+                "model {name:?} is not one {dialect:?} handles ({}); pass \
+                 LlamaCppConfig::with_tool_dialect to override",
+                dialect.supported_models().join(", "),
+            ));
+        }
+        if cached_tools
+            .as_ref()
+            .is_none_or(|cached| cached.tools != tools)
+        {
+            *cached_tools =
+                Some(ToolPrompt::build(dialect, tools).map_err(|error| error.to_string())?);
+        }
+        cached_tools.as_ref()
+    };
+
+    let messages = render_messages(conversation, dialect, tool_prompt)?;
     let prompt = model
         .apply_chat_template(template, &messages, true)
         .map_err(|error| error.to_string())?;
@@ -382,6 +518,21 @@ fn generate(
             LlamaSampler::grammar(model, grammar, "root").map_err(|error| error.to_string())?,
         );
     }
+    // Lazy, never eager: an eager grammar would make *every* turn a tool call,
+    // so the agent could never speak an ordinary sentence again. Until the open
+    // delimiter appears the sampler is a no-op and text is unconstrained.
+    if let Some(tools) = tool_prompt {
+        samplers.push(
+            LlamaSampler::grammar_lazy_patterns(
+                model,
+                &tools.grammar,
+                TOOL_CALL_ROOT,
+                &tools.trigger,
+                &[],
+            )
+            .map_err(|error| error.to_string())?,
+        );
+    }
     if temperature == 0.0 {
         samplers.push(LlamaSampler::greedy());
     } else {
@@ -394,26 +545,38 @@ fn generate(
     }
     let mut sampler = LlamaSampler::chain_simple(samplers);
     let mut decoder = encoding_rs::UTF_8.new_decoder();
+    let mut interceptor =
+        tool_prompt.map(|_| CallInterceptor::new(dialect.open(), dialect.close()));
+    let mut intercepted = Vec::new();
+    // Set where the turn ends without reaching its own end: a barge-in, or a
+    // receiver that went away. Neither leaves a tail worth flushing.
+    let mut stopped = false;
     for position in (prompt_tokens.len()..).take(max_tokens) {
         if generation_epoch.load(Ordering::Acquire) != epoch {
+            stopped = true;
             break;
         }
+        // `sample` accepts the token into the sampler chain itself; accepting it
+        // again here would advance the grammar twice per token.
         let token = sampler.sample(context, batch.n_tokens() - 1);
-        sampler.accept(token);
         if model.is_eog_token(token) {
             break;
         }
-        let delta = model
+        let piece = model
             .token_to_piece(token, &mut decoder, true, None)
             .map_err(|error| error.to_string())?;
-        if !delta.is_empty()
-            && output
-                .unbounded_send(Ok(ModelDelta::Text(Arc::<str>::from(delta))))
-                .is_err()
-        {
-            break;
+        match interceptor.as_mut() {
+            Some(interceptor) => {
+                intercepted.clear();
+                interceptor.push(&piece, &mut intercepted);
+                stopped = !intercepted
+                    .drain(..)
+                    .all(|item| emit(output, dialect, item));
+            }
+            None => stopped = !emit(output, dialect, Intercepted::Text(piece)),
         }
-        if generation_epoch.load(Ordering::Acquire) != epoch {
+        if stopped || generation_epoch.load(Ordering::Acquire) != epoch {
+            stopped = true;
             break;
         }
         batch.clear();
@@ -429,6 +592,17 @@ fn generate(
             .decode(&mut batch)
             .map_err(|error| error.to_string())?;
         processed_tokens.push(token);
+    }
+    if let Some(interceptor) = interceptor.as_mut().filter(|_| !stopped) {
+        match interceptor.finish() {
+            Ok(Some(tail)) => {
+                emit(output, dialect, tail);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = output.unbounded_send(Err(error));
+            }
+        }
     }
     Ok(())
 }

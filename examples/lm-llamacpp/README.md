@@ -94,6 +94,21 @@ Any chat GGUF works in place of Qwen as long as its metadata embeds a chat
 template (instruct-tuned releases do); `LlamaCppConfig::with_chat_template`
 can supply one otherwise.
 
+### Tool calling and the model you pick
+
+This example configures no tools, but if you add some, the adapter's tool
+dialect has to match the model. `ChatMlXml` is the default — the
+`<tool_call>{"name": …, "arguments": …}</tool_call>` convention Qwen 2.5/3
+and the Nous Hermes models were trained on, which is what
+`qwen2.5-0.5b-instruct-q4_k_m.gguf` above speaks. Tool calling is verified
+against that model.
+
+Llama 3.x, Mistral, and Gemma each use an incompatible convention, so a
+tool-carrying generation on one of those GGUFs fails with a message naming
+the mismatch rather than quietly never calling a tool. Implement
+`ToolDialect` and pass it to `LlamaCppConfig::with_tool_dialect` to add one —
+which also opts a Qwen fine-tune released under an unfamiliar name back in.
+
 ## Run
 
 ```console

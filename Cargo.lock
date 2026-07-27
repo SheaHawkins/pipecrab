@@ -1331,8 +1331,10 @@ dependencies = [
  "futures",
  "llama-cpp-2",
  "pipecrab-lm",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.19",
+ "uuid",
 ]
 
 [[package]]
