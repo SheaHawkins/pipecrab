@@ -2,6 +2,8 @@ use std::num::{NonZeroU32, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::ToolDialect;
+
 /// Construction settings for a native llama.cpp worker.
 #[derive(Clone, Debug)]
 pub struct LlamaCppConfig {
@@ -15,6 +17,7 @@ pub struct LlamaCppConfig {
     pub(crate) default_temperature: f32,
     pub(crate) seed: u32,
     pub(crate) chat_template: Option<Arc<str>>,
+    pub(crate) tool_dialect: Option<Arc<dyn ToolDialect>>,
     pub(crate) logs_enabled: bool,
 }
 
@@ -40,6 +43,7 @@ impl LlamaCppConfig {
             default_temperature: 0.7,
             seed: 0xC0FFEE,
             chat_template: None,
+            tool_dialect: None,
             logs_enabled: false,
         }
     }
@@ -95,6 +99,17 @@ impl LlamaCppConfig {
     /// llama.cpp template name or a supported Jinja template.
     pub fn with_chat_template(mut self, chat_template: impl Into<Arc<str>>) -> Self {
         self.chat_template = Some(chat_template.into());
+        self
+    }
+
+    /// Set the tool-calling convention used when a generation carries tools.
+    ///
+    /// The default is [`ChatMlXml`](crate::ChatMlXml), and a defaulted dialect is
+    /// checked against the GGUF's `general.name` before its first tool-carrying
+    /// generation. Setting one here is an assertion that it fits, so the check is
+    /// skipped — which is how a fine-tune under an unfamiliar name opts in.
+    pub fn with_tool_dialect(mut self, tool_dialect: impl ToolDialect + 'static) -> Self {
+        self.tool_dialect = Some(Arc::new(tool_dialect));
         self
     }
 

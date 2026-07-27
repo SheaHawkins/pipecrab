@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Emit `ModelDelta::ToolCall` from the native adapter. `generate` now honours the
+  `&[ToolDefinition]` it is handed: a `ToolDialect` renders declarations into the
+  system message, converts the tool schemas into a GBNF attached as a *lazy*
+  grammar triggered by the call's open delimiter, and reads the captured body
+  back as a name and arguments. `ChatMlXml` implements the Qwen 2.5/3 and Nous
+  Hermes convention and is the default; `LlamaCppConfig::with_tool_dialect`
+  replaces it. A defaulted dialect is checked against the GGUF's `general.name`
+  before the first tool-carrying generation.
+- Call text is withheld from the delta stream as it is captured, including a
+  trigger split across token boundaries, so no fragment of the call syntax
+  reaches a transcript and gets spoken. A body left unterminated by `max_tokens`
+  yields `LmError::IncompleteToolCall` rather than a partial call.
+
+### Fixed
+
+- Drop the redundant `sampler.accept` after `sampler.sample`, which already
+  accepts the sampled token. The double accept advanced a grammar sampler twice
+  per token and aborted the process.
+
+### Changed
+
+- Tool results render through the dialect into a role the chat template knows
+  (`user`, wrapped in `<tool_response>`), and an assistant turn's `tool_calls`
+  render back into its content. Passing no tools leaves both, the prompt, and
+  the delta stream exactly as they were.
+
 ## [0.5.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-lm-llamacpp-v0.4.0...pipecrab-lm-llamacpp-v0.5.0) - 2026-07-22
 
 ### Added

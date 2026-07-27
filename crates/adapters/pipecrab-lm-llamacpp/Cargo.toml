@@ -17,8 +17,10 @@ encoding_rs = "0.8"
 futures = "0.3"
 llama-cpp-2 = { workspace = true, features = ["common"] }
 pipecrab-lm = { workspace = true }
+serde_json = { workspace = true }
 tempfile = "3"
 thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 llama-cpp-2 = { workspace = true, features = ["android-shared-stdcxx"] }
