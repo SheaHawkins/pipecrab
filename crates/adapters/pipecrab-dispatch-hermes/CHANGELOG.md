@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-dispatch-hermes-v0.5.1...pipecrab-dispatch-hermes-v0.6.0) - 2026-07-28
+
+### Other
+
+- update msrv to 1.88 ([#70](https://github.com/SheaHawkins/pipecrab/pull/70))
+
 ### Added
 
 - Initial release: a Hermes Agent runs-API transport for `pipecrab-dispatch`.

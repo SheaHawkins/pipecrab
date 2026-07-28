@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-dispatch-v0.5.1...pipecrab-dispatch-v0.6.0) - 2026-07-28
+
+### Added
+
+- hermes-voice-agent example ([#72](https://github.com/SheaHawkins/pipecrab/pull/72))
+
 ### Changed
 
 - Neither description asks for a spoken acknowledgement any more. A tool-calling
