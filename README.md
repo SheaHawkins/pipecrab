@@ -21,6 +21,16 @@ Pipecrab is a thoughtful grounds-up rewrite of `pipecat` but in Rust. This makes
 
 ❓ = expected to work, not yet verified. ❌ = not yet implemented.
 
+## Why Pipecrab?
+| | **Pipecrab** | **Pipecat** | **LiveKit (Rust SDK)** |
+|---|---|---|---|
+| **Portability** | One Rust core everywhere, wasm included | Python server, different client SDK per platform | Rust client SDK only — agents are Python/Node servers |
+| **Topology** | Local-first | Server-client | Server-client; always joins a room on a LiveKit server |
+| **Dispatch** | **Agent Duplex**: front brain dispatches, back brain works, status and questions ride back up | One turn at a time; parallel work is hand-rolled | Sequential agent handoff, one active agent; nothing in the Rust SDK |
+| **Edge Inference** | OSS edge models in-process, no sidecar | ~80 services, mostly hosted; real local options (Whisper, Ollama, Kokoro, Piper, Silero) | None — plugins live in the Python/Node agent |
+| **Pipeline** | Frames through composable stages (`Processor` + `Decision`) | Same shape — frames through composable processors | Fixed STT→LLM→TTS cascade in `AgentSession`; nodes overridable, not composable |
+| **Async runtime** | Abstracted — runs on wasm | N/A | Tokio required; runtime-agnostic planned |
+
 ## Running the examples
 
 Seven runnable examples live under [`examples/`](./examples), smallest first.
@@ -42,9 +52,11 @@ https://github.com/user-attachments/assets/be392736-d31f-4e3a-ada5-29a2d704c7ed
 
 ## Roadmap
 * ✅ Staged pipeline, dispatch/listener stages
+* ✅ Cross-platform, the same voice pipeline runs on iOS/Android
 * ✅ Hermes duplex, concurrent task threads
 * 🔨 Clarifying questions
 * 🔨 Telephony — outbound calls, hold detection, live handoff
+* 🔨 Offload LLM - vertex and open router integrations
 
 ## Writing a pipeline
 
