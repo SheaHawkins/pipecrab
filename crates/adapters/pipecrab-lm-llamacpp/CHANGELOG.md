@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-lm-llamacpp-v0.5.1...pipecrab-lm-llamacpp-v0.6.0) - 2026-07-28
+
+### Added
+
+- hermes-voice-agent example ([#72](https://github.com/SheaHawkins/pipecrab/pull/72))
+- *(llamacpp)* parse and emit tool calls ([#71](https://github.com/SheaHawkins/pipecrab/pull/71))
+
 ### Added
 
 - `LlamaCppConfig::with_assistant_prefix`: text prefilled after the generation
