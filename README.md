@@ -23,7 +23,7 @@ Pipecrab is a thoughtful grounds-up rewrite of `pipecat` but in Rust. This makes
 
 ## Running the examples
 
-Six runnable examples live under [`examples/`](./examples), smallest first.
+Seven runnable examples live under [`examples/`](./examples), smallest first.
 Each has its own README with full model-download and setup steps.
 
 | Example | What it shows | Setup |
@@ -34,6 +34,7 @@ Each has its own README with full model-download and setup steps.
 | [`stt-sherpa-moonshine`](./examples/stt-sherpa-moonshine) | VAD + offline Moonshine v2 transcription | VAD + ASR models |
 | [`lm-llamacpp`](./examples/lm-llamacpp) | VAD + STT + a local llama.cpp chat model streaming replies | VAD + ASR models + chat GGUF |
 | [`e2e-voice-agent`](./examples/e2e-voice-agent) | The full loop: VAD + STT + LM + Kokoro TTS speaking replies | VAD + ASR models + chat GGUF + TTS model |
+| [`e2e-voice-agent-hermes`](./examples/e2e-voice-agent-hermes) | The full loop plus dispatch: the model hands errands to a Hermes agent and speaks the results whenever they land | the above + a Hermes gateway |
 
 **Use headphones** 
 

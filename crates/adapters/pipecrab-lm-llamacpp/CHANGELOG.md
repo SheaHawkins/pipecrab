@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `LlamaCppConfig::with_assistant_prefix`: text prefilled after the generation
+  prompt, so the model continues from it and none of it reaches the delta
+  stream. `llama_chat_apply_template` takes only role/content pairs, so a
+  template kwarg cannot be passed — this applies one by hand. Qwen 3's
+  non-thinking mode is the motivating case: without it a Qwen 3 GGUF reasons
+  into the transcript, which a voice pipeline speaks aloud.
+
 - Emit `ModelDelta::ToolCall` from the native adapter. `generate` now honours the
   `&[ToolDefinition]` it is handed: a `ToolDialect` renders declarations into the
   system message, converts the tool schemas into a GBNF attached as a *lazy*

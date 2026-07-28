@@ -376,6 +376,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "e2e-voice-agent-hermes"
+version = "0.5.1"
+dependencies = [
+ "async-trait",
+ "futures",
+ "pipecrab",
+ "pipecrab-audio",
+ "pipecrab-audio-cpal",
+ "pipecrab-dispatch",
+ "pipecrab-dispatch-hermes",
+ "pipecrab-lm",
+ "pipecrab-lm-llamacpp",
+ "pipecrab-stt",
+ "pipecrab-stt-sherpa",
+ "pipecrab-tts",
+ "pipecrab-tts-sherpa",
+ "pipecrab-vad",
+ "pipecrab-vad-sherpa",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "echo"
 version = "0.5.1"
 dependencies = [

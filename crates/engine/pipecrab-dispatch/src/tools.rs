@@ -17,12 +17,16 @@ use serde_json::json;
 pub fn dispatch_task_definition() -> ToolDefinition {
     ToolDefinition::new(
         "dispatch_task",
-        // The description is the model's contract: acknowledge out loud first,
-        // and never announce success before a completion event arrives.
-        "Begin a new asynchronous background task. Speak a brief spoken \
-         acknowledgement to the user *before* calling this tool — the call \
-         itself produces no speech. The task then runs asynchronously: do NOT \
-         claim it has succeeded, finished, or produced a result until a \
+        // Leads with the capability, because the failure this description has to
+        // beat is the model refusing ("I can't check the weather") instead of
+        // reaching for the tool that can.
+        "Hand a question or errand to a background agent that can browse the \
+         web and use tools — it can find out today's weather, the news, \
+         prices, schedules, and anything else you do not already know. Call \
+         this instead of telling the user you do not know, cannot check, or \
+         have no access. Never ask the user to restate or narrow the errand: \
+         the request you already have is the task. It runs asynchronously: do \
+         NOT claim it has succeeded, finished, or produced a result until a \
          completion event arrives. Put the work to perform in `task`, and any \
          extra detail in `context`.",
         json!({
@@ -50,10 +54,12 @@ pub fn update_task_definition() -> ToolDefinition {
     ToolDefinition::new(
         "update_task",
         "Communicate with an existing asynchronous task, identified by the \
-         `task_id` it was assigned when it was accepted. Speak a brief spoken \
-         acknowledgement to the user *before* calling this tool — the call \
-         itself produces no speech. Do NOT claim the task has succeeded or \
-         finished until a completion event arrives.",
+         `task_id` it was assigned when it was accepted. Call this only for a \
+         task already accepted in this conversation, whose `task_id` you \
+         therefore already have — never ask the user for a `task_id`, and \
+         never use this to start work: starting is `dispatch_task`. Do NOT \
+         claim the task has succeeded or finished until a completion event \
+         arrives.",
         json!({
             "type": "object",
             "properties": {

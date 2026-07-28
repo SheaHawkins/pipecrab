@@ -47,17 +47,35 @@ fn descriptions_instruct_the_model() {
     assert!(dispatch.contains("new") && dispatch.contains("task"));
     assert!(update.contains("existing"));
 
-    // Both: acknowledge out loud first, and don't claim success before completion.
+    // Both: don't claim success before a completion event arrives.
     for d in [&dispatch, &update] {
-        assert!(
-            d.contains("acknowledg"),
-            "a description must ask for a spoken acknowledgement first: {d:?}"
-        );
         assert!(
             d.contains("completion"),
             "a description must forbid claiming success before a completion event: {d:?}"
         );
     }
+
+    // Neither asks for speech. A tool-calling model emits the call and no text,
+    // so a description that demands an acknowledgement alongside it buys a
+    // refusal-shaped reply with no call rather than the acknowledgement.
+    for d in [&dispatch, &update] {
+        assert!(
+            !d.contains("acknowledg"),
+            "a description asked for speech the calling turn does not produce: {d:?}"
+        );
+    }
+
+    // The failure `dispatch_task` exists to prevent: refusing instead of calling.
+    assert!(
+        dispatch.contains("cannot check") || dispatch.contains("do not know"),
+        "dispatch_task must redirect the model's refusal into a call: {dispatch:?}"
+    );
+
+    // `update_task` needs a `task_id` the model can only have been given.
+    assert!(
+        update.contains("never ask the user for a `task_id`"),
+        "update_task must forbid asking the user for a task id: {update:?}"
+    );
 }
 
 #[test]

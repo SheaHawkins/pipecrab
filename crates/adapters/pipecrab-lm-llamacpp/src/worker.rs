@@ -421,9 +421,15 @@ fn generate(
     };
 
     let messages = render_messages(conversation, dialect, tool_prompt)?;
-    let prompt = model
+    let mut prompt = model
         .apply_chat_template(template, &messages, true)
         .map_err(|error| error.to_string())?;
+    // After the generation prompt, so the model continues from it rather than
+    // producing it. `llama_chat_apply_template` takes no template kwargs, so a
+    // family whose non-thinking mode is a kwarg gets it applied here instead.
+    if let Some(assistant_prefix) = config.assistant_prefix.as_deref() {
+        prompt.push_str(assistant_prefix);
+    }
     // `AddBos::Always` maps to llama.cpp's `add_special`, which adds BOS only
     // when the vocab metadata asks for one — so BOS-less chat vocabs are
     // already handled. The residual case is a vocab that wants BOS *and* a
