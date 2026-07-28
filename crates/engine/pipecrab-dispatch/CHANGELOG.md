@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Neither description asks for a spoken acknowledgement any more. A tool-calling
+  turn is the call and nothing else — measured across Qwen 3 1.7B and 4B, every
+  turn that produced a call produced no text beside it — so asking for speech
+  bought a refusal-shaped reply *instead of* the call rather than alongside it.
+  An acknowledgement is the application's to speak.
+- `dispatch_task` leads with what the background agent can do and says to call it
+  rather than tell the user it cannot check something: the failure worth
+  designing against is a model refusing where it should delegate.
+- `update_task` forbids asking the user for a `task_id` and states that starting
+  work is `dispatch_task` — a model with both tools in scope otherwise reaches
+  for the one needing an id it was never given, and invents one.
+
 ## [0.5.1](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-dispatch-v0.5.0...pipecrab-dispatch-v0.5.1) - 2026-07-23
 
 ### Added

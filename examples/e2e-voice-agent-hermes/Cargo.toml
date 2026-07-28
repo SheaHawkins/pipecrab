@@ -1,0 +1,32 @@
+[package]
+name = "e2e-voice-agent-hermes"
+description = "The full local voice agent plus a Hermes Agent dispatch transport: spoken errands run as background Hermes runs and the agent speaks the result when it lands."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.pipecrab]
+layer = "app"
+
+[dependencies]
+pipecrab                 = { workspace = true }
+pipecrab-audio           = { workspace = true }
+pipecrab-audio-cpal      = { workspace = true }
+pipecrab-dispatch        = { workspace = true }
+pipecrab-dispatch-hermes = { workspace = true }
+pipecrab-lm              = { workspace = true }
+pipecrab-lm-llamacpp     = { workspace = true }
+pipecrab-stt             = { workspace = true }
+pipecrab-stt-sherpa      = { workspace = true }
+pipecrab-tts             = { workspace = true }
+pipecrab-tts-sherpa      = { workspace = true }
+pipecrab-vad             = { workspace = true }
+pipecrab-vad-sherpa      = { workspace = true }
+futures                  = "0.3"
+async-trait              = "0.1"
+# `connect` spawns the Hermes poller, so the app runs on a tokio runtime rather
+# than `futures::executor::block_on`.
+tokio                    = { version = "1", features = ["rt-multi-thread"] }
+url                      = "2"

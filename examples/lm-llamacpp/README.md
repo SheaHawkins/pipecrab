@@ -109,6 +109,20 @@ the mismatch rather than quietly never calling a tool. Implement
 `ToolDialect` and pass it to `LlamaCppConfig::with_tool_dialect` to add one —
 which also opts a Qwen fine-tune released under an unfamiliar name back in.
 
+### Reasoning models
+
+A Qwen 3 GGUF thinks before it answers, and its `<think>…</think>` block is
+ordinary generated text — it reaches the transcript and, in a pipeline that
+speaks one, is read aloud. The chat template hides it behind an
+`enable_thinking=false` kwarg, but `llama_chat_apply_template` takes only
+role/content pairs, so that branch never fires here.
+
+`LlamaCppConfig::with_assistant_prefix("<think>\n\n</think>\n\n")` applies it by
+hand, prefilling the assistant turn with the block that branch emits. The prefix
+is prompt rather than generation, so none of it reaches the delta stream. Pass
+it only to a model trained on it — Qwen 2.5 has no thinking mode and wants no
+prefix.
+
 ## Run
 
 ```console

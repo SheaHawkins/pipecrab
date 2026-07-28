@@ -17,6 +17,7 @@ pub struct LlamaCppConfig {
     pub(crate) default_temperature: f32,
     pub(crate) seed: u32,
     pub(crate) chat_template: Option<Arc<str>>,
+    pub(crate) assistant_prefix: Option<Arc<str>>,
     pub(crate) tool_dialect: Option<Arc<dyn ToolDialect>>,
     pub(crate) logs_enabled: bool,
 }
@@ -43,6 +44,7 @@ impl LlamaCppConfig {
             default_temperature: 0.7,
             seed: 0xC0FFEE,
             chat_template: None,
+            assistant_prefix: None,
             tool_dialect: None,
             logs_enabled: false,
         }
@@ -99,6 +101,20 @@ impl LlamaCppConfig {
     /// llama.cpp template name or a supported Jinja template.
     pub fn with_chat_template(mut self, chat_template: impl Into<Arc<str>>) -> Self {
         self.chat_template = Some(chat_template.into());
+        self
+    }
+
+    /// Begin every assistant turn with this text.
+    ///
+    /// Appended to the rendered prompt, so it is context the model continues
+    /// from rather than tokens it produced: none of it reaches the delta stream.
+    ///
+    /// This is how a template kwarg that `llama_chat_apply_template` cannot
+    /// carry gets applied by hand. Qwen 3's non-thinking mode is
+    /// `<think>\n\n</think>\n\n`, the whole of what its `enable_thinking=false`
+    /// branch emits; without it a Qwen 3 GGUF reasons aloud into the transcript.
+    pub fn with_assistant_prefix(mut self, assistant_prefix: impl Into<Arc<str>>) -> Self {
+        self.assistant_prefix = Some(assistant_prefix.into());
         self
     }
 

@@ -243,3 +243,81 @@ fn a_call_truncated_by_max_tokens_fails_instead_of_half_dispatching() {
         "a partial call was emitted: {deltas:?}"
     );
 }
+
+/// Qwen 3's non-thinking mode, verbatim from its chat template's
+/// `enable_thinking=false` branch.
+const NO_THINK: &str = "<think>\n\n</think>\n\n";
+
+/// A reasoning GGUF — Qwen 3 or another family that thinks before answering.
+/// Separate from `PIPECRAB_LLAMA_MODEL` because the assertion is about a
+/// behaviour a non-reasoning model would pass vacuously.
+///
+/// `None` when the variable is unset, so running the suite against an ordinary
+/// chat GGUF skips these two rather than failing on a model it was never given.
+fn thinking_model(assistant_prefix: Option<&str>) -> Option<LlamaCpp> {
+    let path = std::env::var_os("PIPECRAB_LLAMA_THINKING_MODEL")?;
+    let mut config = LlamaCppConfig::new(path).with_generation_defaults(
+        NonZeroU32::new(192).expect("non-zero"),
+        0.0,
+        42,
+    );
+    if let Some(prefix) = assistant_prefix {
+        config = config.with_assistant_prefix(prefix);
+    }
+    Some(LlamaCpp::load(config).expect("load model"))
+}
+
+/// Announce the skip: a test that asserts nothing still reports `ok`.
+fn skipped(test: &str) {
+    eprintln!("{test}: skipped, PIPECRAB_LLAMA_THINKING_MODEL is unset");
+}
+
+/// `llama_chat_apply_template` takes no template kwargs, so Qwen 3's
+/// `enable_thinking=false` never fires and the model reasons into a transcript
+/// a voice pipeline would speak aloud. Prefilling the assistant turn with the
+/// block that branch emits applies it by hand.
+#[test]
+#[ignore = "requires PIPECRAB_LLAMA_THINKING_MODEL to point to a reasoning chat GGUF"]
+fn an_assistant_prefix_suppresses_reasoning_without_swallowing_the_answer() {
+    let Some(model) = thinking_model(Some(NO_THINK)) else {
+        return skipped("an_assistant_prefix_suppresses_reasoning");
+    };
+    let (text, _) = turn(&model, &ask("What is the capital of France?"), &[]);
+
+    for fragment in ["<think>", "</think>"] {
+        assert!(
+            !text.contains(fragment),
+            "reasoning syntax {fragment:?} reached the transcript: {text:?}"
+        );
+    }
+    // A prefix that suppressed the reply along with the reasoning would pass the
+    // assertion above and be useless.
+    assert!(
+        text.to_lowercase().contains("paris"),
+        "the answer did not survive the prefix: {text:?}"
+    );
+}
+
+/// The prefix is prompt, not generation: it must not consume the turn's tool
+/// call, which is the pairing a dispatching voice agent actually runs.
+#[test]
+#[ignore = "requires PIPECRAB_LLAMA_THINKING_MODEL to point to a reasoning chat GGUF"]
+fn an_assistant_prefix_leaves_tool_calling_intact() {
+    let Some(model) = thinking_model(Some(NO_THINK)) else {
+        return skipped("an_assistant_prefix_leaves_tool_calling_intact");
+    };
+    let (text, calls) = turn(
+        &model,
+        &ask("Please kick off a background task to research sea otters."),
+        &tools(),
+    );
+
+    assert_eq!(calls.len(), 1, "expected one tool call, got {calls:?}");
+    assert_eq!(&*calls[0].name, "dispatch_task");
+    for fragment in ["<think>", "</think>", "<tool_call>"] {
+        assert!(
+            !text.contains(fragment),
+            "syntax {fragment:?} reached the transcript: {text:?}"
+        );
+    }
+}
