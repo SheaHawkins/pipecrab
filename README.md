@@ -40,14 +40,11 @@ https://github.com/user-attachments/assets/be392736-d31f-4e3a-ada5-29a2d704c7ed
 
 **Use headphones** 
 
-### Transcription — `stt-sherpa` and `stt-sherpa-moonshine`
-
-Both add an STT stage after the VAD gate: `stt-sherpa` uses a streaming
-Zipformer, `stt-sherpa-moonshine` an offline Moonshine v2 model. They need
-several model files — see each example's README
-([`stt-sherpa`](./examples/stt-sherpa/README.md),
-[`stt-sherpa-moonshine`](./examples/stt-sherpa-moonshine/README.md)) for the
-download commands and the full flag list.
+## Roadmap
+* ✅ Staged pipeline, dispatch/listener stages
+* ✅ Hermes duplex, concurrent task threads
+* 🔨 Clarifying questions
+* 🔨 Telephony — outbound calls, hold detection, live handoff
 
 ## Writing a pipeline
 
