@@ -142,6 +142,12 @@ synthesis — the whole pipeline, not just the model. `--stt-threads` and
 
 - A reachable `hermes gateway` and its `API_SERVER_KEY`.
 
+The example is verified on macOS. Its unit tests are excluded from CI's test
+run: on x86-64 Linux this package's test binary — static sherpa and llama.cpp
+linked together — aborts with a C++ `std::bad_alloc`, the same way
+[`lm-llamacpp`](../lm-llamacpp#requirements) does. Run them locally with
+`cargo test -p e2e-voice-agent-hermes`; they need no models.
+
 ## The gateway key
 
 The key is the gateway's `API_SERVER_KEY`, sent as a bearer token. Give it
