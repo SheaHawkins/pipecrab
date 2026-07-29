@@ -5,7 +5,7 @@
 ██      ██ ██      ██      ██      ██   ██ ██   ██ ██   ██ 
 ██      ██ ██      ███████  ██████ ██   ██ ██   ██ ██████                                     
 ```
-Pipecrab is a cross-platform pipeline for building voice agents. [We're solving the dead air problem.](https://sheahawkins.substack.com/p/c69f3ef3-f43f-438f-ac93-9ff8223a45ae)
+Pipecrab is a cross-platform pipeline for building voice agents. [We're building capable capable of multitasking.](https://open.substack.com/pub/sheahawkins/p/i-built-a-voice-framework-that-can?r=2i38mu&utm_campaign=post&utm_medium=web&showWelcomeOnShare=true)
 
 ## Local Inference Runs On
 
