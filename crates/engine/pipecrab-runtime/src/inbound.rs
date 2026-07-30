@@ -9,6 +9,8 @@ use futures::channel::mpsc::Receiver;
 use futures::stream::StreamExt;
 use pipecrab_core::{DataFrame, Direction, SystemFrame};
 
+use crate::observe::ObserverHandle;
+
 /// A frame received from [`Inbound::recv`]: either a system frame (with its
 /// travel direction) or a data frame (always downstream).
 #[derive(Debug)]
@@ -30,6 +32,10 @@ pub struct Inbound {
     pub sys: Receiver<(Direction, SystemFrame)>,
     /// Data-tier frames (media, transcripts), in FIFO order, downstream only.
     pub data: Receiver<DataFrame>,
+    /// This stage's binding to the pipeline's observer, when one is set; the
+    /// run loop reports its decide/perform activity through it. `None` (the
+    /// unobserved default) costs the run loop only an `Option` check.
+    pub observer: Option<ObserverHandle>,
 }
 
 impl Inbound {

@@ -105,6 +105,13 @@ pub trait Processor {
     /// The command vocabulary this stage can emit; plain data, no I/O.
     type Effect;
 
+    /// A human-readable name for this stage, used to label observations and
+    /// diagnostics. Defaults to the concrete type's name; override for a
+    /// shorter or more specific label.
+    fn name(&self) -> &'static str {
+        core::any::type_name::<Self>()
+    }
+
     /// Maps an incoming data frame to a disposition and zero or more effects.
     ///
     /// Called for every [`DataFrame`] arriving on the data lane. The default

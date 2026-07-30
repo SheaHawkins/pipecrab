@@ -26,12 +26,15 @@
 //! driving future. The caller drives it — `block_on` natively, `spawn_local` in
 //! the browser; there is no spawning and no executor trait.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use futures::channel::mpsc;
 
 use futures::stream::{FuturesUnordered, StreamExt};
 use pipecrab_core::{DataFrame, Decision, Direction, Processor, SystemFrame};
 
+use crate::observe::{ObserverHandle, StageId, StageObserver, TAIL_STAGE};
 use crate::{Inbound, MaybeSend, MaybeSendSync, Outbound, Stage, StageError};
 
 /// The boxed pipeline driver future returned by [`Pipeline::start`].
@@ -65,6 +68,7 @@ pub fn link(capacity: usize) -> (Outbound, Inbound) {
         Inbound {
             sys: sys_rx,
             data: data_rx,
+            observer: None,
         },
     )
 }
@@ -90,6 +94,8 @@ pub struct PipelineEnds {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 trait ErasedStage: MaybeSendSync {
     async fn run(self: Box<Self>, inbound: Inbound, out: Outbound);
+    /// The stage's [`Processor::name`], for observation labels.
+    fn name(&self) -> &'static str;
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -102,6 +108,10 @@ where
     async fn run(self: Box<Self>, inbound: Inbound, out: Outbound) {
         Stage::run(self, inbound, out).await;
     }
+
+    fn name(&self) -> &'static str {
+        Processor::name(self)
+    }
 }
 
 /// Adapts an already boxed stage to the pipeline's erased runner.
@@ -113,12 +123,41 @@ impl<E: MaybeSend + 'static> ErasedStage for BoxedStage<E> {
     async fn run(self: Box<Self>, inbound: Inbound, out: Outbound) {
         self.0.run(inbound, out).await;
     }
+
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+}
+
+/// The pass-through stage appended past the last user stage when an observer is
+/// set: its `data_in` / `sys_in` observations are exactly the frames leaving
+/// the pipeline, which nothing else would see (frames a stage emits are only
+/// observed at the *next* stage's ingress).
+struct TailTap;
+
+impl Processor for TailTap {
+    type Effect = ();
+
+    fn name(&self) -> &'static str {
+        TAIL_STAGE
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl Stage for TailTap {
+    async fn perform(&self, _effect: (), _out: &Outbound) -> Result<(), StageError> {
+        // decide_* default to Decision::forward() with no effects, so this is
+        // never reached.
+        Ok(())
+    }
 }
 
 /// Builds a [`Pipeline`] from an ordered list of stages.
 pub struct PipelineBuilder {
     stages: Vec<Box<dyn ErasedStage>>,
     capacity: usize,
+    observer: Option<Arc<dyn StageObserver>>,
 }
 
 impl PipelineBuilder {
@@ -127,6 +166,7 @@ impl PipelineBuilder {
         Self {
             stages: Vec::new(),
             capacity: DEFAULT_CAPACITY,
+            observer: None,
         }
     }
 
@@ -134,6 +174,16 @@ impl PipelineBuilder {
     /// before a send awaits (backpressure). Clamped to at least 1.
     pub fn capacity(mut self, capacity: usize) -> Self {
         self.capacity = capacity.max(1);
+        self
+    }
+
+    /// Observe every stage of the built pipeline (see
+    /// [`StageObserver`]): each stage is labeled with a [`StageId`] at wire
+    /// time, a [`TAIL_STAGE`] tap is appended so frames leaving the pipeline
+    /// are observed, and nested pipelines inherit the observer with dotted
+    /// paths. Callbacks run on the pipeline's thread and must not block.
+    pub fn observer(mut self, observer: Arc<dyn StageObserver>) -> Self {
+        self.observer = Some(observer);
         self
     }
 
@@ -164,9 +214,14 @@ impl PipelineBuilder {
             !self.stages.is_empty(),
             "a pipeline needs at least one stage"
         );
+        let mut stages = self.stages;
+        if self.observer.is_some() {
+            stages.push(Box::new(TailTap));
+        }
         Pipeline {
-            stages: self.stages,
+            stages,
             capacity: self.capacity,
+            observer: self.observer,
         }
     }
 }
@@ -184,6 +239,7 @@ impl Default for PipelineBuilder {
 pub struct Pipeline {
     stages: Vec<Box<dyn ErasedStage>>,
     capacity: usize,
+    observer: Option<Arc<dyn StageObserver>>,
 }
 
 impl Pipeline {
@@ -225,7 +281,39 @@ impl Stage for Pipeline {
     /// Wire the children between `inbound` and `out` and drive every child's
     /// `run` cooperatively as one future via [`FuturesUnordered`].
     async fn run(self: Box<Self>, inbound: Inbound, out: Outbound) {
-        let Pipeline { stages, capacity } = *self;
+        let Pipeline {
+            stages,
+            capacity,
+            observer,
+        } = *self;
+
+        // Our own observer wins; otherwise inherit the one a parent pipeline
+        // bound to our inbound, keeping its dotted path as the prefix so nested
+        // stages get "2.0"-style labels.
+        let inherited = inbound.observer.clone();
+        let (observer, prefix) = match (observer, inherited) {
+            (Some(observer), _) => (Some(observer), None),
+            (None, Some(handle)) => (Some(handle.observer), Some(handle.stage.path)),
+            (None, None) => (None, None),
+        };
+        let ids: Vec<StageId> = match &observer {
+            Some(_) => stages
+                .iter()
+                .enumerate()
+                .map(|(i, stage)| StageId {
+                    path: match &prefix {
+                        Some(prefix) => format!("{prefix}.{i}").into(),
+                        None => format!("{i}").into(),
+                    },
+                    name: stage.name(),
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        if let Some(observer) = &observer {
+            observer.wired(&ids);
+        }
+
         let n = stages.len();
         let mut tasks = FuturesUnordered::new();
 
@@ -234,7 +322,11 @@ impl Stage for Pipeline {
         let mut current_in = Some(inbound);
         let mut final_out = Some(out);
         for (i, stage) in stages.into_iter().enumerate() {
-            let stage_in = current_in.take().expect("inbound threaded through");
+            let mut stage_in = current_in.take().expect("inbound threaded through");
+            stage_in.observer = observer.as_ref().map(|observer| ObserverHandle {
+                stage: ids[i].clone(),
+                observer: observer.clone(),
+            });
             let stage_out = if i + 1 == n {
                 final_out.take().expect("outbound threaded through")
             } else {

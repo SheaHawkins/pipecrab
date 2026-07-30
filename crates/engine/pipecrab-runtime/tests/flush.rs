@@ -13,7 +13,15 @@ fn lanes() -> (
 ) {
     let (sys_tx, sys) = mpsc::channel(16);
     let (data_tx, data) = mpsc::channel(16);
-    (sys_tx, data_tx, Inbound { sys, data })
+    (
+        sys_tx,
+        data_tx,
+        Inbound {
+            sys,
+            data,
+            observer: None,
+        },
+    )
 }
 
 fn input_audio() -> DataFrame {
