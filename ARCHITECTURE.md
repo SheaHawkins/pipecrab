@@ -85,7 +85,8 @@ external model runtime an adapter wraps.
 - `pipecrab-vad` — two-tier VAD: the `VoiceActivityDetector` trait (audio in, speech edges out) that `VadStage` gates on, plus the `SpeechScorer` raw-model tier and the `Debounced` adapter that lifts a scorer into a detector. See "VAD gate" below.
 - `pipecrab-stt-sherpa`, `pipecrab-vad-sherpa` — adapter crates: implement the corresponding traits by wrapping an external engine (`sherpa-onnx`). These live under `crates/adapters/` alongside `pipecrab-audio-cpal`.
 - `pipecrab-tts` — `Synthesizer` trait + `TtsStage` and its chunker; `pipecrab-tts-sherpa` is the sherpa-onnx adapter behind it.
-- `pipecrab-lm` — `LanguageModel` trait + `LmStage`, tool definitions and model deltas; `pipecrab-lm-llamacpp` is the llama.cpp adapter behind it.
+- `pipecrab-lm` — `LanguageModel` trait + `LmStage`, tool definitions and model deltas; `pipecrab-lm-llamacpp` (local) and `pipecrab-lm-openai` (hosted) are the adapters behind it.
+- `pipecrab-lm-openai` — adapter crate: `LanguageModel` over the OpenAI Chat Completions format, so one crate serves every host that speaks it (OpenAI, OpenRouter, vLLM, `llama-server`, a proxy) — a host is a config, not a variant. Streams SSE, reassembling fragmented `tool_calls` into complete calls; `cancel` bumps an epoch and drops the response rather than owning a worker. Native-only (`reqwest` needs a tokio reactor), so it is outside the wasm portability matrix.
 - `pipecrab-dispatch-hermes` — adapter crate: a concrete `DispatchSource`/`DispatchSink` over the Hermes Agent gateway's runs API. Polling-only (a detached tokio task sweeps active runs); mints its own `task_id` and passes it as the Hermes `session_id`, so one task spans the many runs an `update_task` chains. Native-only (`tokio` + `reqwest`), so it is outside the wasm portability matrix.
 
 ## Layering gate
