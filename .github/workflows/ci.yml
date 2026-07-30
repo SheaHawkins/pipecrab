@@ -74,3 +74,7 @@ jobs:
       # DispatchSource/DispatchSink traits, no concrete transport — so it must
       # build for the browser, where a transport is e.g. a WebSocket adapter.
       - run: cargo check -p pipecrab-dispatch --target wasm32-unknown-unknown
+      # Telemetry is clock- and thread-abstracted — the hub, assembler, and sink
+      # trait carry no host dependency (the Instant-backed clock and the worker
+      # thread are native-only cfg's) — so it must build for the browser.
+      - run: cargo check -p pipecrab-telemetry --target wasm32-unknown-unknown

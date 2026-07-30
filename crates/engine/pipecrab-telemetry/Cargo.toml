@@ -1,0 +1,24 @@
+[package]
+name = "pipecrab-telemetry"
+description = "Telemetry for pipecrab pipelines: a StageObserver hub, turn assembly (session / trace / span), and the TelemetrySink trait."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.pipecrab]
+layer = "trait"
+
+[features]
+# Serde derives on the turn-record types, for sinks that serialize them.
+serde = ["dep:serde"]
+
+[dependencies]
+pipecrab-core    = { workspace = true }
+pipecrab-runtime = { workspace = true }
+serde            = { version = "1", optional = true, features = ["derive", "rc"] }
+
+[dev-dependencies]
+async-trait = "0.1"
+futures     = "0.3"

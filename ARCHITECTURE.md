@@ -86,7 +86,34 @@ external model runtime an adapter wraps.
 - `pipecrab-stt-sherpa`, `pipecrab-vad-sherpa` — adapter crates: implement the corresponding traits by wrapping an external engine (`sherpa-onnx`). These live under `crates/adapters/` alongside `pipecrab-audio-cpal`.
 - `pipecrab-tts` — `Synthesizer` trait + `TtsStage` and its chunker; `pipecrab-tts-sherpa` is the sherpa-onnx adapter behind it.
 - `pipecrab-lm` — `LanguageModel` trait + `LmStage`, tool definitions and model deltas; `pipecrab-lm-llamacpp` is the llama.cpp adapter behind it.
+- `pipecrab-telemetry` — sessions, traces (turns), and spans assembled from the frame stream: the `TelemetryHub` observer, the `TurnAssembler`, and the `TelemetrySink` trait; `pipecrab-telemetry-jsonl` is the JSONL sink behind it (one turn record per line, for fine-tune datasets). See "Telemetry" below.
 - `pipecrab-dispatch-hermes` — adapter crate: a concrete `DispatchSource`/`DispatchSink` over the Hermes Agent gateway's runs API. Polling-only (a detached tokio task sweeps active runs); mints its own `task_id` and passes it as the Hermes `session_id`, so one task spans the many runs an `update_task` chains. Native-only (`tokio` + `reqwest`), so it is outside the wasm portability matrix.
+
+## Telemetry
+
+Observation hooks into the run loop, not into stages:
+`PipelineBuilder::observer(obs)` labels every stage with a `StageId`, appends a
+`tail` tap so frames leaving the pipeline are seen (a frame is otherwise only
+observed at the *next* stage's ingress), and propagates the observer into
+nested pipelines with dotted paths (`"2.0"`). The `StageObserver` callbacks
+bracket `decide_*` and each `perform` — including an `Aborted` outcome when a
+barge-in drops one mid-flight — and fire synchronously on the pipeline thread,
+so implementations must not block. Unobserved pipelines pay one `Option` check.
+
+No trace context is threaded through frames; the frame vocabulary *is* the
+semantic event stream. `pipecrab-telemetry`'s `TurnAssembler` folds observed
+frames into turn records (session → trace/turn → per-stage spans) using
+first-seen-boundary dedup for forwarded frames and id-dedup for tool calls,
+and measures the latencies that are only clean to capture in-process:
+`time_to_first_speech` (last utterance chunk → first agent audio at the tail)
+and `response_latency` (`SpeechStopped` → same; the difference is the VAD
+hangover). The `TelemetryHub` timestamps callbacks with a pluggable `Clock`
+(the runtime stays clock-free; `Instant::now()` traps on wasm) and hands
+events over a bounded `try_send` channel — overflow drops events and reports
+the loss in-band, never blocking the pipeline. One assembler feeds every
+`TelemetrySink`, so sinks are encoders of the same record, not sources of
+truth: `pipecrab-telemetry-jsonl` writes one self-contained JSON turn per line
+(the fine-tune dataset path); an OTLP sink for dashboards is a follow-up.
 
 ## Layering gate
 

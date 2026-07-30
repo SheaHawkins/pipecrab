@@ -36,6 +36,8 @@ pipecrab-dispatch   = { path = "crates/engine/pipecrab-dispatch", version = "0.6
 pipecrab-dispatch-hermes = { path = "crates/adapters/pipecrab-dispatch-hermes", version = "0.6.0" }
 pipecrab-lm-llamacpp = { path = "crates/adapters/pipecrab-lm-llamacpp", version = "0.6.0" }
 pipecrab-stt        = { path = "crates/engine/pipecrab-stt", version = "0.6.0" }
+pipecrab-telemetry  = { path = "crates/engine/pipecrab-telemetry", version = "0.6.0" }
+pipecrab-telemetry-jsonl = { path = "crates/adapters/pipecrab-telemetry-jsonl", version = "0.6.0" }
 pipecrab-stt-sherpa = { path = "crates/adapters/pipecrab-stt-sherpa", version = "0.6.0" }
 pipecrab-tts        = { path = "crates/engine/pipecrab-tts", version = "0.6.0" }
 pipecrab-tts-sherpa = { path = "crates/adapters/pipecrab-tts-sherpa", version = "0.6.0" }
