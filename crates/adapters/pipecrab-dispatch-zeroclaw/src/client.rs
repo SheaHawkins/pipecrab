@@ -168,8 +168,9 @@ impl ZeroclawClient {
             // Honored by the gateway: a retried key answers a `duplicate`
             // body instead of re-running the turn.
             .header("X-Idempotency-Key", idempotency_key)
-            // Keys the gateway's session memory; how a follow-up post
-            // continues this task's conversation.
+            // Read by no handler on this path — the webhook is stateless, and
+            // a follow-up carries its own replayed transcript instead. Sent
+            // for gateways that do correlate on it.
             .header("X-Session-Id", session_id)
             .json(&serde_json::json!({ "message": message }));
         if let Some(token) = &self.token {
