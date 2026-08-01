@@ -1,0 +1,40 @@
+[package]
+name = "pipecrab-dispatch-zeroclaw"
+description = "ZeroClaw webhook transport for pipecrab dispatch: a DispatchSource / DispatchSink pair over a ZeroClaw gateway's synchronous /webhook endpoint."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["dispatch", "zeroclaw", "async-tasks", "voice-agent", "ai"]
+
+# An adapter: bridges the ZeroClaw gateway webhook API (an external engine) to
+# the pipecrab-dispatch transport traits. May depend on core/facade; nothing in
+# engine/ may depend back on it.
+[package.metadata.pipecrab]
+layer = "adapter"
+
+[dependencies]
+# The transport traits (DispatchSource / DispatchSink), the DispatchError, and
+# the native DispatchEvent / DispatchCommand frames they carry.
+pipecrab-dispatch = { workspace = true }
+pipecrab-core     = { workspace = true }
+async-trait       = "0.1"
+serde             = { version = "1", features = ["derive"] }
+serde_json        = { workspace = true }
+# A stable session key per task, minted adapter-side and sent as `X-Session-Id`.
+uuid              = { version = "1", features = ["v4"] }
+# The public base-URL type.
+url               = "2"
+# Native-only, like pipecrab-audio-cpal: each command runs a detached tokio
+# worker feeding a bounded mpsc; reqwest (rustls, no system OpenSSL) is the
+# HTTP client. This crate is not part of the wasm CI matrix.
+tokio             = { version = "1", features = ["rt", "sync", "macros"] }
+reqwest           = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[dev-dependencies]
+tokio    = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+wiremock = "0.6"
+# The end-to-end test drives the real DispatchIngress/DispatchEgress stages over
+# this transport through a PipelineBuilder.
+pipecrab-runtime = { workspace = true }

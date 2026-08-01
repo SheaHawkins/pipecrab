@@ -87,6 +87,7 @@ external model runtime an adapter wraps.
 - `pipecrab-tts` — `Synthesizer` trait + `TtsStage` and its chunker; `pipecrab-tts-sherpa` is the sherpa-onnx adapter behind it.
 - `pipecrab-lm` — `LanguageModel` trait + `LmStage`, tool definitions and model deltas; `pipecrab-lm-llamacpp` is the llama.cpp adapter behind it.
 - `pipecrab-dispatch-hermes` — adapter crate: a concrete `DispatchSource`/`DispatchSink` over the Hermes Agent gateway's runs API. Polling-only (a detached tokio task sweeps active runs); mints its own `task_id` and passes it as the Hermes `session_id`, so one task spans the many runs an `update_task` chains. Native-only (`tokio` + `reqwest`), so it is outside the wasm portability matrix.
+- `pipecrab-dispatch-zeroclaw` — adapter crate: a `DispatchSource`/`DispatchSink` over a ZeroClaw gateway's synchronous `/webhook` endpoint. No poller — the gateway answers only when the agent turn finishes, so each command spawns a detached worker for one request. The minted `task_id` rides as `X-Session-Id`, but the webhook is stateless (each POST is its own conversation), so the adapter keeps each task's transcript and replays it into an `update_task` follow-up. Native-only, like the Hermes adapter.
 
 ## Layering gate
 

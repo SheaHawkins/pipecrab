@@ -1323,6 +1323,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pipecrab-dispatch-zeroclaw"
+version = "0.6.0"
+dependencies = [
+ "async-trait",
+ "pipecrab-core",
+ "pipecrab-dispatch",
+ "pipecrab-runtime",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
 name = "pipecrab-lm"
 version = "0.6.0"
 dependencies = [
