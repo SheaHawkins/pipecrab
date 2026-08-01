@@ -12,12 +12,26 @@
 //! `--ignored` run in CI stays green.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use pipecrab_core::{DispatchCommand, DispatchEvent};
 use pipecrab_dispatch::{DispatchSink, DispatchSource};
 use pipecrab_dispatch_zeroclaw::{ZeroclawConfig, ZeroclawSource, connect};
 use url::Url;
+
+/// A tool call id unique to this run.
+///
+/// The adapter sends the tool call id as `X-Idempotency-Key`, and the gateway
+/// remembers keys it has already answered — a fixed id would make every run
+/// after the first a `duplicate`, and so a `Failure` rather than the
+/// `Completion` these tests wait for.
+fn unique_id(label: &str) -> Arc<str> {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the clock is past the epoch")
+        .as_nanos();
+    Arc::from(format!("{label}-{nanos}"))
+}
 
 /// The gateway URL (and optional token) from the environment, or `None` to skip.
 fn smoke_config() -> Option<ZeroclawConfig> {
@@ -62,7 +76,7 @@ async fn live_round_trip_then_follow_up_in_the_same_session() {
 
     // A create whose answer proves the message reached the model.
     sink.send_command(DispatchCommand::Create {
-        tool_call_id: Arc::from("smoke-1"),
+        tool_call_id: unique_id("smoke-create"),
         task: Arc::from("Reply with exactly the word: pomegranate"),
         context: None,
     })
@@ -89,10 +103,10 @@ async fn live_round_trip_then_follow_up_in_the_same_session() {
         "the reply carries the requested word: {message}"
     );
 
-    // A follow-up under the same task: the gateway's session memory must
-    // carry the errand, or the agent cannot answer this.
+    // A follow-up under the same task: the replayed transcript must carry the
+    // errand, or the agent cannot answer this.
     sink.send_command(DispatchCommand::Update {
-        tool_call_id: Arc::from("smoke-2"),
+        tool_call_id: unique_id("smoke-update"),
         task_id: task_id.clone(),
         message: Arc::from("What word did I just ask you to reply with?"),
     })
@@ -125,7 +139,7 @@ async fn live_bad_token_fails_the_task_finally() {
     let (mut source, sink) = connect(config.with_token("definitely-not-a-valid-token"));
 
     sink.send_command(DispatchCommand::Create {
-        tool_call_id: Arc::from("smoke-bad-key"),
+        tool_call_id: unique_id("smoke-bad-token"),
         task: Arc::from("this should never reach a model"),
         context: None,
     })

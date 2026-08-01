@@ -25,11 +25,11 @@
 //!   → non-retryable `Failure`, a 429 / 5xx / transport error → retryable
 //!   `Failure`, and a `needs_quickstart` 503 (gateway booted without a model) →
 //!   non-retryable `Failure`.
-//! * `update_task` posts a follow-up under the same `X-Session-Id`. ZeroClaw's
-//!   session memory carries the conversation server-side, so no history is
-//!   replayed. It works only between turns: the webhook API has no way to
-//!   deliver input to an executing turn, so an update mid-turn is rejected
-//!   rather than silently deferred.
+//! * `update_task` posts a follow-up with the task's prior exchanges replayed
+//!   ahead of it — the webhook is stateless, so the adapter is what makes a
+//!   task a conversation. It works only between turns: the webhook API has no
+//!   way to deliver input to an executing turn, so an update mid-turn is
+//!   rejected rather than silently deferred.
 //! * This adapter never emits [`Progress`](pipecrab_core::DispatchEvent::Progress)
 //!   or [`Question`](pipecrab_core::DispatchEvent::Question) — one request is
 //!   one opaque turn, with no intermediate state to observe. An agent's
@@ -45,7 +45,7 @@
 //! workers) and `reqwest` (HTTP), so it is not part of the wasm portability
 //! matrix.
 //!
-//! # Gateway behavior, as observed on zeroclaw master (2026-07)
+//! # Gateway behavior, as observed against a live gateway (2026-08)
 //!
 //! * The gateway listens on port `42617` by default. Auth is a pairing bearer
 //!   token (`Authorization: Bearer <token>`, obtained via `POST /pair`), plus
@@ -55,10 +55,13 @@
 //!   `{"response": ..., "model": ...}`; errors are `{"error": ...}` envelopes
 //!   (400 bad JSON / unknown `?agent=` alias, 401 unpaired, 429 rate limited
 //!   with `retry_after`, 500 provider failure, 503 `needs_quickstart`).
-//! * `X-Session-Id` must be ≤128 chars of `[A-Za-z0-9._-]` — an invalid id is
-//!   silently ignored, not rejected. The minted `pc-{uuid}` ids conform.
-//!   A session id keys the gateway's server-side session memory, so a
-//!   follow-up post genuinely continues the conversation.
+//! * The webhook is **stateless**: each POST is its own conversation, and the
+//!   gateway keeps no history between them. `X-Session-Id` is accepted (it sits
+//!   in the gateway's permitted-header list) but is read by no handler on this
+//!   path, so it correlates nothing — the adapter still sends the task id there
+//!   for gateways that do honor it, and replays its own transcript so a
+//!   follow-up turn is understood either way. The gateway's `/api/sessions`
+//!   sessions are ACP sessions; a webhook post creates none.
 //! * `X-Idempotency-Key` **is** honored: a repost with a seen key answers
 //!   `{"status": "duplicate", "idempotent": true, ...}` without re-running the
 //!   turn — and without the original reply, which is why the adapter maps it

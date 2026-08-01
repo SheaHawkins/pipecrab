@@ -20,8 +20,8 @@ use pipecrab_dispatch::DispatchError;
 use tokio::sync::{Notify, mpsc};
 
 use crate::classify::{Classified, classify};
-use crate::client::{ZeroclawClient, compose_message};
-use crate::task::{TaskEntry, TaskId};
+use crate::client::{ZeroclawClient, compose_follow_up, compose_message};
+use crate::task::{TaskEntry, TaskId, Turn};
 
 /// Bounded capacity of the event channel. A worker *awaits* its send, so a
 /// slow-draining pipeline backpressures the workers — natural, never loss.
@@ -147,14 +147,21 @@ impl Inner {
             task_id: task_id.as_arc(),
         })
         .await?;
-        tokio::spawn(deliver(Arc::clone(self), task_id, message, tool_call_id));
+        // A create opens the conversation: nothing to replay, so the wire
+        // message and the recorded user turn are the same text.
+        tokio::spawn(deliver(
+            Arc::clone(self),
+            task_id,
+            message.clone(),
+            message,
+            tool_call_id,
+        ));
         Ok(())
     }
 
     /// Handle an `Update`: reject an unknown task or one whose turn is still
-    /// executing, otherwise spawn the worker that posts the follow-up under
-    /// the same session. The gateway's session memory carries the
-    /// conversation, so nothing is replayed.
+    /// executing, otherwise spawn the worker that posts the follow-up with the
+    /// task's transcript replayed ahead of it.
     pub(crate) async fn update(
         self: &Arc<Self>,
         tool_call_id: Arc<str>,
@@ -162,8 +169,9 @@ impl Inner {
         message: Arc<str>,
     ) -> Result<(), DispatchError> {
         let task_id = TaskId::from(task_id);
-        // Classify readiness and claim the in-flight slot under one lock, so
-        // two racing updates cannot both post into the session.
+        // Classify readiness, claim the in-flight slot, and read the
+        // transcript under one lock, so two racing updates cannot both post
+        // for this task or replay the same history.
         let readiness = {
             let mut registry = self.registry.lock().unwrap();
             match registry.get_mut(&task_id) {
@@ -171,7 +179,7 @@ impl Inner {
                 Some(entry) if entry.in_flight => Readiness::Running,
                 Some(entry) => {
                     entry.in_flight = true;
-                    Readiness::Idle
+                    Readiness::Idle(entry.transcript.snapshot())
                 }
             }
         };
@@ -194,10 +202,11 @@ impl Inner {
                 })
                 .await
             }
-            Readiness::Idle => {
+            Readiness::Idle(transcript) => {
                 tokio::spawn(deliver(
                     Arc::clone(self),
                     task_id,
+                    compose_follow_up(&transcript, &message),
                     message.to_string(),
                     tool_call_id,
                 ));
@@ -214,6 +223,14 @@ impl Inner {
         }
     }
 
+    /// Append one answered exchange to a task's transcript, for its next turn
+    /// to replay.
+    fn record_turn(&self, task_id: &TaskId, turn: Turn) {
+        if let Some(entry) = self.registry.lock().unwrap().get_mut(task_id) {
+            entry.transcript.push(turn);
+        }
+    }
+
     // --- inspection (sink side) ------------------------------------------
 
     /// A cloned snapshot of a task's emitted-event trail, if the task exists.
@@ -226,26 +243,49 @@ impl Inner {
     }
 }
 
-/// One webhook turn, run detached: POST the message, classify the reply, emit
-/// the terminal event. Racing a `cancel` abandons the request — the gateway
-/// finishes the turn on its own, but there is no channel left to tell.
-async fn deliver(inner: Arc<Inner>, task_id: TaskId, message: String, idempotency_key: Arc<str>) {
+/// One webhook turn, run detached: POST `wire`, classify the reply, record the
+/// exchange, emit the terminal event. Racing a `cancel` abandons the request —
+/// the gateway finishes the turn on its own, but there is no channel left to
+/// tell.
+///
+/// `wire` is what the gateway receives (a follow-up's includes the replayed
+/// transcript); `user` is the message as the user wrote it, and is what the
+/// transcript keeps.
+async fn deliver(
+    inner: Arc<Inner>,
+    task_id: TaskId,
+    wire: String,
+    user: String,
+    idempotency_key: Arc<str>,
+) {
     let outcome = tokio::select! {
         biased;
         () = inner.cancelled_wait() => None,
         outcome = inner
             .client
-            .post_message(task_id.as_str(), &message, &idempotency_key) => Some(outcome),
+            .post_message(task_id.as_str(), &wire, &idempotency_key) => Some(outcome),
     };
     inner.finish(&task_id);
     let Some(outcome) = outcome else {
         return;
     };
     let event = match classify(&outcome) {
-        Classified::Completed { message } => DispatchEvent::Completion {
-            task_id: task_id.as_arc(),
-            message: Arc::from(message),
-        },
+        Classified::Completed { message } => {
+            // Only an answered turn joins the transcript: a failed one left no
+            // reply, and replaying the question alone would misreport it as
+            // something the agent saw.
+            inner.record_turn(
+                &task_id,
+                Turn {
+                    user,
+                    agent: message.clone(),
+                },
+            );
+            DispatchEvent::Completion {
+                task_id: task_id.as_arc(),
+                message: Arc::from(message),
+            }
+        }
         Classified::Failed { message, retryable } => DispatchEvent::Failure {
             task_id: task_id.as_arc(),
             message: Arc::from(message),
@@ -262,8 +302,8 @@ enum Readiness {
     Unknown,
     /// A turn is executing; the webhook API cannot inject input into one.
     Running,
-    /// Between turns; a follow-up can be posted into the same session.
-    Idle,
+    /// Between turns; a follow-up can be posted, carrying this transcript.
+    Idle(Vec<Turn>),
 }
 
 /// The `task_id` an event concerns, or `None` for a pre-task `Rejected`.

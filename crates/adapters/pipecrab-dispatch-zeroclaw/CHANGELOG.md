@@ -22,10 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     a `needs_quickstart` 503 → non-retryable, and a `duplicate` dedupe body →
     retryable (the original reply is unrecoverable). No `Progress` or
     `Question` events — one request is one opaque turn.
-  - `update_task` posts a follow-up under the same session id; ZeroClaw's
-    session memory carries the conversation server-side, so no history is
-    replayed. An unknown task, or one whose turn is still executing, is
-    `Rejected`.
+  - `update_task` posts a follow-up under the same session id, with the task's
+    prior exchanges replayed ahead of it: the webhook is stateless (each POST
+    is its own conversation), so the adapter keeps the transcript that makes a
+    task a conversation. Only answered turns are recorded, and the last 16 are
+    kept. An unknown task, or one whose turn is still executing, is `Rejected`.
   - `cancel()` closes the source and abandons in-flight requests, deliberately
     leaving the gateway to finish its turns — external task state outlives the
     turn.

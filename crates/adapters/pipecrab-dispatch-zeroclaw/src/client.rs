@@ -15,6 +15,7 @@ use serde_json::Value;
 use url::Url;
 
 use crate::config::ZeroclawConfig;
+use crate::task::Turn;
 
 /// How many characters of a response body to keep in a failure message.
 const BODY_EXCERPT_LIMIT: usize = 200;
@@ -101,6 +102,33 @@ pub(crate) fn compose_message(task: &str, context: Option<&str>) -> String {
         Some(context) if !context.is_empty() => format!("{task}\n\nContext:\n{context}"),
         _ => task.to_owned(),
     }
+}
+
+/// Compose the message an `Update` sends: the task's prior exchanges replayed
+/// as a transcript, then the new message.
+///
+/// `POST /webhook` starts a fresh conversation every time — `X-Session-Id` is
+/// not read by the gateway — so without this replay a follow-up arrives with no
+/// idea what it is following up on. An empty `transcript` (no turn has yet
+/// completed) sends the message alone.
+pub(crate) fn compose_follow_up(transcript: &[Turn], message: &str) -> String {
+    if transcript.is_empty() {
+        return message.to_owned();
+    }
+    let mut out = String::from(
+        "You are continuing an earlier conversation. \
+         The transcript so far:\n\n",
+    );
+    for turn in transcript {
+        out.push_str("User:\n");
+        out.push_str(&turn.user);
+        out.push_str("\n\nYou:\n");
+        out.push_str(&turn.agent);
+        out.push_str("\n\n");
+    }
+    out.push_str("The user's new message:\n\n");
+    out.push_str(message);
+    out
 }
 
 /// A reqwest-backed client for the ZeroClaw webhook API. Cheap to clone (the
@@ -221,6 +249,29 @@ mod tests {
             compose_message("do it", Some("carefully")),
             "do it\n\nContext:\ncarefully"
         );
+    }
+
+    #[test]
+    fn compose_follow_up_replays_the_transcript_before_the_new_message() {
+        let turn = |user: &str, agent: &str| Turn {
+            user: user.to_owned(),
+            agent: agent.to_owned(),
+        };
+
+        // No completed exchange yet: the message travels alone, so a follow-up
+        // never fabricates a conversation that did not happen.
+        assert_eq!(compose_follow_up(&[], "just this"), "just this");
+
+        let out = compose_follow_up(
+            &[turn("what is 2+2?", "4"), turn("and doubled?", "8")],
+            "and again?",
+        );
+        for fragment in ["what is 2+2?", "4", "and doubled?", "8", "and again?"] {
+            assert!(out.contains(fragment), "missing {fragment:?} in: {out}");
+        }
+        // Order carries the meaning: history first, oldest to newest.
+        assert!(out.find("what is 2+2?") < out.find("and doubled?"));
+        assert!(out.find("and doubled?") < out.find("and again?"));
     }
 
     #[test]

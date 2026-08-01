@@ -333,8 +333,7 @@ async fn update_after_completion_chains_a_follow_up_in_the_same_session() {
         other => panic!("expected Completion, got {other:?}"),
     }
 
-    // Both posts ride the same session id — that is the whole chaining
-    // mechanism, since the gateway's session memory carries the conversation.
+    // Both posts ride the same session id, and the first post is just the task.
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 2);
     for request in &requests {
@@ -343,12 +342,64 @@ async fn update_after_completion_chains_a_follow_up_in_the_same_session() {
             task_id.as_str()
         );
     }
+    let first: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(first, serde_json::json!({ "message": "first" }));
+
+    // The webhook is stateless, so the follow-up carries the exchange it is
+    // following up on — question and answer both — ahead of the new message.
     let follow_up: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
-    assert_eq!(
-        follow_up,
-        serde_json::json!({ "message": "again" }),
-        "no history is replayed — the session carries it server-side"
+    let sent = follow_up["message"].as_str().expect("a message string");
+    assert!(sent.contains("first"), "replays the first ask: {sent}");
+    assert!(
+        sent.contains("first answer"),
+        "replays the first reply: {sent}"
     );
+    assert!(sent.contains("again"), "carries the new message: {sent}");
+    assert!(
+        sent.find("first answer") < sent.find("again"),
+        "history precedes the new message: {sent}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_turn_leaves_the_transcript_untouched() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/webhook"))
+        .and(header("X-Idempotency-Key", "call-1"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(gateway_error("LLM request failed")))
+        .expect(1u64)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/webhook"))
+        .and(header("X-Idempotency-Key", "call-2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(reply("second answer")))
+        .expect(1u64)
+        .mount(&server)
+        .await;
+
+    let (mut source, sink) = connect(config_for(&server));
+    sink.send_command(create("call-1", "first")).await.unwrap();
+    let task_id = task_of(&next(&mut source).await.expect("accepted"));
+    match next(&mut source).await.expect("failure") {
+        DispatchEvent::Failure { .. } => {}
+        other => panic!("expected Failure, got {other:?}"),
+    }
+
+    sink.send_command(update("call-2", &task_id, "again"))
+        .await
+        .unwrap();
+    match next(&mut source).await.expect("second completion") {
+        DispatchEvent::Completion { message, .. } => assert_eq!(&*message, "second answer"),
+        other => panic!("expected Completion, got {other:?}"),
+    }
+
+    // The failed turn produced no reply, so there is no exchange to replay —
+    // the follow-up must not claim the agent saw the first ask.
+    let requests = server.received_requests().await.unwrap();
+    let follow_up: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert_eq!(follow_up, serde_json::json!({ "message": "again" }));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

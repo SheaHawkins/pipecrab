@@ -1,10 +1,10 @@
 //! The adapter's task-identity type and the per-task record it keeps.
 //!
 //! [`TaskId`] is the durable identity the model holds — minted by this adapter
-//! and doubling as the ZeroClaw `X-Session-Id`, which keys the gateway's
-//! server-side session memory. A task outlives the webhook turns executed on
-//! its behalf: a [`TaskEntry`] lives for the adapter's lifetime while turns
-//! come and go under it.
+//! and sent as the ZeroClaw `X-Session-Id`. A task outlives the webhook turns
+//! executed on its behalf: a [`TaskEntry`] lives for the adapter's lifetime
+//! while turns come and go under it, holding the [`Transcript`] that gives a
+//! follow-up turn its conversation.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -16,11 +16,13 @@ use uuid::Uuid;
 
 /// How many `(SystemTime, DispatchEvent)` pairs a task's [`EventRing`] retains.
 const EVENT_RING_CAPACITY: usize = 32;
+/// How many completed exchanges a task's [`Transcript`] retains.
+const TRANSCRIPT_CAPACITY: usize = 16;
 
 /// The durable identity of a dispatched task, minted by this adapter and sent
 /// to ZeroClaw as every request's `X-Session-Id`. Stable across the follow-up
-/// turns that [`update_task`](pipecrab_core::DispatchCommand::Update) posts
-/// into the same session, and handed back to the model as the `task_id` of
+/// turns that [`update_task`](pipecrab_core::DispatchCommand::Update) posts,
+/// and handed back to the model as the `task_id` of
 /// [`DispatchEvent::Accepted`].
 ///
 /// The minted form (`pc-` plus a simple-format uuid) stays inside the
@@ -93,15 +95,49 @@ impl EventRing {
     }
 }
 
+/// One completed exchange: what was asked, and what the agent answered.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Turn {
+    /// The message posted to the gateway, as the user wrote it — never the
+    /// replayed form, or each turn would nest the last.
+    pub(crate) user: String,
+    /// The agent's reply.
+    pub(crate) agent: String,
+}
+
+/// A bounded, in-order record of a task's completed exchanges. `POST /webhook`
+/// is stateless, so this is the only conversation that exists: a follow-up
+/// turn is understood only because the adapter replays this into it. Bounded
+/// so a long-lived task cannot grow one request without limit; the oldest turn
+/// is dropped once full.
+#[derive(Default)]
+pub(crate) struct Transcript {
+    turns: VecDeque<Turn>,
+}
+
+impl Transcript {
+    /// Append one completed exchange, evicting the oldest if at capacity.
+    pub(crate) fn push(&mut self, turn: Turn) {
+        if self.turns.len() == TRANSCRIPT_CAPACITY {
+            self.turns.pop_front();
+        }
+        self.turns.push_back(turn);
+    }
+
+    /// A cloned, oldest-first snapshot of the exchanges.
+    pub(crate) fn snapshot(&self) -> Vec<Turn> {
+        self.turns.iter().cloned().collect()
+    }
+}
+
 /// One dispatched task as the adapter tracks it: whether a webhook request is
-/// currently in flight on its behalf, and the bounded trail of what has been
-/// emitted for it.
+/// currently in flight on its behalf, the bounded trail of what has been
+/// emitted for it, and the conversation its next turn replays.
 ///
-/// The owning [`TaskId`] is the map key, so it is not duplicated here. No
-/// conversation is kept — ZeroClaw's session memory carries it server-side
-/// under the task's session id. Created by a `Create`, re-armed by an
-/// `Update`; a terminal outcome clears [`in_flight`](Self::in_flight) but
-/// keeps the entry, so a later update still resolves.
+/// The owning [`TaskId`] is the map key, so it is not duplicated here. Created
+/// by a `Create`, re-armed by an `Update`; a terminal outcome clears
+/// [`in_flight`](Self::in_flight) but keeps the entry, so a later update still
+/// resolves.
 pub(crate) struct TaskEntry {
     /// Whether a `POST /webhook` is executing for this task right now. An
     /// update is only accepted while this is `false` — the webhook API cannot
@@ -109,6 +145,8 @@ pub(crate) struct TaskEntry {
     pub(crate) in_flight: bool,
     /// The bounded trail of events emitted for this task.
     pub(crate) events: EventRing,
+    /// The exchanges completed under this task, replayed into its next turn.
+    pub(crate) transcript: Transcript,
 }
 
 impl TaskEntry {
@@ -117,6 +155,7 @@ impl TaskEntry {
         Self {
             in_flight: true,
             events: EventRing::default(),
+            transcript: Transcript::default(),
         }
     }
 }
@@ -145,6 +184,25 @@ mod tests {
             a.as_str()
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
+        );
+    }
+
+    #[test]
+    fn transcript_is_bounded_and_keeps_the_newest() {
+        let mut transcript = Transcript::default();
+        for i in 0..(TRANSCRIPT_CAPACITY + 3) {
+            transcript.push(Turn {
+                user: i.to_string(),
+                agent: format!("reply {i}"),
+            });
+        }
+        let snap = transcript.snapshot();
+        assert_eq!(snap.len(), TRANSCRIPT_CAPACITY);
+        // Oldest three (0..=2) were evicted; the replay now starts at 3.
+        assert_eq!(snap.first().unwrap().user, "3");
+        assert_eq!(
+            snap.last().unwrap().user,
+            (TRANSCRIPT_CAPACITY + 2).to_string()
         );
     }
 
