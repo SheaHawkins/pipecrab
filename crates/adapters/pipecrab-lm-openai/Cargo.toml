@@ -1,0 +1,35 @@
+[package]
+name = "pipecrab-lm-openai"
+description = "OpenAI-compatible Chat Completions language-model adapter for Pipecrab: streams text and tool calls from any host speaking the OpenAI wire format."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["llm", "openai", "openrouter", "voice-agent", "ai"]
+
+# An adapter: bridges an OpenAI-compatible HTTP endpoint (an external engine) to
+# the pipecrab-lm capability trait. May depend on the trait crate; nothing in
+# engine/ may depend back on it.
+[package.metadata.pipecrab]
+layer = "adapter"
+
+[dependencies]
+# The LanguageModel trait, the chat-context types, and the ModelDelta protocol.
+pipecrab-lm = { workspace = true }
+async-trait = "0.1"
+futures     = "0.3"
+serde       = { version = "1", features = ["derive"] }
+serde_json  = { workspace = true }
+thiserror   = "2"
+# The public base-URL type, and its segment-safe endpoint join.
+url         = "2"
+# Mints a tool-call id for a host that streams a call without one.
+uuid        = { version = "1", features = ["v4"] }
+# Native-only, like pipecrab-dispatch-hermes: reqwest (rustls, no system
+# OpenSSL) needs a tokio reactor, so this crate is not in the wasm CI matrix.
+reqwest     = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[dev-dependencies]
+tokio    = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+wiremock = "0.6"

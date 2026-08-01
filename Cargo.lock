@@ -1349,6 +1349,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pipecrab-lm-openai"
+version = "0.6.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "pipecrab-lm",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "url",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
 name = "pipecrab-runtime"
 version = "0.6.0"
 dependencies = [
