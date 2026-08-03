@@ -44,7 +44,7 @@ Each has its own README with full model-download and setup steps.
 | [`stt-sherpa-moonshine`](./examples/stt-sherpa-moonshine) | VAD + offline Moonshine v2 transcription | VAD + ASR models |
 | [`lm-llamacpp`](./examples/lm-llamacpp) | VAD + STT + a local llama.cpp chat model streaming replies | VAD + ASR models + chat GGUF |
 | [`e2e-voice-agent`](./examples/e2e-voice-agent) | The full loop: VAD + STT + LM + Kokoro TTS speaking replies | VAD + ASR models + chat GGUF + TTS model |
-| [`e2e-voice-agent-hermes`](./examples/e2e-voice-agent-hermes) | The full loop plus dispatch: the model hands errands to a Hermes agent and speaks the results whenever they land | the above + a Hermes gateway |
+| [`e2e-voice-agent-dispatch`](./examples/e2e-voice-agent-dispatch) | The full loop plus dispatch: the model hands errands to a Hermes or ZeroClaw gateway, chosen with `--backend`, and speaks the results whenever they land | the above + a Hermes or ZeroClaw gateway |
 
 https://github.com/user-attachments/assets/be392736-d31f-4e3a-ada5-29a2d704c7ed
 

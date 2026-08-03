@@ -1,0 +1,40 @@
+[package]
+name = "pipecrab-lm-zeroclaw"
+description = "ZeroClaw daemon LanguageModel adapter for pipecrab: drives a daemon session over its local JSON-RPC socket, so a ZeroClaw agent stands in as the pipeline's LM stage."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["lm", "zeroclaw", "agent", "voice-agent", "ai"]
+
+# An adapter: bridges the ZeroClaw daemon RPC protocol (an external engine) to
+# the pipecrab-lm capability trait. May depend on trait crates and facades;
+# nothing in engine/ may depend back on it.
+[package.metadata.pipecrab]
+layer = "adapter"
+
+[dependencies]
+# The LanguageModel trait, ModelDelta / ModelStream, and the chat-context types.
+pipecrab-lm       = { workspace = true }
+# ToolCall and the DispatchEvent frames the delegate source emits.
+pipecrab-core     = { workspace = true }
+# The DispatchSource trait and DispatchError the delegate source implements.
+pipecrab-dispatch = { workspace = true }
+async-trait       = "0.1"
+futures           = "0.3"
+serde             = { version = "1", features = ["derive"] }
+serde_json        = { workspace = true }
+# `started_at` in delegation result files is RFC 3339 with a UTC offset.
+chrono            = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# A stable daemon session id per conversation, minted when none is configured.
+uuid              = { version = "1", features = ["v4"] }
+# Native-only, like the other zeroclaw adapter: the connection actor owns a
+# UnixStream on a private current-thread runtime, so the pipeline itself may be
+# driven by any executor. This crate is not part of the wasm CI matrix.
+tokio             = { version = "1", features = ["rt", "net", "io-util", "sync", "time", "macros"] }
+
+[dev-dependencies]
+tokio    = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
+tempfile = "3"
+chrono   = { version = "0.4", default-features = false, features = ["clock", "std"] }
