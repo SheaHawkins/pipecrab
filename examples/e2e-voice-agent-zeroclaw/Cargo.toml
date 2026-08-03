@@ -1,0 +1,30 @@
+[package]
+name = "e2e-voice-agent-zeroclaw"
+description = "The local voice pipeline with a ZeroClaw daemon as the brain: the conversation is a first-class daemon session the ZeroClaw TUI can watch, tools run inside the daemon's agent loop, and background delegations speak their results when they land."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.pipecrab]
+layer = "app"
+
+[dependencies]
+pipecrab             = { workspace = true }
+pipecrab-audio       = { workspace = true }
+pipecrab-audio-cpal  = { workspace = true }
+pipecrab-dispatch    = { workspace = true }
+pipecrab-lm          = { workspace = true }
+pipecrab-lm-zeroclaw = { workspace = true }
+pipecrab-stt         = { workspace = true }
+pipecrab-stt-sherpa  = { workspace = true }
+pipecrab-tts         = { workspace = true }
+pipecrab-tts-sherpa  = { workspace = true }
+pipecrab-vad         = { workspace = true }
+pipecrab-vad-sherpa  = { workspace = true }
+futures              = "0.3"
+async-trait          = "0.1"
+# The adapter owns its own runtime, but the app still runs on tokio so the
+# poller-driven dispatch events and audio pumps share one executor.
+tokio                = { version = "1", features = ["rt-multi-thread"] }
