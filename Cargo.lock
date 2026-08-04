@@ -1467,8 +1467,11 @@ dependencies = [
  "async-trait",
  "futures",
  "pipecrab-core",
+ "pipecrab-lm",
  "pipecrab-runtime",
+ "pipecrab-stt",
  "pipecrab-tts",
+ "pipecrab-turn",
  "pipecrab-vad",
 ]
 
