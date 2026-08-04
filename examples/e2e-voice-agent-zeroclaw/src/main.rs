@@ -423,6 +423,9 @@ mod desktop {
                             // then the agent audio still queued past the tail —
                             // nothing flushes the tail lane for the app.
                             sink.cancel();
+                            // Held keepers predate this interrupt: re-apply the
+                            // flush predicate before collecting the new keepers.
+                            pending.retain(|f| f.survives_flush());
                             pending.extend(output.flush_data());
                         }
                         Received::Sys(_, SystemFrame::Error { message, fatal: _ }) => {

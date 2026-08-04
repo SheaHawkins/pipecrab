@@ -100,13 +100,39 @@ impl Inbound {
     /// Only meaningful straight after receiving the system frame to flush
     /// against — receiving another system frame moves the floor.
     pub fn flush_data(&mut self) -> Vec<DataFrame> {
+        self.flush_data_stamped()
+            .into_iter()
+            .map(|stamped| stamped.frame)
+            .collect()
+    }
+
+    /// [`flush_data`](Self::flush_data), keeping the stamps: the run loop holds
+    /// keepers across a later interrupt, whose flush must re-judge them by seq.
+    pub(crate) fn flush_data_stamped(&mut self) -> Vec<Stamped<DataFrame>> {
         let mut kept = Vec::new();
-        while let Ok(Stamped { seq, frame }) = self.data.try_recv() {
-            if seq >= self.flush_floor || frame.survives_flush() {
-                kept.push(frame);
+        while let Ok(stamped) = self.data.try_recv() {
+            if stamped.seq >= self.flush_floor || stamped.frame.survives_flush() {
+                kept.push(stamped);
             }
         }
         kept
+    }
+
+    /// Take one already-queued system frame without blocking, maintaining the
+    /// flush floor exactly as [`recv`](Self::recv) would. `None` when the sys
+    /// lane is empty or closed. Lets the run loop keep sys priority while it
+    /// replays flush keepers instead of awaiting `recv`.
+    pub(crate) fn try_recv_sys(&mut self) -> Option<(Direction, SystemFrame)> {
+        match self.sys.try_recv() {
+            Ok(Stamped {
+                seq,
+                frame: (dir, frame),
+            }) => {
+                self.flush_floor = seq;
+                Some((dir, frame))
+            }
+            Err(_) => None,
+        }
     }
 }
 
