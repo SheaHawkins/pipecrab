@@ -396,7 +396,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "e2e-voice-agent-dispatch"
+name = "e2e-voice-agent-hermes"
 version = "0.6.0"
 dependencies = [
  "async-trait",
@@ -406,7 +406,6 @@ dependencies = [
  "pipecrab-audio-cpal",
  "pipecrab-dispatch",
  "pipecrab-dispatch-hermes",
- "pipecrab-dispatch-zeroclaw",
  "pipecrab-lm",
  "pipecrab-lm-llamacpp",
  "pipecrab-stt",
