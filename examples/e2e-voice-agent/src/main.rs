@@ -7,7 +7,11 @@
 //!       ▼
 //!   ResamplerStage (16 kHz mono)
 //!       ▼
-//!   VadStage<SherpaVad> ──▶ SttStage<OfflineSherpaStt> ──▶ UserTurnGate
+//!   VadStage<SherpaVad> ──▶ SttStage<OfflineSherpaStt>
+//!       ▼
+//!   BargeInStage               (speech onset ⇒ downstream Interrupt)
+//!       ▼
+//!   UserTurnGate
 //!       ▼
 //!   LmStage<LlamaCpp>          (streams agent partials + one final)
 //!       ▼
@@ -23,6 +27,10 @@
 //! The chunker is why the agent starts talking before the model has finished
 //! writing: each completed sentence is synthesized while the next is still
 //! being generated.
+//!
+//! Speaking over the agent interrupts it: `BargeInStage` turns the speech
+//! onset into an `Interrupt` that cancels the in-flight generation and
+//! synthesis, and the output pump clears the playback ring.
 //!
 //! **Use headphones** — over speakers the microphone re-captures the agent's
 //! own voice and it talks to itself.
@@ -43,6 +51,7 @@ fn main() {
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 mod desktop {
+    use std::collections::VecDeque;
     use std::error::Error;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -62,6 +71,7 @@ mod desktop {
     use pipecrab_stt_sherpa::{MoonshineV2Config, OfflineSherpaStt};
     use pipecrab_tts::{SentenceChunker, Synthesizer, TtsStage};
     use pipecrab_tts_sherpa::{KokoroConfig, SherpaTts};
+    use pipecrab_turn::BargeInStage;
     use pipecrab_vad::{GateConfig, VadStage};
     use pipecrab_vad_sherpa::{SherpaVad, SherpaVadConfig};
 
@@ -182,7 +192,8 @@ mod desktop {
         let sink = CpalSink::new(&audio_config)?;
         let mut vad_config = SherpaVadConfig::new(vad_model);
         vad_config.threshold = 0.35;
-        vad_config.min_speech_duration = 0.1;
+        // High enough that a cough or bump does not barge in and kill a reply.
+        vad_config.min_speech_duration = 0.25;
         vad_config.min_silence_duration = 0.5;
         vad_config.max_speech_duration = 30.0;
         let detector = SherpaVad::new(vad_config)?;
@@ -234,6 +245,7 @@ mod desktop {
                 },
             ))
             .stage(SttStage::new(transcriber))
+            .stage(BargeInStage::new())
             .stage(UserTurnGate)
             .stage(LmStage::new(model, system_prompt))
             .stage(SentenceChunker::new())
@@ -272,7 +284,17 @@ mod desktop {
         let pump_out = async move {
             let mut sink = sink;
             let mut utterance_started = None;
-            while let Some(received) = output.recv().await {
+            // Keepers from the tail-lane flush on a barge-in, replayed ahead of
+            // the next receive.
+            let mut pending: VecDeque<DataFrame> = VecDeque::new();
+            loop {
+                let received = match pending.pop_front() {
+                    Some(frame) => Received::Data(frame),
+                    None => match output.recv().await {
+                        Some(received) => received,
+                        None => break,
+                    },
+                };
                 match received {
                     Received::Data(DataFrame::Audio(chunk)) => {
                         if let Err(error) = sink.play(chunk).await {
@@ -292,6 +314,13 @@ mod desktop {
                             }
                             None => println!("SpeechStopped"),
                         }
+                    }
+                    Received::Sys(_, SystemFrame::Interrupt) => {
+                        // Barge-in: drop what the device already holds, then
+                        // the agent audio still queued past the tail — nothing
+                        // flushes the tail lane for the application.
+                        sink.cancel();
+                        pending.extend(output.flush_data());
                     }
                     Received::Sys(_, SystemFrame::Error { message, fatal: _ }) => {
                         eprintln!("e2e-voice-agent: pipeline error: {message}")

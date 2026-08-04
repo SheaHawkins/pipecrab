@@ -391,6 +391,7 @@ dependencies = [
  "pipecrab-stt-sherpa",
  "pipecrab-tts",
  "pipecrab-tts-sherpa",
+ "pipecrab-turn",
  "pipecrab-vad",
  "pipecrab-vad-sherpa",
 ]
@@ -412,6 +413,7 @@ dependencies = [
  "pipecrab-stt-sherpa",
  "pipecrab-tts",
  "pipecrab-tts-sherpa",
+ "pipecrab-turn",
  "pipecrab-vad",
  "pipecrab-vad-sherpa",
  "tokio",
@@ -434,6 +436,7 @@ dependencies = [
  "pipecrab-stt-sherpa",
  "pipecrab-tts",
  "pipecrab-tts-sherpa",
+ "pipecrab-turn",
  "pipecrab-vad",
  "pipecrab-vad-sherpa",
  "tokio",
