@@ -7,15 +7,18 @@
 use std::sync::Arc;
 
 use futures::FutureExt;
-use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Direction, SystemFrame, Transcript};
+use pipecrab_core::{
+    AudioChunk, AudioFormat, DataFrame, Direction, DispatchEvent, DispatchFrame, SystemFrame,
+    Transcript,
+};
 use pipecrab_runtime::{Inbound, Outbound, Received, link};
 
-fn input_audio() -> DataFrame {
-    DataFrame::InputAudio {
-        bytes: Arc::from(&[0u8; 4][..]),
-        sample_rate: 16_000,
-        num_channels: 1,
-    }
+/// A frame that survives a flush on its own: every dispatch frame is durable.
+fn survivor(task_id: &str) -> DataFrame {
+    DataFrame::Dispatch(DispatchFrame::from(DispatchEvent::Progress {
+        task_id: Arc::from(task_id),
+        message: Arc::from("keep"),
+    }))
 }
 
 fn audio() -> DataFrame {
@@ -52,16 +55,16 @@ fn recv_interrupt(inb: &mut Inbound) {
 fn flush_selective_drops_unmarked_keeps_survivors_in_order() {
     let (out, mut inb) = link(16);
     send_data(&out, Transcript::user_final("A").into());
-    send_data(&out, input_audio()); // IN1
+    send_data(&out, survivor("S1"));
     send_data(&out, audio()); // B
-    send_data(&out, input_audio()); // IN2
+    send_data(&out, survivor("S2"));
     send_interrupt(&out);
     recv_interrupt(&mut inb);
 
     let kept = inb.flush_data();
     assert_eq!(kept.len(), 2);
-    assert!(matches!(kept[0], DataFrame::InputAudio { .. }));
-    assert!(matches!(kept[1], DataFrame::InputAudio { .. }));
+    assert!(matches!(kept[0], DataFrame::Dispatch(_)));
+    assert!(matches!(kept[1], DataFrame::Dispatch(_)));
 }
 
 #[test]
@@ -85,17 +88,14 @@ fn flush_all_unmarked_returns_empty() {
 #[test]
 fn flush_all_marked_returns_all_in_order() {
     let (out, mut inb) = link(16);
-    send_data(&out, input_audio());
-    send_data(&out, input_audio());
-    send_data(&out, input_audio());
+    send_data(&out, survivor("S1"));
+    send_data(&out, survivor("S2"));
+    send_data(&out, survivor("S3"));
     send_interrupt(&out);
     recv_interrupt(&mut inb);
     let kept = inb.flush_data();
     assert_eq!(kept.len(), 3);
-    assert!(
-        kept.iter()
-            .all(|f| matches!(f, DataFrame::InputAudio { .. }))
-    );
+    assert!(kept.iter().all(|f| matches!(f, DataFrame::Dispatch(_))));
 }
 
 #[test]

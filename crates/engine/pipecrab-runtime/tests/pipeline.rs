@@ -21,7 +21,8 @@ use futures::future::join;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use pipecrab_core::{
-    AudioChunk, AudioFormat, DataFrame, Decision, Direction, Processor, SystemFrame, Transcript,
+    AudioChunk, AudioFormat, DataFrame, Decision, Direction, DispatchEvent, DispatchFrame,
+    Processor, SystemFrame, Transcript,
 };
 use pipecrab_runtime::{Outbound, PipelineBuilder, Received, Stage, StageError};
 
@@ -221,21 +222,21 @@ fn pass_through_forwards_data() {
     });
 }
 
-// --- Test 4: an Interrupt flushes the data backlog, keeping transport-audio.
+// --- Test 4: an Interrupt flushes the data backlog, keeping durable frames.
 
-fn input_audio(id: u8) -> DataFrame {
-    DataFrame::InputAudio {
-        bytes: Arc::from(&[id][..]),
-        sample_rate: 16_000,
-        num_channels: 1,
-    }
+/// A frame that survives a flush on its own: every dispatch frame is durable.
+fn survivor(task_id: &str) -> DataFrame {
+    DataFrame::Dispatch(DispatchFrame::from(DispatchEvent::Progress {
+        task_id: Arc::from(task_id),
+        message: Arc::from("keep"),
+    }))
 }
 
 #[test]
 fn interrupt_flushes_data_keeping_survivors_in_order() {
     block_on(async {
         // PassThrough forwards everything, so without the flush all four data
-        // frames would reach `output`; with it, only the two InputAudio survive.
+        // frames would reach `output`; with it, only the two survivors do.
         let (ends, driver) = PipelineBuilder::new().stage(PassThrough).build().start();
         let input = ends.input;
         let mut output = ends.output;
@@ -243,12 +244,12 @@ fn interrupt_flushes_data_keeping_survivors_in_order() {
         // Back up the data lane with survivors interleaved with droppable frames,
         // then an Interrupt behind it — sys-biased recv handles it first, while
         // the whole backlog is still queued.
-        input.send_data(input_audio(1)).await.unwrap();
+        input.send_data(survivor("1")).await.unwrap();
         input
             .send_data(Transcript::user_final("drop me").into())
             .await
             .unwrap();
-        input.send_data(input_audio(2)).await.unwrap();
+        input.send_data(survivor("2")).await.unwrap();
         let audio = AudioChunk::new(Arc::from(&[0.0f32, 0.0][..]), AudioFormat::new(48_000, 1));
         input.send_data(DataFrame::Audio(audio)).await.unwrap();
         input
@@ -259,12 +260,14 @@ fn interrupt_flushes_data_keeping_survivors_in_order() {
 
         driver.await;
 
-        // Drain the output: only the two InputAudio frames, in arrival order.
+        // Drain the output: only the two dispatch frames, in arrival order.
         // (The forwarded Interrupt also arrives, on the sys lane.)
         let mut ids = Vec::new();
         while let Some(Some(received)) = output.recv().now_or_never() {
             match received {
-                Received::Data(DataFrame::InputAudio { bytes, .. }) => ids.push(bytes[0]),
+                Received::Data(DataFrame::Dispatch(DispatchFrame::Event(
+                    DispatchEvent::Progress { task_id, .. },
+                ))) => ids.push(task_id.to_string()),
                 Received::Data(other) => {
                     panic!("a non-survivor leaked past the flush: {other:?}")
                 }
@@ -273,7 +276,7 @@ fn interrupt_flushes_data_keeping_survivors_in_order() {
         }
         assert_eq!(
             ids,
-            vec![1, 2],
+            vec!["1", "2"],
             "survivors kept in order; droppable frames flushed"
         );
     });

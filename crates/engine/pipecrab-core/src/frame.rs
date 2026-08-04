@@ -225,16 +225,6 @@ impl Transcript {
 /// produce a new one when you're ready.
 #[derive(Clone, Debug)]
 pub enum DataFrame {
-    /// Input audio from a transport source. Survives an interrupt flush so that
-    /// a barge-in utterance is not clipped; see [`DataFrame::survives_flush`].
-    InputAudio {
-        /// Raw PCM bytes.
-        bytes: Arc<[u8]>,
-        /// Samples per second (e.g. 16 000 for 16 kHz).
-        sample_rate: u32,
-        /// Number of audio channels (1 = mono, 2 = stereo).
-        num_channels: u16,
-    },
     /// A piece of conversation text: STT output, LM output, or text bound for
     /// TTS. See [`Transcript`] for the role and finality it carries.
     Transcript(Transcript),
@@ -259,11 +249,12 @@ pub enum DataFrame {
 
 impl DataFrame {
     /// True for frames that outlive an interrupt's data-queue flush, false for
-    /// those belonging to the interrupted turn. Survivors:
-    /// [`InputAudio`](DataFrame::InputAudio) (don't clip the new utterance),
+    /// those belonging to the interrupted turn. Survivors: durable state —
     /// [`Model(Input)`](ModelFrame::Input), [`Model(ToolCall)`](ModelFrame::ToolCall),
     /// and every [`Dispatch`](DataFrame::Dispatch) frame. Dropped: voice edges,
-    /// generated [`Transcript`]s, and the generation boundaries.
+    /// audio, generated [`Transcript`]s, and the generation boundaries. The
+    /// flush is causal, so frames queued *after* the interrupt — a barge-in
+    /// utterance's own — are kept regardless of this predicate.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -271,13 +262,6 @@ impl DataFrame {
     ///     AudioChunk, AudioFormat, DataFrame, DispatchEvent, DispatchFrame, ModelFrame,
     ///     ToolCall, Transcript,
     /// };
-    ///
-    /// let input = DataFrame::InputAudio {
-    ///     bytes: Arc::from(&[0u8; 4][..]),
-    ///     sample_rate: 16_000,
-    ///     num_channels: 1,
-    /// };
-    /// assert!(input.survives_flush());
     ///
     /// assert!(!DataFrame::from(Transcript::agent_final("hi")).survives_flush());
     ///
@@ -298,7 +282,6 @@ impl DataFrame {
     /// ```
     pub fn survives_flush(&self) -> bool {
         match self {
-            DataFrame::InputAudio { .. } => true,
             DataFrame::Model(frame) => frame.survives_flush(),
             DataFrame::Dispatch(_) => true,
             _ => false,
