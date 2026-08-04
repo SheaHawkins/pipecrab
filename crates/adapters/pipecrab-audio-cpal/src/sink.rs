@@ -65,6 +65,10 @@ impl AudioSink for CpalSink {
     async fn play(&mut self, chunk: AudioChunk) -> Result<(), AudioError> {
         self.ring.play(chunk).await
     }
+
+    fn cancel(&mut self) {
+        self.ring.cancel();
+    }
 }
 
 /// Open the output device named by `config`, build and start its playback
@@ -167,6 +171,13 @@ where
     device.build_output_stream::<T, _, _>(
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+            if signal.take_discard() {
+                // Barge-in: drop everything queued. O(1), no alloc, no lock —
+                // commit_all only advances the ring's read index.
+                if let Ok(chunk) = consumer.read_chunk(consumer.slots()) {
+                    chunk.commit_all();
+                }
+            }
             for frame in data.chunks_mut(channels) {
                 let mono = consumer.pop().unwrap_or(0.0); // silence on underrun.
                 let value = T::from_sample(mono);

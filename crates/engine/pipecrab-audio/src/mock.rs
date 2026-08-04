@@ -64,6 +64,7 @@ maybe_async_trait! {
 pub struct MockSink {
     format: AudioFormat,
     received: Vec<AudioChunk>,
+    cancels: usize,
 }
 
 impl MockSink {
@@ -72,10 +73,12 @@ impl MockSink {
         Self {
             format,
             received: Vec::new(),
+            cancels: 0,
         }
     }
 
-    /// The chunks played so far, in arrival order.
+    /// The chunks played so far, in arrival order. `cancel` does not clear
+    /// this — the record is the test's evidence.
     pub fn chunks(&self) -> &[AudioChunk] {
         &self.received
     }
@@ -86,6 +89,11 @@ impl MockSink {
             .iter()
             .flat_map(|c| c.samples.iter().copied())
             .collect()
+    }
+
+    /// How many times `cancel` was called.
+    pub fn cancels(&self) -> usize {
+        self.cancels
     }
 }
 
@@ -98,6 +106,10 @@ maybe_async_trait! {
         async fn play(&mut self, chunk: AudioChunk) -> Result<(), AudioError> {
             self.received.push(chunk);
             Ok(())
+        }
+
+        fn cancel(&mut self) {
+            self.cancels += 1;
         }
     }
 }
