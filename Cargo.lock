@@ -1516,6 +1516,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pipecrab-turn"
+version = "0.6.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "pipecrab-core",
+ "pipecrab-runtime",
+ "pipecrab-test-util",
+]
+
+[[package]]
 name = "pipecrab-vad"
 version = "0.6.0"
 dependencies = [
