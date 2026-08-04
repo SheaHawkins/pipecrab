@@ -47,6 +47,14 @@ They use the data lane, not the system lane, because order matters. Text may pre
 
 The dispatch round-trip closes a loop: the LM emits a `ToolCall`, which leaves via the Transport to a Backend; the Backend's result returns as a Tool Result (a `ModelInput`) and re-enters the LM.
 
+## Barge-in
+
+`BargeInStage` (`pipecrab-turn`) is the interrupt originator. Placed immediately below the STT stage, it consumes each `SpeechStarted`, sends `Interrupt` downstream on the system lane, and re-emits the edge behind it. It fires on every speech onset — the data lane is downstream-only and nothing routes up, so it cannot know whether the agent is speaking — which is harmless while idle: every stage's interrupt handling is an idempotent control call. An `Interrupt` reaching VAD or STT can only be a head-injected session abandon; a barge-in never travels up there.
+
+The flush is **causal**. Every frame crosses its link with a per-link sequence stamp shared by both lanes; on an `Interrupt`, a stage's flush drops queued droppable frames stamped *before* the interrupt and keeps everything stamped after it — so the barge-in utterance's own edge, audio, and transcript are never destroyed by the interrupt they caused. Durable frames (`Model(Input)`, `Model(ToolCall)`, every `Dispatch`) survive regardless. Kept frames replay ahead of the next read, yielding to any system frame already queued.
+
+The tail lane belongs to the application: nothing flushes it. An output pump must react to the forwarded `Interrupt` itself — `AudioSink::cancel()` drops what the device ring holds (the cpal sink drains from the RT callback; the OS buffer past it is the latency floor), and `output.flush_data()` clears the agent audio still queued past the tail. See the e2e examples' `pump_out`.
+
 ```
                     ┌──────────┐          ┌───────────┐
                     │ Backend  │ ◀────────│ Transport │

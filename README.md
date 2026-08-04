@@ -33,7 +33,7 @@ Pipecrab is a thoughtful grounds-up rewrite of `pipecat` but in Rust. This makes
 
 ## Running the examples
 
-Seven runnable examples live under [`examples/`](./examples), smallest first.
+Eight runnable examples live under [`examples/`](./examples), smallest first.
 Each has its own README with full model-download and setup steps.
 
 | Example | What it shows | Setup |
@@ -43,8 +43,9 @@ Each has its own README with full model-download and setup steps.
 | [`stt-sherpa`](./examples/stt-sherpa) | VAD + streaming Zipformer transcription | VAD + ASR models |
 | [`stt-sherpa-moonshine`](./examples/stt-sherpa-moonshine) | VAD + offline Moonshine v2 transcription | VAD + ASR models |
 | [`lm-llamacpp`](./examples/lm-llamacpp) | VAD + STT + a local llama.cpp chat model streaming replies | VAD + ASR models + chat GGUF |
-| [`e2e-voice-agent`](./examples/e2e-voice-agent) | The full loop: VAD + STT + LM + Kokoro TTS speaking replies | VAD + ASR models + chat GGUF + TTS model |
-| [`e2e-voice-agent-dispatch`](./examples/e2e-voice-agent-dispatch) | The full loop plus dispatch: the model hands errands to a Hermes or ZeroClaw gateway, chosen with `--backend`, and speaks the results whenever they land | the above + a Hermes or ZeroClaw gateway |
+| [`e2e-voice-agent`](./examples/e2e-voice-agent) | The full loop: VAD + STT + LM + Kokoro TTS speaking replies, with barge-in | VAD + ASR models + chat GGUF + TTS model |
+| [`e2e-voice-agent-hermes`](./examples/e2e-voice-agent-hermes) | The full loop plus dispatch: the model hands errands to a Hermes gateway and speaks the results whenever they land | the above + a Hermes gateway |
+| [`e2e-voice-agent-zeroclaw`](./examples/e2e-voice-agent-zeroclaw) | The full loop with a ZeroClaw daemon as the brain; background delegations speak their results when they land | the above + a ZeroClaw daemon |
 
 https://github.com/user-attachments/assets/be392736-d31f-4e3a-ada5-29a2d704c7ed
 
@@ -54,6 +55,7 @@ https://github.com/user-attachments/assets/be392736-d31f-4e3a-ada5-29a2d704c7ed
 * ✅ Staged pipeline, dispatch/listener stages
 * ✅ Cross-platform, the same voice pipeline runs on iOS/Android
 * ✅ Hermes duplex, concurrent task threads
+* ✅ Barge-in — user speech onset interrupts the agent mid-reply
 * 🔨 Clarifying questions
 * 🔨 Telephony — outbound calls, hold detection, live handoff
 * 🔨 Offload LLM - vertex and open router integrations
@@ -101,6 +103,11 @@ let drain = async move {
     }
 };
 ```
+
+On a barge-in, an `Interrupt` system frame reaches `ends.output` — the tail
+lane is the application's to flush, so a pump driving an audio sink should
+react by calling `sink.cancel()` and `output.flush_data()` (see the e2e
+examples' `pump_out`).
 
 Drive the driver and both pumps together on one thread — pipecrab bakes in no
 executor, so the caller runs the future (`block_on` natively, `spawn_local` in the

@@ -59,7 +59,9 @@ impl Processor for BargeInStage {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl Stage for BargeInStage {
     async fn perform(&self, _effect: BargeIn, out: &Outbound) -> Result<(), StageError> {
-        let _ = out.send_system(Direction::Down, SystemFrame::Interrupt).await;
+        let _ = out
+            .send_system(Direction::Down, SystemFrame::Interrupt)
+            .await;
         let _ = out.send_data(DataFrame::SpeechStarted).await;
         Ok(())
     }
