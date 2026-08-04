@@ -24,6 +24,7 @@ use futures::pin_mut;
 use futures::stream::StreamExt;
 use pipecrab_core::{DataFrame, Direction, Disposition, Processor, SystemFrame};
 
+use crate::inbound::Stamped;
 use crate::{Inbound, MaybeSend, MaybeSendSync, Outbound, Received};
 
 /// Why a [`Stage::perform`] call failed.
@@ -142,9 +143,10 @@ where
     /// until that borrow ends.
     ///
     /// After an `Interrupt` is handled, the queued data backlog is flushed via
-    /// [`Inbound::flush_data`]: droppable frames are discarded, but
-    /// transport-audio survivors are kept and re-processed ahead of the next
-    /// inbound read, so a barge-in utterance is not clipped.
+    /// [`Inbound::flush_data`]: droppable frames queued before the `Interrupt`
+    /// are discarded; survivors and frames queued after it are kept and
+    /// re-processed ahead of the next inbound read, so a barge-in utterance is
+    /// not clipped.
     ///
     /// A composite stage overrides this; the default body is never invoked for
     /// one (see [`Pipeline`](crate::Pipeline)).
@@ -166,9 +168,10 @@ where
                     let interrupted = matches!(frame, SystemFrame::Interrupt);
                     let stop = handle_system(&mut *stage, dir, frame, &out).await;
                     if interrupted {
-                        // Barge-in: discard the queued data backlog, but keep
-                        // transport-audio survivors and re-process them so the
-                        // new utterance is not clipped.
+                        // Barge-in: discard the stale queued data backlog, but
+                        // keep survivors and anything queued after the
+                        // Interrupt, re-processing them so the new utterance is
+                        // not clipped.
                         pending.extend(inbound.flush_data());
                     }
                     if stop {
@@ -185,7 +188,7 @@ where
                     }
 
                     let mut stashed: Vec<(Direction, SystemFrame)> = Vec::new();
-                    let mut interrupt: Option<(Direction, SystemFrame)> = None;
+                    let mut interrupt: Option<(u64, Direction, SystemFrame)> = None;
                     let mut should_stop = false;
                     {
                         // `perform` borrows `&*stage` for its whole lifetime, so
@@ -197,9 +200,9 @@ where
                             futures::select_biased! {
                                 maybe = inbound.sys.next() => {
                                     // `None` => sys lane closed; keep performing.
-                                    if let Some((d, f)) = maybe {
+                                    if let Some(Stamped { seq, frame: (d, f) }) = maybe {
                                         if matches!(f, SystemFrame::Interrupt) {
-                                            interrupt = Some((d, f));
+                                            interrupt = Some((seq, d, f));
                                             break; // drops `perform`: barge-in
                                         }
                                         stashed.push((d, f)); // defer; keep performing
@@ -222,7 +225,10 @@ where
                     for (d, f) in stashed.drain(..) {
                         should_stop |= handle_system(&mut *stage, d, f, &out).await;
                     }
-                    if let Some((d, f)) = interrupt {
+                    if let Some((seq, d, f)) = interrupt {
+                        // This path took the frame straight off the sys lane,
+                        // so record the floor `recv` would have.
+                        inbound.flush_floor = seq;
                         should_stop |= handle_system(&mut *stage, d, f, &out).await;
                         // Same barge-in flush as the outer Sys branch.
                         pending.extend(inbound.flush_data());

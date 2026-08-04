@@ -4,10 +4,29 @@
 //!
 //! Keeping the lanes typed prevents misrouting a media frame onto the system
 //! lane and removes the per-frame is-system check from the hot path.
+//!
+//! Every frame crosses its link carrying a per-link sequence stamp (see
+//! [`Stamped`]), which makes the interrupt flush *causal*: a flush drops only
+//! frames queued before the system frame it flushes against, so a barge-in
+//! utterance sent behind its own `Interrupt` is never destroyed by it.
 
 use futures::channel::mpsc::Receiver;
 use futures::stream::StreamExt;
 use pipecrab_core::{DataFrame, Direction, SystemFrame};
+
+/// A frame paired with the sequence stamp its link's
+/// [`Outbound`](crate::Outbound) applied.
+///
+/// Both lanes of one link share a single monotonic counter, so stamps order
+/// frames *across* lanes: [`Inbound::flush_data`] keeps any data frame stamped
+/// at or after the system frame being flushed against.
+#[derive(Debug)]
+pub(crate) struct Stamped<T> {
+    /// Per-link monotonic sequence number; `0` is never issued.
+    pub(crate) seq: u64,
+    /// The carried frame.
+    pub(crate) frame: T,
+}
 
 /// A frame received from [`Inbound::recv`]: either a system frame (with its
 /// travel direction) or a data frame (always downstream).
@@ -23,13 +42,20 @@ pub enum Received {
 ///
 /// Within a lane, frames keep FIFO order. Across lanes, `sys` always wins, so a
 /// system frame is taken even when `data` is backed up.
+///
+/// Constructed only by [`link`](crate::link); the lanes are private so every
+/// receive goes through [`recv`](Self::recv), which maintains the flush floor
+/// [`flush_data`](Self::flush_data) relies on.
 pub struct Inbound {
     /// System-tier frames (lifecycle, interruption, errors). Drained first.
     /// `Error` rides this lane *upstream*; `Interrupt`/`Start`/`Stop` ride it
     /// downstream. Sparse and latency-critical.
-    pub sys: Receiver<(Direction, SystemFrame)>,
+    pub(crate) sys: Receiver<Stamped<(Direction, SystemFrame)>>,
     /// Data-tier frames (media, transcripts), in FIFO order, downstream only.
-    pub data: Receiver<DataFrame>,
+    pub(crate) data: Receiver<Stamped<DataFrame>>,
+    /// Stamp of the most recent system frame taken off `sys` — the floor
+    /// [`flush_data`](Self::flush_data) flushes up to.
+    pub(crate) flush_floor: u64,
 }
 
 impl Inbound {
@@ -50,13 +76,14 @@ impl Inbound {
         loop {
             futures::select_biased! {
                 sys = self.sys.next() => {
-                    if let Some((dir, f)) = sys {
+                    if let Some(Stamped { seq, frame: (dir, f) }) = sys {
+                        self.flush_floor = seq;
                         return Some(Received::Sys(dir, f));
                     }
                 }
                 data = self.data.next() => {
-                    if let Some(f) = data {
-                        return Some(Received::Data(f));
+                    if let Some(Stamped { frame, .. }) = data {
+                        return Some(Received::Data(frame));
                     }
                 }
                 complete => return None,
@@ -64,17 +91,112 @@ impl Inbound {
         }
     }
 
-    /// Drain everything currently queued on the data lane. Frames where
-    /// `survives_flush()` is false are dropped; survivors are returned in the
-    /// order they arrived, for the caller to re-process. Does not block and does
-    /// not touch the sys lane.
+    /// Drain everything currently queued on the data lane. A frame queued
+    /// *before* the most recently received system frame is kept only if
+    /// `survives_flush()`; a frame queued at or after it is always kept.
+    /// Keepers are returned in arrival order, for the caller to re-process.
+    /// Does not block and does not touch the sys lane.
+    ///
+    /// Only meaningful straight after receiving the system frame to flush
+    /// against — receiving another system frame moves the floor.
     pub fn flush_data(&mut self) -> Vec<DataFrame> {
         let mut kept = Vec::new();
-        while let Ok(frame) = self.data.try_recv() {
-            if frame.survives_flush() {
+        while let Ok(Stamped { seq, frame }) = self.data.try_recv() {
+            if seq >= self.flush_floor || frame.survives_flush() {
                 kept.push(frame);
             }
         }
         kept
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Lane-close semantics need one lane to close while the other stays open,
+    //! which the public [`link`](crate::link) surface cannot express (one
+    //! `Outbound` owns both senders) — so these live here, on the raw lanes.
+
+    use futures::FutureExt;
+    use futures::channel::mpsc;
+    use futures::executor::block_on;
+    use pipecrab_core::Transcript;
+
+    use super::*;
+
+    #[allow(clippy::type_complexity)]
+    fn lanes() -> (
+        mpsc::Sender<Stamped<(Direction, SystemFrame)>>,
+        mpsc::Sender<Stamped<DataFrame>>,
+        Inbound,
+    ) {
+        let (sys_tx, sys) = mpsc::channel(16);
+        let (data_tx, data) = mpsc::channel(16);
+        (
+            sys_tx,
+            data_tx,
+            Inbound {
+                sys,
+                data,
+                flush_floor: 0,
+            },
+        )
+    }
+
+    #[test]
+    fn both_lanes_closed_yields_none() {
+        block_on(async {
+            let (sys_tx, data_tx, mut inb) = lanes();
+            drop(sys_tx);
+            drop(data_tx);
+            assert!(
+                inb.recv().await.is_none(),
+                "closed lanes must signal shutdown via None"
+            );
+        });
+    }
+
+    #[test]
+    fn one_closed_lane_does_not_signal_shutdown() {
+        block_on(async {
+            let (sys_tx, data_tx, mut inb) = lanes();
+            // Data lane closes while sys is still open but empty.
+            drop(data_tx);
+            // recv must NOT resolve to None — a single closed lane is not
+            // shutdown. `now_or_never` yields `None` while still pending.
+            assert!(
+                inb.recv().now_or_never().is_none(),
+                "a still-open sys lane must keep recv pending, not report shutdown",
+            );
+
+            // The other lane closing too is what finally yields `None`.
+            drop(sys_tx);
+            assert!(
+                matches!(inb.recv().now_or_never(), Some(None)),
+                "both lanes closed must resolve immediately to None",
+            );
+        });
+    }
+
+    #[test]
+    fn closed_sys_lane_still_serves_buffered_data() {
+        block_on(async {
+            let (sys_tx, mut data_tx, mut inb) = lanes();
+            data_tx
+                .try_send(Stamped {
+                    seq: 1,
+                    frame: Transcript::user_final("after sys closed").into(),
+                })
+                .unwrap();
+            // Sys lane closes, but a buffered data frame must still be
+            // delivered.
+            drop(sys_tx);
+
+            match inb.recv().await.unwrap() {
+                Received::Data(DataFrame::Transcript(s)) => {
+                    assert_eq!(s.text, "after sys closed".into())
+                }
+                other => panic!("closed sys lane must not block the data lane, got {other:?}"),
+            }
+        });
     }
 }
