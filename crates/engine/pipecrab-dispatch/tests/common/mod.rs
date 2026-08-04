@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
+use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use pipecrab_core::{DispatchCommand, DispatchEvent};
 use pipecrab_dispatch::{DispatchError, DispatchSink, DispatchSource};
@@ -104,6 +105,46 @@ impl DispatchSink for RecordingSink {
             return Err(error.clone());
         }
         self.sent.lock().unwrap().push(command);
+        Ok(())
+    }
+}
+
+/// A [`DispatchSink`] whose send signals that it started, then parks forever on
+/// a `oneshot` the test never fires — for interrupting a send mid-flight.
+pub struct ParkingSink {
+    started: mpsc::Sender<()>,
+    block_rx: Mutex<Option<oneshot::Receiver<()>>>,
+}
+
+impl ParkingSink {
+    /// A sink plus the started-notification receiver and the never-fired block
+    /// sender (whose `is_canceled()` proves the parked send was dropped).
+    pub fn new() -> (Self, mpsc::Receiver<()>, oneshot::Sender<()>) {
+        let (started, started_rx) = mpsc::channel(1);
+        let (block_tx, block_rx) = oneshot::channel();
+        (
+            Self {
+                started,
+                block_rx: Mutex::new(Some(block_rx)),
+            },
+            started_rx,
+            block_tx,
+        )
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl DispatchSink for ParkingSink {
+    async fn send_command(&self, _command: DispatchCommand) -> Result<(), DispatchError> {
+        let _ = self.started.clone().send(()).await;
+        let rx = self
+            .block_rx
+            .lock()
+            .unwrap()
+            .take()
+            .expect("send_command parks once");
+        let _ = rx.await; // never fires; dropped when the send is abandoned.
         Ok(())
     }
 }
