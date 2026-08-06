@@ -103,6 +103,7 @@ mod tests {
                 result: Some(Arc::from("sunny, 18C")),
                 at_ms: 950.0,
             }],
+            interrupted_at_ms: None,
             timings: TurnTimings {
                 user_audio_secs: Some(1.5),
                 stt_ms: Some(100.0),
@@ -110,6 +111,7 @@ mod tests {
                 lm_total_ms: Some(730.0),
                 time_to_first_speech_ms: Some(910.0),
                 response_latency_ms: Some(900.0),
+                speech_before_interrupt_ms: None,
             },
             stages: Vec::new(),
             errors: Vec::new(),

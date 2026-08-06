@@ -23,6 +23,14 @@
 //! `lm_total_ms` measures first `GenerationStarted` to last
 //! `GenerationFinished`.
 //!
+//! An `Interrupt` closes a turn as [`TurnEnd::Interrupted`] only when it
+//! actually cut the agent off — a generation still open, or agent audio at
+//! the tail within the last second. A barge-in originator fires on every
+//! speech onset, agent idle or not, so an idle-time `Interrupt` is treated as
+//! the next utterance's herald and leaves the turn open. Interrupted records
+//! carry `interrupted_at_ms` and `speech_before_interrupt_ms` (how long the
+//! agent got to speak).
+//!
 //! # Attribution limits
 //!
 //! Per-stage spans aggregate only while a turn is open, so upstream work that
@@ -41,6 +49,11 @@ use crate::event::{Event, EventKind, FrameInfo};
 use crate::record::{
     SessionInfo, StageTimings, ToolCallRecord, TurnEnd, TurnOrigin, TurnRecord, TurnTimings,
 };
+
+/// How recently agent audio must have crossed the tail for an `Interrupt` to
+/// count as cutting the agent off (covers the sink ring depth and pump pacing
+/// between the tail tap and the speaker).
+const SPEAKING_GRACE: Duration = Duration::from_millis(1_000);
 
 /// The frame kinds that learn a designated boundary; see the module docs.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -77,6 +90,7 @@ struct TurnState {
     first_agent_partial_at: Option<Duration>,
     generation_finished_at: Option<Duration>,
     first_speech_at: Option<Duration>,
+    last_speech_at: Option<Duration>,
     agent_finals: Vec<Arc<str>>,
     tool_calls: Vec<ToolCallRecord>,
     errors: Vec<Arc<str>>,
@@ -98,6 +112,7 @@ impl TurnState {
             first_agent_partial_at: None,
             generation_finished_at: None,
             first_speech_at: None,
+            last_speech_at: None,
             agent_finals: Vec::new(),
             tool_calls: Vec::new(),
             errors: Vec::new(),
@@ -301,6 +316,7 @@ impl TurnAssembler {
                 {
                     // Agent speech leaving the pipeline.
                     turn.first_speech_at.get_or_insert(at);
+                    turn.last_speech_at = Some(at);
                 }
                 None
             }
@@ -397,9 +413,29 @@ impl TurnAssembler {
 
     fn system(&mut self, _stage: &StageId, frame: SystemFrame, at: Duration) -> Option<TurnRecord> {
         match frame {
-            // First observation closes the turn; propagated repeats find no
-            // open turn and no-op.
-            SystemFrame::Interrupt => self.close(TurnEnd::Interrupted, at),
+            // A barge-in originator (pipecrab-turn's BargeInStage) fires an
+            // Interrupt on *every* speech onset, agent idle or not, so an
+            // Interrupt only means "cut off" when the turn was engaged: a
+            // generation still open, or agent audio at the tail within
+            // [`SPEAKING_GRACE`]. An un-engaged Interrupt is the next
+            // utterance's herald — the turn stays open and the following
+            // `SpeechStarted` closes it as [`TurnEnd::NextTurn`]. Propagated
+            // repeats find the turn already closed and no-op.
+            SystemFrame::Interrupt => {
+                let engaged = self.current.as_ref().is_some_and(|turn| {
+                    let generating = turn.generation_started_at.is_some()
+                        && turn.generation_finished_at.is_none();
+                    let speaking = turn
+                        .last_speech_at
+                        .is_some_and(|last| at.saturating_sub(last) <= SPEAKING_GRACE);
+                    generating || speaking
+                });
+                if engaged {
+                    self.close(TurnEnd::Interrupted, at)
+                } else {
+                    None
+                }
+            }
             SystemFrame::Stop => self.close(TurnEnd::SessionEnd, at),
             SystemFrame::Error { message, .. } => {
                 if let Some(turn) = self.current.as_mut()
@@ -422,6 +458,7 @@ impl TurnAssembler {
         let seq = self.turn_seq;
         self.turn_seq += 1;
 
+        let interrupted = end == TurnEnd::Interrupted;
         let timings = TurnTimings {
             user_audio_secs: (turn.user_audio_secs > 0.0).then_some(turn.user_audio_secs),
             stt_ms: delta(turn.speech_stopped_at, turn.user_final_at),
@@ -429,6 +466,9 @@ impl TurnAssembler {
             lm_total_ms: delta(turn.generation_started_at, turn.generation_finished_at),
             time_to_first_speech_ms: delta(turn.last_user_audio_at, turn.first_speech_at),
             response_latency_ms: delta(turn.speech_stopped_at, turn.first_speech_at),
+            speech_before_interrupt_ms: interrupted
+                .then(|| delta(turn.first_speech_at, Some(at)))
+                .flatten(),
         };
 
         let mut stages: Vec<(Arc<str>, StageAgg)> = turn.stages.into_iter().collect();
@@ -469,6 +509,7 @@ impl TurnAssembler {
             user_text: turn.user_text,
             agent_text,
             tool_calls: turn.tool_calls,
+            interrupted_at_ms: interrupted.then(|| ms(at)),
             timings,
             stages,
             errors: turn.errors,

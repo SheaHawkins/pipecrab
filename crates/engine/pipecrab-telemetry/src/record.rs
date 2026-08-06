@@ -78,6 +78,10 @@ pub struct TurnTimings {
     /// `time_to_first_speech_ms` by roughly the VAD hangover
     /// (`min_silence_duration`); the difference is VAD-tuning headroom.
     pub response_latency_ms: Option<f64>,
+    /// First agent audio at the tail to the barge-in that cut the turn short:
+    /// how long the agent got to speak. Only on [`TurnEnd::Interrupted`]
+    /// records whose turn had reached speech.
+    pub speech_before_interrupt_ms: Option<f64>,
 }
 
 /// Per-stage decide/perform aggregates for one turn: the turn's spans.
@@ -129,6 +133,9 @@ pub struct TurnRecord {
     pub agent_text: Option<Arc<str>>,
     /// Tool calls the turn's generation emitted, results correlated by id.
     pub tool_calls: Vec<ToolCallRecord>,
+    /// Offset (ms) of the barge-in `Interrupt` that ended the turn; set
+    /// exactly when [`end`](TurnRecord::end) is [`TurnEnd::Interrupted`].
+    pub interrupted_at_ms: Option<f64>,
     /// Latency metrics measured in-process.
     pub timings: TurnTimings,
     /// Per-stage spans, in wiring order.

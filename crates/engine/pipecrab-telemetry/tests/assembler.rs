@@ -214,27 +214,63 @@ fn next_speech_started_closes_the_turn_and_opens_the_next() {
     assert_eq!(second.turn, 1);
 }
 
+fn interrupt(ms: u64, path: &str, name: &'static str) -> Event {
+    ev(
+        ms,
+        Some(stage(path, name)),
+        EventKind::SysIn {
+            dir: Direction::Down,
+            frame: SystemFrame::Interrupt,
+        },
+    )
+}
+
 #[test]
-fn interrupt_closes_the_turn_as_interrupted_once() {
+fn interrupt_while_speaking_closes_the_turn_as_interrupted_once() {
     let mut asm = assembler();
     let _ = full_turn(&mut asm);
-    let interrupt = |ms, path, name| {
-        ev(
-            ms,
-            Some(stage(path, name)),
-            EventKind::SysIn {
-                dir: Direction::Down,
-                frame: SystemFrame::Interrupt,
-            },
-        )
-    };
+    // Last tail audio was at 1600; 1700 is within the speaking grace.
     let turn = asm
         .push(interrupt(1_700, "0", "vad"))
-        .expect("interrupt closes the open turn");
+        .expect("interrupt during agent speech closes the open turn");
     assert_eq!(turn.end, TurnEnd::Interrupted);
+    assert!((turn.interrupted_at_ms.unwrap() - 1_700.0).abs() < 1e-9);
+    // First agent audio (1500) -> interrupt (1700).
+    assert!((turn.timings.speech_before_interrupt_ms.unwrap() - 200.0).abs() < 1e-9);
     // The interrupt propagating to later stages closes nothing further.
     assert!(asm.push(interrupt(1_701, "1", "stt")).is_none());
     assert!(asm.finish().is_none());
+}
+
+#[test]
+fn interrupt_mid_generation_closes_the_turn_as_interrupted() {
+    let mut asm = assembler();
+    asm.push(wired());
+    asm.push(frame(100, "1", "stt", FrameInfo::SpeechStarted));
+    asm.push(frame(700, "2", "lm", user_final("hi")));
+    asm.push(frame(720, "3", "tts", FrameInfo::GenerationStarted));
+    // No agent audio yet — the open generation alone makes the turn engaged.
+    let turn = asm
+        .push(interrupt(800, "0", "vad"))
+        .expect("interrupt mid-generation closes the open turn");
+    assert_eq!(turn.end, TurnEnd::Interrupted);
+    // Never reached speech, so there is no speech_before_interrupt.
+    assert!(turn.timings.speech_before_interrupt_ms.is_none());
+}
+
+#[test]
+fn idle_interrupt_is_the_next_utterances_herald_and_leaves_the_turn_open() {
+    let mut asm = assembler();
+    let _ = full_turn(&mut asm);
+    // A barge-in originator fires on every onset; 5s after the agent's last
+    // audio this is not a cut-off. The turn must stay open...
+    assert!(asm.push(interrupt(6_600, "0", "vad")).is_none());
+    // ...and the following SpeechStarted closes it as an ordinary next turn.
+    let turn = asm
+        .push(frame(6_650, "1", "stt", FrameInfo::SpeechStarted))
+        .expect("next SpeechStarted closes the previous turn");
+    assert_eq!(turn.end, TurnEnd::NextTurn);
+    assert_eq!(turn.interrupted_at_ms, None);
 }
 
 #[test]
