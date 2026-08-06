@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pipecrab telemetry</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:       #f9f9f7;
+    --surface:    #fcfcfb;
+    --ink:        #0b0b0b;
+    --ink-2:      #52514e;
+    --muted:      #898781;
+    --grid:       #e1e0d9;
+    --baseline:   #c3c2b7;
+    --ring:       rgba(11,11,11,0.10);
+    --s1:         #2a78d6;  /* response latency · decide */
+    --s2:         #eb6834;  /* time to first speech · perform */
+    --s3:         #1baf7a;  /* LM TTFT */
+    --warning:    #fab219;
+    --serious:    #ec835a;
+    --critical:   #d03b3b;
+    --good:       #0ca30c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page:     #0d0d0d;
+      --surface:  #1a1a19;
+      --ink:      #ffffff;
+      --ink-2:    #c3c2b7;
+      --muted:    #898781;
+      --grid:     #2c2c2a;
+      --baseline: #383835;
+      --ring:     rgba(255,255,255,0.10);
+      --s1:       #3987e5;
+      --s2:       #d95926;
+      --s3:       #199e70;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--page); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 20px; max-width: 1080px; margin: 0 auto;
+  }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 17px; font-weight: 650; }
+  header .session { color: var(--ink-2); font-size: 13px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 5px; vertical-align: 1px; }
+  .dot.live { background: var(--good); }
+  #status { margin-left: auto; color: var(--muted); font-size: 13px; }
+
+  #lost {
+    display: none; margin-bottom: 14px; padding: 8px 12px; border: 1px solid var(--ring);
+    border-left: 3px solid var(--warning); border-radius: 6px; background: var(--surface);
+    color: var(--ink-2); font-size: 13px;
+  }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .tile { background: var(--surface); border: 1px solid var(--ring); border-radius: 8px; padding: 12px 14px; }
+  .tile .label { color: var(--ink-2); font-size: 12.5px; }
+  .tile .value { font-size: 26px; font-weight: 600; margin-top: 2px; }
+  .tile .sub { color: var(--muted); font-size: 12px; margin-top: 1px; min-height: 1em; }
+
+  .card { background: var(--surface); border: 1px solid var(--ring); border-radius: 8px; padding: 14px 16px 10px; margin-bottom: 14px; }
+  .card h2 { font-size: 13.5px; font-weight: 600; margin-bottom: 2px; }
+  .card .hint { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; font-size: 12.5px; color: var(--ink-2); }
+  .legend .key { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: 3px; margin-right: 5px; }
+  .legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
+  svg { display: block; width: 100%; }
+  svg text { font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--muted); }
+  svg text.direct { fill: var(--ink-2); font-weight: 600; }
+  svg text.barval { fill: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); padding: 26px 0 30px; text-align: center; font-size: 13px; }
+
+  #tooltip {
+    position: fixed; display: none; pointer-events: none; z-index: 10;
+    background: var(--surface); border: 1px solid var(--ring); border-radius: 6px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.18); padding: 8px 10px; font-size: 12.5px; color: var(--ink-2);
+    max-width: 300px;
+  }
+  #tooltip .t-title { color: var(--ink); font-weight: 600; margin-bottom: 3px; }
+  #tooltip .row { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+  #tooltip .row b { margin-left: auto; color: var(--ink); font-variant-numeric: tabular-nums; padding-left: 12px; }
+  #tooltip .swatch { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 4px 8px; border-bottom: 1px solid var(--grid); }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.text { max-width: 260px; overflow-wrap: break-word; color: var(--ink-2); }
+  td.text .who { color: var(--muted); }
+  .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--ring); color: var(--ink-2); white-space: nowrap; }
+  .badge.interrupted { border-color: var(--serious); }
+  .badge.error { border-color: var(--critical); }
+  .tools { color: var(--ink-2); font-size: 12.5px; }
+  .tools code { font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>pipecrab telemetry</h1>
+  <span class="session" id="session"></span>
+  <span id="status"><span class="dot" id="statusdot"></span><span id="statustext">connecting…</span></span>
+</header>
+
+<div id="lost"></div>
+
+<div class="tiles">
+  <div class="tile"><div class="label">Turns</div><div class="value" id="t-turns">0</div><div class="sub" id="t-turns-sub"></div></div>
+  <div class="tile"><div class="label">Response latency</div><div class="value" id="t-resp">–</div><div class="sub" id="t-resp-sub">median, last 20 turns</div></div>
+  <div class="tile"><div class="label">Time to first speech</div><div class="value" id="t-ttfs">–</div><div class="sub">from end of user audio</div></div>
+  <div class="tile"><div class="label">LM first token</div><div class="value" id="t-ttft">–</div><div class="sub">median, last 20 turns</div></div>
+  <div class="tile"><div class="label">Barge-ins</div><div class="value" id="t-int">0</div><div class="sub" id="t-int-sub"></div></div>
+  <div class="tile"><div class="label">Tool calls</div><div class="value" id="t-tools">0</div><div class="sub" id="t-tools-sub"></div></div>
+</div>
+
+<div class="card">
+  <h2>Latency per turn</h2>
+  <div class="hint">milliseconds, most recent 60 turns</div>
+  <div class="legend">
+    <span><span class="key" style="background:var(--s1)"></span>Response latency</span>
+    <span><span class="key" style="background:var(--s2)"></span>Time to first speech</span>
+    <span><span class="key" style="background:var(--s3)"></span>LM first token</span>
+  </div>
+  <div id="latency"><div class="empty">Waiting for the first turn…</div></div>
+</div>
+
+<div class="card">
+  <h2>Where the time goes</h2>
+  <div class="hint">per-stage busy time across the session, milliseconds</div>
+  <div class="legend">
+    <span><span class="swatch" style="background:var(--s1)"></span>decide</span>
+    <span><span class="swatch" style="background:var(--s2)"></span>perform</span>
+  </div>
+  <div id="stages"><div class="empty">Waiting for the first turn…</div></div>
+</div>
+
+<div class="card">
+  <h2>Turns</h2>
+  <div class="hint">most recent first — the full record of every value charted above</div>
+  <div id="feed"><div class="empty">Waiting for the first turn…</div></div>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const turns = [];
+let lostTotal = 0;
+
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const fmtMs = v => v == null ? "–" : (v >= 10_000 ? (v / 1000).toFixed(1) + " s" : Math.round(v).toLocaleString() + " ms");
+const median = xs => {
+  const s = xs.filter(v => v != null).sort((a, b) => a - b);
+  if (!s.length) return null;
+  return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+};
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+/* ---- tooltip ---- */
+const tip = $("tooltip");
+function showTip(html, x, y) {
+  tip.innerHTML = html;
+  tip.style.display = "block";
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(x + 14, innerWidth - w - 8) + "px";
+  tip.style.top = Math.min(y + 14, innerHeight - h - 8) + "px";
+}
+function hideTip() { tip.style.display = "none"; }
+
+/* ---- KPI tiles ---- */
+function renderTiles() {
+  const recent = turns.slice(-20);
+  $("t-turns").textContent = turns.length;
+  const last = turns[turns.length - 1];
+  $("t-turns-sub").textContent = last ? "last: " + (last.end === "interrupted" ? "interrupted" : "completed") : "";
+  const resp = median(recent.map(t => t.timings.response_latency_ms));
+  $("t-resp").textContent = fmtMs(resp);
+  const lastResp = last && last.timings.response_latency_ms;
+  $("t-resp-sub").textContent = lastResp != null ? "latest " + fmtMs(lastResp) : "median, last 20 turns";
+  $("t-ttfs").textContent = fmtMs(median(recent.map(t => t.timings.time_to_first_speech_ms)));
+  $("t-ttft").textContent = fmtMs(median(recent.map(t => t.timings.lm_ttft_ms)));
+  const ints = turns.filter(t => t.end === "interrupted");
+  $("t-int").textContent = ints.length;
+  const spoke = median(ints.map(t => t.timings.speech_before_interrupt_ms));
+  $("t-int-sub").textContent = spoke != null ? "agent spoke " + fmtMs(spoke) + " (median)" : "";
+  const calls = turns.reduce((n, t) => n + t.tool_calls.length, 0);
+  $("t-tools").textContent = calls;
+  const unresolved = turns.reduce((n, t) => n + t.tool_calls.filter(c => c.result == null).length, 0);
+  $("t-tools-sub").textContent = unresolved ? unresolved + " without a result" : "";
+  $("lost").style.display = lostTotal ? "block" : "none";
+  if (lostTotal) $("lost").textContent = "⚠ " + lostTotal + " telemetry events were dropped under load — some records may be incomplete.";
+}
+
+/* ---- line chart: latency per turn ---- */
+const SERIES = [
+  { key: "response_latency_ms", name: "Response latency", v: "--s1" },
+  { key: "time_to_first_speech_ms", name: "Time to first speech", v: "--s2" },
+  { key: "lm_ttft_ms", name: "LM first token", v: "--s3" },
+];
+function renderLatency() {
+  const host = $("latency");
+  const data = turns.slice(-60);
+  if (!data.length) return;
+  const W = Math.max(320, host.clientWidth), H = 220;
+  const padL = 44, padR = 152, padT = 8, padB = 22;
+  const iw = W - padL - padR, ih = H - padT - padB;
+  const max = Math.max(1, ...data.flatMap(t => SERIES.map(s => t.timings[s.key] || 0)));
+  const yMax = niceCeil(max);
+  const x = i => padL + (data.length === 1 ? iw / 2 : i * iw / (data.length - 1));
+  const y = v => padT + ih - (v / yMax) * ih;
+  let svg = "";
+  // gridlines + y ticks (quarters of a nice ceiling stay clean numbers)
+  for (let k = 0; k <= 4; k++) {
+    const v = yMax * k / 4, gy = y(v);
+    svg += `<line x1="${padL}" y1="${gy}" x2="${W - padR}" y2="${gy}" stroke="var(--grid)" stroke-width="1"/>`;
+    svg += `<text x="${padL - 6}" y="${gy + 3.5}" text-anchor="end">${Math.round(v).toLocaleString()}</text>`;
+  }
+  // x ticks: every ~step-th plus the last, dropping a step tick that would
+  // land on top of the last one
+  const step = Math.max(1, Math.ceil(data.length / 6));
+  data.forEach((t, i) => {
+    const last = i === data.length - 1;
+    if (last || (i % step === 0 && data.length - 1 - i >= step / 2))
+      svg += `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">#${t.turn}</text>`;
+  });
+  // series lines + end labels (skip a label that would collide)
+  const ends = [];
+  for (const s of SERIES) {
+    const pts = data.map((t, i) => [i, t.timings[s.key]]).filter(p => p[1] != null);
+    if (!pts.length) continue;
+    const path = pts.map((p, j) => (j ? "L" : "M") + x(p[0]).toFixed(1) + " " + y(p[1]).toFixed(1)).join(" ");
+    svg += `<path d="${path}" fill="none" stroke="var(${s.v})" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    const [li, lv] = pts[pts.length - 1];
+    svg += `<circle cx="${x(li)}" cy="${y(lv)}" r="4" fill="var(${s.v})" stroke="var(--surface)" stroke-width="2"/>`;
+    ends.push({ y: y(lv), name: s.name, xEnd: x(li) });
+  }
+  ends.sort((a, b) => a.y - b.y);
+  let lastLabelY = -99;
+  for (const e of ends) {
+    if (e.y - lastLabelY >= 13) { // collides? fall back to the legend
+      svg += `<text class="direct" x="${W - padR + 10}" y="${e.y + 3.5}">${e.name}</text>`;
+      lastLabelY = e.y;
+    }
+  }
+  // crosshair + hover hit layer
+  svg += `<line id="xhair" x1="0" y1="${padT}" x2="0" y2="${padT + ih}" stroke="var(--baseline)" stroke-width="1" visibility="hidden"/>`;
+  svg += `<rect x="${padL}" y="${padT}" width="${iw}" height="${ih}" fill="transparent" id="latency-hit"/>`;
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}">${svg}</svg>`;
+
+  const hit = host.querySelector("#latency-hit");
+  const xhair = host.querySelector("#xhair");
+  hit.addEventListener("mousemove", ev => {
+    const rect = host.querySelector("svg").getBoundingClientRect();
+    const px = (ev.clientX - rect.left) * (W / rect.width);
+    const i = Math.max(0, Math.min(data.length - 1, Math.round((px - padL) / (iw / Math.max(1, data.length - 1)))));
+    const gx = x(i);
+    xhair.setAttribute("x1", gx); xhair.setAttribute("x2", gx);
+    xhair.setAttribute("visibility", "visible");
+    const t = data[i];
+    const rows = SERIES.map(s => {
+      const v = t.timings[s.key];
+      return `<div class="row"><span class="swatch" style="background:var(${s.v})"></span>${s.name}<b>${fmtMs(v)}</b></div>`;
+    }).join("");
+    showTip(`<div class="t-title">Turn #${t.turn}</div>${rows}`, ev.clientX, ev.clientY);
+  });
+  hit.addEventListener("mouseleave", () => { xhair.setAttribute("visibility", "hidden"); hideTip(); });
+}
+function niceCeil(v) {
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 1.5, 2, 3, 4, 5, 6, 8, 10]) if (m * p >= v) return m * p;
+  return 10 * p;
+}
+
+/* ---- stacked horizontal bars: per-stage busy time ---- */
+function renderStages() {
+  const host = $("stages");
+  const agg = new Map();
+  for (const t of turns) for (const s of t.stages) {
+    const a = agg.get(s.path) || { name: s.name, decide: 0, perform: 0 };
+    a.decide += s.decide_ms; a.perform += s.perform_ms;
+    agg.set(s.path, a);
+  }
+  const rows = [...agg.values()]
+    .map(a => ({ ...a, total: a.decide + a.perform }))
+    .filter(a => a.total > 0.05)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 10);
+  if (!rows.length) return;
+  const W = Math.max(320, host.clientWidth);
+  const padL = 150, padR = 84, barH = 18, gapY = 10, padT = 4;
+  const iw = W - padL - padR;
+  const max = Math.max(...rows.map(r => r.total));
+  const H = padT + rows.length * (barH + gapY);
+  let svg = `<line x1="${padL}" y1="0" x2="${padL}" y2="${H - gapY + 4}" stroke="var(--baseline)" stroke-width="1"/>`;
+  rows.forEach((r, i) => {
+    const yTop = padT + i * (barH + gapY);
+    const wd = Math.max(1, r.decide / max * iw);
+    const wp = r.perform / max * iw;
+    const label = shorten(r.name);
+    svg += `<text x="${padL - 8}" y="${yTop + barH / 2 + 3.5}" text-anchor="end">${esc(label)}</text>`;
+    // decide segment: square at the baseline
+    svg += `<rect data-i="${i}" data-seg="decide" x="${padL}" y="${yTop}" width="${wd}" height="${barH}" fill="var(--s1)"/>`;
+    // perform segment after a 2px surface gap, 4px rounded data-end
+    if (wp > 0.5) {
+      const px0 = padL + wd + 2, pw = Math.max(4, wp - 2);
+      svg += `<path data-i="${i}" data-seg="perform" d="M${px0} ${yTop} h${pw - 4} a4 4 0 0 1 4 4 v${barH - 8} a4 4 0 0 1 -4 4 h${-(pw - 4)} z" fill="var(--s2)"/>`;
+    }
+    svg += `<text class="barval" x="${padL + wd + (wp > 0.5 ? wp + 6 : 6)}" y="${yTop + barH / 2 + 3.5}">${Math.round(r.total).toLocaleString()}</text>`;
+  });
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}">${svg}</svg>`;
+  host.querySelectorAll("[data-seg]").forEach(el => {
+    el.addEventListener("mousemove", ev => {
+      const r = rows[+el.dataset.i];
+      showTip(
+        `<div class="t-title">${esc(r.name)}</div>` +
+        `<div class="row"><span class="swatch" style="background:var(--s1)"></span>decide<b>${fmtMs(r.decide)}</b></div>` +
+        `<div class="row"><span class="swatch" style="background:var(--s2)"></span>perform<b>${fmtMs(r.perform)}</b></div>`,
+        ev.clientX, ev.clientY);
+    });
+    el.addEventListener("mouseleave", hideTip);
+  });
+}
+function shorten(name) {
+  // Type names arrive fully qualified with generics; keep the leaf.
+  let n = String(name).split("<")[0];
+  const seg = n.split("::");
+  return seg[seg.length - 1];
+}
+
+/* ---- turn feed ---- */
+function renderFeed() {
+  if (!turns.length) return;
+  const rows = turns.slice(-50).reverse().map(t => {
+    const badge = t.end === "interrupted"
+      ? `<span class="badge interrupted">⚠ interrupted</span>`
+      : t.errors.length
+        ? `<span class="badge error">✕ error</span>`
+        : `<span class="badge">${t.origin === "model" ? "model turn" : "done"}</span>`;
+    const tools = t.tool_calls.map(c =>
+      `<div class="tools"><code>${esc(c.name)}</code>${c.result != null ? " → " + esc(trim(c.result, 60)) : " (no result)"}</div>`).join("");
+    const text =
+      (t.user_text ? `<div><span class="who">you:</span> ${esc(trim(t.user_text, 120))}</div>` : "") +
+      (t.agent_text ? `<div><span class="who">agent:</span> ${esc(trim(t.agent_text, 160))}</div>` : "");
+    return `<tr><td class="num">#${t.turn}</td><td>${badge}</td><td class="text">${text || "<span class='who'>–</span>"}</td>` +
+      `<td>${tools}</td><td class="num">${fmtMs(t.timings.response_latency_ms)}</td>` +
+      `<td class="num">${fmtMs(t.timings.time_to_first_speech_ms)}</td><td class="num">${fmtMs(t.timings.lm_total_ms)}</td></tr>`;
+  }).join("");
+  $("feed").innerHTML = `<table><thead><tr><th class="num">#</th><th>End</th><th>Transcript</th><th>Tools</th>` +
+    `<th class="num">Response</th><th class="num">First speech</th><th class="num">LM total</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+const trim = (s, n) => s.length > n ? s.slice(0, n - 1) + "…" : s;
+
+/* ---- render loop ---- */
+let queued = false;
+function render() {
+  if (queued) return;
+  queued = true;
+  requestAnimationFrame(() => {
+    queued = false;
+    renderTiles(); renderLatency(); renderStages(); renderFeed();
+  });
+}
+addEventListener("resize", render);
+
+/* ---- live feed ---- */
+const source = new EventSource("/events");
+source.onopen = () => { $("statusdot").className = "dot live"; $("statustext").textContent = "live"; };
+source.onerror = () => { $("statusdot").className = "dot"; $("statustext").textContent = "disconnected"; };
+source.onmessage = ev => {
+  const t = JSON.parse(ev.data);
+  turns.push(t);
+  lostTotal += t.lost_events || 0;
+  if (!$("session").textContent) $("session").textContent = "session " + t.session.id;
+  if (turns.length > 1000) turns.shift();
+  render();
+};
+</script>
+</body>
+</html>

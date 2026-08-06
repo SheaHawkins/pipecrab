@@ -17,6 +17,9 @@ pub use async_trait;
 pub mod inbound;
 /// Target-conditional `Send`/`Sync` bounds (`Send` native, vacuous on wasm).
 pub mod maybe;
+/// The [`StageObserver`](observe::StageObserver) hook for whole-pipeline
+/// observation (telemetry, metrics, tracing).
+pub mod observe;
 /// The [`offload`](offload::offload) helper for running blocking work off the
 /// orchestrator thread.
 pub mod offload;
@@ -28,6 +31,7 @@ pub mod pipeline;
 pub mod stage;
 pub use inbound::{Inbound, Received};
 pub use maybe::{MaybeSend, MaybeSendSync};
+pub use observe::{ObserverHandle, PerformOutcome, StageId, StageObserver, TAIL_STAGE};
 pub use offload::offload;
 pub use outbound::Outbound;
 pub use pipeline::{Pipeline, PipelineBuilder, PipelineEnds, link};

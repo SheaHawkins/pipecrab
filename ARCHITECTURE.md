@@ -94,9 +94,45 @@ external model runtime an adapter wraps.
 - `pipecrab-stt-sherpa`, `pipecrab-vad-sherpa` — adapter crates: implement the corresponding traits by wrapping an external engine (`sherpa-onnx`). These live under `crates/adapters/` alongside `pipecrab-audio-cpal`.
 - `pipecrab-tts` — `Synthesizer` trait + `TtsStage` and its chunker; `pipecrab-tts-sherpa` is the sherpa-onnx adapter behind it.
 - `pipecrab-lm` — `LanguageModel` trait + `LmStage`, tool definitions and model deltas; `pipecrab-lm-llamacpp` is the llama.cpp adapter behind it.
+- `pipecrab-telemetry` — sessions, traces (turns), and spans assembled from the frame stream: the `TelemetryHub` observer, the `TurnAssembler`, and the `TelemetrySink` trait. Sinks are adapter crates: `pipecrab-telemetry-jsonl` (one turn record per line, for fine-tune datasets) and `pipecrab-telemetry-dash` (a live localhost dashboard fed over SSE). See "Telemetry" below.
 - `pipecrab-dispatch-hermes` — adapter crate: a concrete `DispatchSource`/`DispatchSink` over the Hermes Agent gateway's runs API. Polling-only (a detached tokio task sweeps active runs); mints its own `task_id` and passes it as the Hermes `session_id`, so one task spans the many runs an `update_task` chains. Native-only (`tokio` + `reqwest`), so it is outside the wasm portability matrix.
 - `pipecrab-dispatch-zeroclaw` — adapter crate: a `DispatchSource`/`DispatchSink` over a ZeroClaw gateway's synchronous `/webhook` endpoint. No poller — the gateway answers only when the agent turn finishes, so each command spawns a detached worker for one request. The minted `task_id` rides as `X-Session-Id`, but the webhook is stateless (each POST is its own conversation), so the adapter keeps each task's transcript and replays it into an `update_task` follow-up. Native-only, like the Hermes adapter.
 - `pipecrab-lm-zeroclaw` — adapter crate: a `LanguageModel` that is a JSON-RPC peer of a running ZeroClaw **daemon** (newline-delimited JSON-RPC over its local socket; the protocol subset is hand-mirrored, so no ZeroClaw crate dependency). The conversation is a first-class daemon session the ZeroClaw TUI can list and read. Tool calling is internalized in the daemon's agent loop — no dispatch egress/sink — and its paired `ZeroclawDelegateSource` re-enters background-delegation results through `DispatchIngress` by polling the session workspace's `delegate_results/`. Supersedes `pipecrab-dispatch-zeroclaw` for the voice topology; see `docs/plans/pipecrab-lm-zeroclaw.md`. Native-only (unix sockets).
+
+## Telemetry
+
+Observation hooks into the run loop, not into stages:
+`PipelineBuilder::observer(obs)` labels every stage with a `StageId`, appends a
+`tail` tap so frames leaving the pipeline are seen (a frame is otherwise only
+observed at the *next* stage's ingress), and propagates the observer into
+nested pipelines with dotted paths (`"2.0"`). The `StageObserver` callbacks
+bracket `decide_*` and each `perform` — including an `Aborted` outcome when a
+barge-in drops one mid-flight — and fire synchronously on the pipeline thread,
+so implementations must not block. Unobserved pipelines pay one `Option` check.
+
+No trace context is threaded through frames; the frame vocabulary *is* the
+semantic event stream. `pipecrab-telemetry`'s `TurnAssembler` folds observed
+frames into turn records (session → trace/turn → per-stage spans) using
+first-seen-boundary dedup for forwarded frames and id-dedup for tool calls,
+and measures the latencies that are only clean to capture in-process:
+`time_to_first_speech` (last utterance chunk → first agent audio at the tail)
+and `response_latency` (`SpeechStopped` → same; the difference is the VAD
+hangover). The `TelemetryHub` timestamps callbacks with a pluggable `Clock`
+(the runtime stays clock-free; `Instant::now()` traps on wasm) and hands
+events over a bounded `try_send` channel — overflow drops events and reports
+the loss in-band, never blocking the pipeline. One assembler feeds every
+`TelemetrySink`, so sinks are encoders of the same record, not sources of
+truth: `pipecrab-telemetry-jsonl` writes one self-contained JSON turn per line
+(the fine-tune dataset path); `pipecrab-telemetry-dash` serves a live local
+dashboard over SSE (latency per turn, per-stage spans, barge-ins, transcript —
+`e2e-voice-agent --dashboard 127.0.0.1:7878`); an OTLP sink for hosted
+observability backends is a follow-up.
+
+An `Interrupt` only marks a turn `interrupted` when it actually cut the agent
+off (a generation still open, or tail audio within the last second) — a
+barge-in originator fires on every speech onset, so an idle-time `Interrupt`
+is just the next utterance's herald. Interrupted records carry when the cut
+happened and how long the agent had been speaking.
 
 ## Layering gate
 

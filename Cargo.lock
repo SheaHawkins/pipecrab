@@ -389,6 +389,9 @@ dependencies = [
  "pipecrab-lm-llamacpp",
  "pipecrab-stt",
  "pipecrab-stt-sherpa",
+ "pipecrab-telemetry",
+ "pipecrab-telemetry-dash",
+ "pipecrab-telemetry-jsonl",
  "pipecrab-tts",
  "pipecrab-tts-sherpa",
  "pipecrab-turn",
@@ -434,6 +437,9 @@ dependencies = [
  "pipecrab-lm-zeroclaw",
  "pipecrab-stt",
  "pipecrab-stt-sherpa",
+ "pipecrab-telemetry",
+ "pipecrab-telemetry-dash",
+ "pipecrab-telemetry-jsonl",
  "pipecrab-tts",
  "pipecrab-tts-sherpa",
  "pipecrab-turn",
@@ -1494,6 +1500,33 @@ dependencies = [
  "pipecrab-core",
  "pipecrab-stt",
  "sherpa-onnx",
+]
+
+[[package]]
+name = "pipecrab-telemetry"
+version = "0.6.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "pipecrab-core",
+ "pipecrab-runtime",
+ "serde",
+]
+
+[[package]]
+name = "pipecrab-telemetry-dash"
+version = "0.6.0"
+dependencies = [
+ "pipecrab-telemetry",
+ "serde_json",
+]
+
+[[package]]
+name = "pipecrab-telemetry-jsonl"
+version = "0.6.0"
+dependencies = [
+ "pipecrab-telemetry",
+ "serde_json",
 ]
 
 [[package]]

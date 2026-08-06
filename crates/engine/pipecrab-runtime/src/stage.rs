@@ -17,6 +17,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
 use futures::future::FutureExt;
@@ -25,6 +26,7 @@ use futures::stream::StreamExt;
 use pipecrab_core::{DataFrame, Direction, Disposition, Processor, SystemFrame};
 
 use crate::inbound::Stamped;
+use crate::observe::{ObserverHandle, PerformOutcome};
 use crate::{Inbound, MaybeSend, MaybeSendSync, Outbound, Received};
 
 /// Why a [`Stage::perform`] call failed.
@@ -155,6 +157,8 @@ where
     async fn run(self: Box<Self>, inbound: Inbound, out: Outbound) {
         let mut stage = self;
         let mut inbound = inbound;
+        let obs = inbound.observer.clone();
+        let obs = obs.as_ref();
         // Keepers of an interrupt flush, re-processed ahead of the next read.
         // Stamped so a later interrupt's flush can re-judge them by seq.
         let mut pending: VecDeque<Stamped<DataFrame>> = VecDeque::new();
@@ -175,7 +179,7 @@ where
             match received {
                 Received::Sys(dir, frame) => {
                     let interrupted = matches!(frame, SystemFrame::Interrupt);
-                    let stop = handle_system(&mut *stage, dir, frame, &out).await;
+                    let stop = handle_system(&mut *stage, dir, frame, &out, obs).await;
                     if interrupted {
                         // Barge-in: discard the stale queued data backlog, but
                         // keep survivors and anything queued after the
@@ -190,7 +194,13 @@ where
                     }
                 }
                 Received::Data(frame) => {
+                    if let Some(h) = obs {
+                        h.data_in(&frame);
+                    }
                     let decision = stage.decide_data(&frame);
+                    if let Some(h) = obs {
+                        h.data_decided(decision.disposition, decision.effects.len());
+                    }
                     if decision.disposition == Disposition::Forward {
                         let _ = out.send_data(frame).await;
                     }
@@ -201,11 +211,16 @@ where
                     let mut stashed: Vec<(Direction, SystemFrame)> = Vec::new();
                     let mut interrupt: Option<(u64, Direction, SystemFrame)> = None;
                     let mut should_stop = false;
+                    // True while a `perform_start` has been reported without its
+                    // matching `perform_end` — i.e. an effect is in flight. Lets
+                    // the abort path below close the observer's open pair.
+                    let perform_open = AtomicBool::new(false);
                     {
                         // `perform` borrows `&*stage` for its whole lifetime, so
                         // no `&mut *stage` (i.e. no `decide_system`) is possible
                         // until it is dropped at the end of this block.
-                        let perform = run_effects(&*stage, decision.effects, &out).fuse();
+                        let perform =
+                            run_effects(&*stage, decision.effects, &out, obs, &perform_open).fuse();
                         pin_mut!(perform);
                         loop {
                             futures::select_biased! {
@@ -233,14 +248,21 @@ where
                     }
 
                     // `perform` is dropped; `&mut *stage` is free again.
+                    if perform_open.load(Ordering::Relaxed) {
+                        // The dropped future reported `perform_start` for the
+                        // effect in flight; close that pair as aborted.
+                        if let Some(h) = obs {
+                            h.perform_end(PerformOutcome::Aborted);
+                        }
+                    }
                     for (d, f) in stashed.drain(..) {
-                        should_stop |= handle_system(&mut *stage, d, f, &out).await;
+                        should_stop |= handle_system(&mut *stage, d, f, &out, obs).await;
                     }
                     if let Some((seq, d, f)) = interrupt {
                         // This path took the frame straight off the sys lane,
                         // so record the floor `recv` would have.
                         inbound.flush_floor = seq;
-                        should_stop |= handle_system(&mut *stage, d, f, &out).await;
+                        should_stop |= handle_system(&mut *stage, d, f, &out, obs).await;
                         // Same barge-in flush as the outer Sys branch.
                         pending.retain(|s| s.seq >= seq || s.frame.survives_flush());
                         pending.extend(inbound.flush_data_stamped());
@@ -262,17 +284,34 @@ async fn handle_system<S: Stage + ?Sized>(
     dir: Direction,
     frame: SystemFrame,
     out: &Outbound,
+    obs: Option<&ObserverHandle>,
 ) -> bool
 where
     S::Effect: MaybeSend,
 {
     let mut should_stop = matches!(frame, SystemFrame::Stop);
+    if let Some(h) = obs {
+        h.sys_in(dir, &frame);
+    }
     let decision = stage.decide_system(dir, &frame);
+    if let Some(h) = obs {
+        h.sys_decided(decision.disposition, decision.effects.len());
+    }
     if decision.disposition == Disposition::Forward {
         let _ = out.send_system(dir, frame).await;
     }
     for effect in decision.effects {
-        if let Err(e) = stage.perform(effect, out).await {
+        if let Some(h) = obs {
+            h.perform_start();
+        }
+        let res = stage.perform(effect, out).await;
+        if let Some(h) = obs {
+            h.perform_end(match &res {
+                Ok(()) => PerformOutcome::Ok,
+                Err(e) => PerformOutcome::from_error(e),
+            });
+        }
+        if let Err(e) = res {
             let fatal = e.fatal;
             emit_error(out, e).await;
             should_stop |= fatal;
@@ -282,16 +321,34 @@ where
 }
 
 /// Perform a stage's effects in order, short-circuiting on the first error.
+///
+/// `open` mirrors whether a `perform_start` has been reported without its
+/// `perform_end`, so the run loop can close the pair as
+/// [`PerformOutcome::Aborted`] if this future is dropped mid-effect.
 async fn run_effects<S: Stage + ?Sized>(
     stage: &S,
     effects: Vec<S::Effect>,
     out: &Outbound,
+    obs: Option<&ObserverHandle>,
+    open: &AtomicBool,
 ) -> Result<(), StageError>
 where
     S::Effect: MaybeSend,
 {
     for effect in effects {
-        stage.perform(effect, out).await?;
+        if let Some(h) = obs {
+            h.perform_start();
+            open.store(true, Ordering::Relaxed);
+        }
+        let res = stage.perform(effect, out).await;
+        if let Some(h) = obs {
+            open.store(false, Ordering::Relaxed);
+            h.perform_end(match &res {
+                Ok(()) => PerformOutcome::Ok,
+                Err(e) => PerformOutcome::from_error(e),
+            });
+        }
+        res?;
     }
     Ok(())
 }

@@ -69,6 +69,9 @@ mod desktop {
     use pipecrab_lm_llamacpp::{LlamaCpp, LlamaCppConfig};
     use pipecrab_stt::SttStage;
     use pipecrab_stt_sherpa::{MoonshineV2Config, OfflineSherpaStt};
+    use pipecrab_telemetry::Telemetry;
+    use pipecrab_telemetry_dash::DashboardSink;
+    use pipecrab_telemetry_jsonl::JsonlSink;
     use pipecrab_tts::{SentenceChunker, Synthesizer, TtsStage};
     use pipecrab_tts_sherpa::{KokoroConfig, SherpaTts};
     use pipecrab_turn::BargeInStage;
@@ -185,6 +188,8 @@ mod desktop {
             system_prompt,
             stt_threads,
             seconds,
+            telemetry_jsonl,
+            dashboard,
         } = parse_args()?;
 
         let audio_config = CpalConfig::default();
@@ -231,12 +236,38 @@ mod desktop {
             None => println!("e2e-voice-agent: listening until Ctrl-C"),
         }
 
+        // Telemetry is optional and off the hot path: a session observes every
+        // stage and its worker thread feeds whichever sinks were requested.
+        let session = match (&telemetry_jsonl, &dashboard) {
+            (None, None) => None,
+            (jsonl, dash) => {
+                let mut telemetry = Telemetry::builder();
+                if let Some(path) = jsonl {
+                    telemetry = telemetry.sink(JsonlSink::append(path)?);
+                    println!(
+                        "e2e-voice-agent: appending turn records to {}",
+                        path.display()
+                    );
+                }
+                if let Some(addr) = dash {
+                    let dash_sink = DashboardSink::serve(addr.as_str())?;
+                    println!("e2e-voice-agent: live dashboard at {}", dash_sink.url());
+                    telemetry = telemetry.sink(dash_sink);
+                }
+                Some(telemetry.build().session())
+            }
+        };
+
         // The sink's ring holds up to this much queued audio; linger that long
         // after the pipeline closes so the spoken tail is not clipped.
         let ring_ms = u64::from(audio_config.chunk_ms) * audio_config.ring_chunks as u64;
         let max_chunks =
             seconds.map(|seconds| (seconds * 1000 / u64::from(audio_config.chunk_ms)) as usize);
-        let (ends, driver) = PipelineBuilder::new()
+        let mut builder = PipelineBuilder::new();
+        if let Some(session) = &session {
+            builder = builder.observer(session.observer());
+        }
+        let (ends, driver) = builder
             .stage(capture_resampler)
             .stage(VadStage::with_config(
                 detector,
@@ -337,6 +368,12 @@ mod desktop {
         };
 
         block_on(async { futures::join!(driver, pump_in, pump_out) });
+        if let Some(session) = session {
+            // The driver has completed, so the pipeline's observer handle is
+            // gone; this flushes the last turn into every sink and joins the
+            // telemetry worker.
+            session.finish();
+        }
         println!("e2e-voice-agent: stopped");
         Ok(())
     }
@@ -356,6 +393,8 @@ mod desktop {
         system_prompt: String,
         stt_threads: i32,
         seconds: Option<u64>,
+        telemetry_jsonl: Option<PathBuf>,
+        dashboard: Option<String>,
     }
 
     fn parse_args() -> Result<Args, String> {
@@ -373,6 +412,8 @@ mod desktop {
         let mut system_prompt = None;
         let mut stt_threads = 2;
         let mut seconds = None;
+        let mut telemetry_jsonl = None;
+        let mut dashboard = None;
         let mut args = std::env::args().skip(1);
         while let Some(argument) = args.next() {
             match argument.as_str() {
@@ -429,12 +470,16 @@ mod desktop {
                         format!("--seconds expects a non-negative integer, got {raw:?}")
                     })?);
                 }
+                "--telemetry-jsonl" => {
+                    telemetry_jsonl = Some(PathBuf::from(value(&mut args, "--telemetry-jsonl")?));
+                }
+                "--dashboard" => dashboard = Some(value(&mut args, "--dashboard")?),
                 other => {
                     return Err(format!(
                         "unknown argument {other:?} (expected --vad-model, --encoder, \
                          --merged-decoder, --tokens, --lm-model, --tts-model, --tts-voices, \
                          --tts-tokens, --tts-data-dir, --speaker, --speed, --system-prompt, \
-                         --stt-threads, or --seconds)"
+                         --stt-threads, --seconds, --telemetry-jsonl, or --dashboard)"
                     ));
                 }
             }
@@ -458,6 +503,8 @@ mod desktop {
             system_prompt: system_prompt.unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string()),
             stt_threads,
             seconds,
+            telemetry_jsonl,
+            dashboard,
         })
     }
 

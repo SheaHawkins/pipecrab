@@ -127,6 +127,21 @@ Useful flags: `--speaker 8` picks another Kokoro voice, `--speed 1.2` talks
 faster, `--system-prompt "…"` changes the agent's instructions,
 `--seconds 30` bounds the run, and `--stt-threads 1` is a low-power profile.
 
+Two flags turn on telemetry. `--dashboard 127.0.0.1:7878` serves a live
+dashboard at that address — latency per turn (response, time-to-first-speech,
+LM first token), per-stage busy time, barge-ins, and the running transcript,
+updating as each turn lands. View it in a browser, or in a second terminal as
+a TUI fed by the same endpoint:
+
+```console
+cargo run -p pipecrab-telemetry-dash --bin pipecrab-dash-tui
+```
+
+`--telemetry-jsonl turns.jsonl` appends one JSON
+record per turn to a file: user text, agent text, tool calls with results, and
+every timing — the raw material for a fine-tune dataset. Both may be used at
+once; they encode the same records.
+
 The first Sherpa build may download matching native libraries. Set
 `SHERPA_ONNX_LIB_DIR` before running Cargo to use an existing compatible Sherpa
 installation instead.

@@ -1,0 +1,18 @@
+[package]
+name = "pipecrab-telemetry-jsonl"
+description = "JSONL telemetry sink for pipecrab: one self-contained JSON turn record per line, ready for fine-tune dataset building."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.pipecrab]
+layer = "adapter"
+
+[dependencies]
+pipecrab-telemetry = { workspace = true, features = ["serde"] }
+serde_json         = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

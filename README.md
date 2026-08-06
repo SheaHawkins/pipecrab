@@ -51,11 +51,38 @@ https://github.com/user-attachments/assets/be392736-d31f-4e3a-ada5-29a2d704c7ed
 
 **Use headphones** 
 
+## Telemetry
+
+Every pipeline can be observed without touching its stages: sessions, traces
+(one per back-and-forth turn), and per-stage spans are assembled from the
+frames the pipeline already carries, including the metrics only clean to
+measure in-process — time-to-first-speech, response latency, LM
+time-to-first-token, and barge-ins with how long the agent got to speak.
+Both e2e examples wire it behind two flags:
+
+```console
+cargo run -p e2e-voice-agent-zeroclaw -- <model flags…> --agent voice \
+    --dashboard 127.0.0.1:7878 \
+    --telemetry-jsonl turns.jsonl
+```
+
+`--dashboard` serves a live localhost dashboard (no collector, no external
+assets) that charts each turn as it lands — open it in a browser, or run the
+bundled TUI in a second terminal against the same endpoint
+(`cargo run -p pipecrab-telemetry-dash --bin pipecrab-dash-tui`); with
+ZeroClaw the telemetry session carries the daemon's session id, so the
+dashboard lines up with the ZeroClaw TUI's view of the same conversation. `--telemetry-jsonl` appends one self-contained JSON record
+per turn — user text, agent text, tool calls with correlated results, every
+timing — ready to become a fine-tune dataset. Both are sinks over the same
+turn record; see [ARCHITECTURE.md](./ARCHITECTURE.md#telemetry) for the design
+and `PipelineBuilder::observer` for wiring your own pipeline.
+
 ## Roadmap
 * ✅ Staged pipeline, dispatch/listener stages
 * ✅ Cross-platform, the same voice pipeline runs on iOS/Android
 * ✅ Hermes duplex, concurrent task threads
 * ✅ Barge-in — user speech onset interrupts the agent mid-reply
+* ✅ Telemetry — turn traces, live local dashboard, JSONL dataset sink
 * 🔨 Clarifying questions
 * 🔨 Telephony — outbound calls, hold detection, live handoff
 * 🔨 Offload LLM - vertex and open router integrations

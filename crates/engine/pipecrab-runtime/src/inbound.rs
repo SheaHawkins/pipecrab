@@ -14,6 +14,8 @@ use futures::channel::mpsc::Receiver;
 use futures::stream::StreamExt;
 use pipecrab_core::{DataFrame, Direction, SystemFrame};
 
+use crate::observe::ObserverHandle;
+
 /// A frame paired with the sequence stamp its link's
 /// [`Outbound`](crate::Outbound) applied.
 ///
@@ -56,6 +58,10 @@ pub struct Inbound {
     /// Stamp of the most recent system frame taken off `sys` — the floor
     /// [`flush_data`](Self::flush_data) flushes up to.
     pub(crate) flush_floor: u64,
+    /// This stage's binding to the pipeline's observer, when one is set; the
+    /// run loop reports its decide/perform activity through it. `None` (the
+    /// unobserved default) costs the run loop only an `Option` check.
+    pub(crate) observer: Option<ObserverHandle>,
 }
 
 impl Inbound {
@@ -164,6 +170,7 @@ mod tests {
                 sys,
                 data,
                 flush_floor: 0,
+                observer: None,
             },
         )
     }
