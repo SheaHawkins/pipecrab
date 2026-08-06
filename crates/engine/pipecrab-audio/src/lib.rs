@@ -108,5 +108,11 @@ maybe_async_trait! {
         /// the sink is full; returns an [`AudioError`] if the chunk cannot be
         /// accepted.
         async fn play(&mut self, chunk: AudioChunk) -> Result<(), AudioError>;
+
+        /// Control call: discard audio already queued for playback, without
+        /// closing the sink. Synchronous, non-blocking, idempotent. Invoked on
+        /// a barge-in [`Interrupt`](pipecrab_core::SystemFrame::Interrupt) so
+        /// the agent stops speaking at once; the next `play` starts clean.
+        fn cancel(&mut self);
     }
 }

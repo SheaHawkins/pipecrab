@@ -6,9 +6,9 @@ use std::pin::pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
 
-use futures::channel::mpsc;
-use pipecrab_core::{DataFrame, Direction, SystemFrame};
-use pipecrab_runtime::Inbound;
+use futures::FutureExt;
+use pipecrab_core::{Direction, SystemFrame};
+use pipecrab_runtime::link;
 use pipecrab_test_util::allocs;
 
 struct NoopWaker;
@@ -18,12 +18,11 @@ impl Wake for NoopWaker {
 
 #[test]
 fn dispatching_a_buffered_system_frame_is_allocation_free() {
-    let (mut sys_tx, sys) = mpsc::channel(16);
-    let (_data_tx, data) = mpsc::channel::<DataFrame>(16);
-    let mut inb = Inbound { sys, data };
+    let (out, mut inb) = link(16);
 
-    sys_tx
-        .try_send((Direction::Down, SystemFrame::Interrupt))
+    out.send_system(Direction::Down, SystemFrame::Interrupt)
+        .now_or_never()
+        .expect("send resolves immediately")
         .unwrap();
 
     let waker = Waker::from(Arc::new(NoopWaker));

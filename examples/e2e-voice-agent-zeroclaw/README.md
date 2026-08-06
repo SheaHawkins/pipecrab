@@ -33,7 +33,8 @@ so a finished task re-enters as a `[dispatch/completion]` turn the agent
 speaks — minutes later, mid-conversation, without blocking anything.
 
 **Use headphones** — over speakers the microphone re-captures the agent's own
-voice and it talks to itself.
+voice and it talks to itself. Barge-in is wired in: speak over the agent and
+the in-flight reply is interrupted in favor of your new utterance.
 
 ## Requirements
 

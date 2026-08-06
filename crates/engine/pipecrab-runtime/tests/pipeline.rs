@@ -14,13 +14,15 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use async_trait::async_trait;
+use futures::FutureExt;
 use futures::channel::{mpsc, oneshot};
 use futures::executor::block_on;
 use futures::future::join;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use pipecrab_core::{
-    AudioChunk, AudioFormat, DataFrame, Decision, Direction, Processor, SystemFrame, Transcript,
+    AudioChunk, AudioFormat, DataFrame, Decision, Direction, DispatchEvent, DispatchFrame,
+    Processor, SystemFrame, Transcript,
 };
 use pipecrab_runtime::{Outbound, PipelineBuilder, Received, Stage, StageError};
 
@@ -220,21 +222,21 @@ fn pass_through_forwards_data() {
     });
 }
 
-// --- Test 4: an Interrupt flushes the data backlog, keeping transport-audio.
+// --- Test 4: an Interrupt flushes the data backlog, keeping durable frames.
 
-fn input_audio(id: u8) -> DataFrame {
-    DataFrame::InputAudio {
-        bytes: Arc::from(&[id][..]),
-        sample_rate: 16_000,
-        num_channels: 1,
-    }
+/// A frame that survives a flush on its own: every dispatch frame is durable.
+fn survivor(task_id: &str) -> DataFrame {
+    DataFrame::Dispatch(DispatchFrame::from(DispatchEvent::Progress {
+        task_id: Arc::from(task_id),
+        message: Arc::from("keep"),
+    }))
 }
 
 #[test]
 fn interrupt_flushes_data_keeping_survivors_in_order() {
     block_on(async {
         // PassThrough forwards everything, so without the flush all four data
-        // frames would reach `output`; with it, only the two InputAudio survive.
+        // frames would reach `output`; with it, only the two survivors do.
         let (ends, driver) = PipelineBuilder::new().stage(PassThrough).build().start();
         let input = ends.input;
         let mut output = ends.output;
@@ -242,12 +244,12 @@ fn interrupt_flushes_data_keeping_survivors_in_order() {
         // Back up the data lane with survivors interleaved with droppable frames,
         // then an Interrupt behind it — sys-biased recv handles it first, while
         // the whole backlog is still queued.
-        input.send_data(input_audio(1)).await.unwrap();
+        input.send_data(survivor("1")).await.unwrap();
         input
             .send_data(Transcript::user_final("drop me").into())
             .await
             .unwrap();
-        input.send_data(input_audio(2)).await.unwrap();
+        input.send_data(survivor("2")).await.unwrap();
         let audio = AudioChunk::new(Arc::from(&[0.0f32, 0.0][..]), AudioFormat::new(48_000, 1));
         input.send_data(DataFrame::Audio(audio)).await.unwrap();
         input
@@ -258,18 +260,66 @@ fn interrupt_flushes_data_keeping_survivors_in_order() {
 
         driver.await;
 
-        // Drain the data lane: only the two InputAudio frames, in arrival order.
+        // Drain the output: only the two dispatch frames, in arrival order.
+        // (The forwarded Interrupt also arrives, on the sys lane.)
         let mut ids = Vec::new();
-        while let Ok(frame) = output.data.try_recv() {
-            match frame {
-                DataFrame::InputAudio { bytes, .. } => ids.push(bytes[0]),
-                other => panic!("a non-survivor leaked past the flush: {other:?}"),
+        while let Some(Some(received)) = output.recv().now_or_never() {
+            match received {
+                Received::Data(DataFrame::Dispatch(DispatchFrame::Event(
+                    DispatchEvent::Progress { task_id, .. },
+                ))) => ids.push(task_id.to_string()),
+                Received::Data(other) => {
+                    panic!("a non-survivor leaked past the flush: {other:?}")
+                }
+                Received::Sys(..) => {}
             }
         }
         assert_eq!(
             ids,
-            vec![1, 2],
+            vec!["1", "2"],
             "survivors kept in order; droppable frames flushed"
+        );
+    });
+}
+
+// --- Test 4b: the flush is causal — frames queued after the Interrupt survive.
+
+#[test]
+fn interrupt_keeps_data_sent_after_it() {
+    block_on(async {
+        let (ends, driver) = PipelineBuilder::new().stage(PassThrough).build().start();
+        let input = ends.input;
+        let mut output = ends.output;
+
+        // A droppable frame queued before the Interrupt is flushed; the same
+        // kind of frame queued after it — the barge-in utterance's own — must
+        // survive.
+        input
+            .send_data(Transcript::user_final("stale").into())
+            .await
+            .unwrap();
+        input
+            .send_system(Direction::Down, SystemFrame::Interrupt)
+            .await
+            .unwrap();
+        input
+            .send_data(Transcript::user_final("fresh").into())
+            .await
+            .unwrap();
+        drop(input);
+
+        driver.await;
+
+        let mut texts = Vec::new();
+        while let Some(Some(received)) = output.recv().now_or_never() {
+            if let Received::Data(DataFrame::Transcript(s)) = received {
+                texts.push(s.text.to_string());
+            }
+        }
+        assert_eq!(
+            texts,
+            vec!["fresh"],
+            "the pre-interrupt frame is flushed; the post-interrupt frame survives"
         );
     });
 }

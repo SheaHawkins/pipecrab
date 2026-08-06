@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use pipecrab_core::{
-    DataFrame, Decision, Direction, Disposition, Finality, Processor, Role, SystemFrame, Transcript,
+    DataFrame, Decision, Direction, Disposition, Finality, ModelFrame, Processor, Role,
+    SystemFrame, Transcript,
 };
 use pipecrab_runtime::{Outbound, Stage, StageError};
 
@@ -45,11 +46,13 @@ use pipecrab_runtime::{Outbound, Stage, StageError};
 /// that byte offset stays valid as the text grows; the terminal
 /// [`Final`](Finality::Final) resets it for the next generation. A barge-in
 /// [`Interrupt`](SystemFrame::Interrupt) also resets it, abandoning a
-/// half-emitted generation. Those are the *only* resets: a new generation must
-/// be preceded by one, so an offset that outruns the current text is corrupt
-/// state — a generation abandoned without an [`Interrupt`](SystemFrame::Interrupt)
-/// — and panics rather than silently recovering. All mutation lives in the
-/// synchronous `decide_*`, so nothing tears when an emit is dropped.
+/// half-emitted generation, as does the next generation's
+/// [`GenerationStarted`](ModelFrame::GenerationStarted) — the boundary that
+/// recovers from a generation abandoned without either (an upstream stream
+/// error). Those are the *only* resets, so an offset that outruns the current
+/// text mid-generation is corrupt state and panics rather than silently
+/// recovering. All mutation lives in the synchronous `decide_*`, so nothing
+/// tears when an emit is dropped.
 pub struct SentenceChunker {
     /// Bytes of the in-flight generation already emitted as sentences.
     emitted: usize,
@@ -96,6 +99,12 @@ impl Processor for SentenceChunker {
 
     fn decide_data(&mut self, frame: &DataFrame) -> Decision<EmitSentence> {
         let (finality, text) = match frame {
+            // A new generation begins: reset the offset. This is what recovers
+            // from a generation abandoned without a Final or an Interrupt.
+            DataFrame::Model(ModelFrame::GenerationStarted) => {
+                self.emitted = 0;
+                return Decision::forward();
+            }
             DataFrame::Transcript(Transcript {
                 role: Role::Agent,
                 finality,
@@ -103,12 +112,12 @@ impl Processor for SentenceChunker {
             }) => {
                 // Agent partials are append-only, so within a generation the
                 // offset never outruns the text. If it does, a new generation
-                // arrived without the Final/Interrupt that resets us — corrupt
-                // state we refuse to paper over.
+                // arrived without the Final/Interrupt/GenerationStarted that
+                // resets us — corrupt state we refuse to paper over.
                 assert!(
                     self.emitted <= text.len(),
                     "SentenceChunker offset {} outruns agent text of {} bytes: a generation \
-                     was abandoned without an Interrupt",
+                     was abandoned without an Interrupt or a GenerationStarted",
                     self.emitted,
                     text.len(),
                 );

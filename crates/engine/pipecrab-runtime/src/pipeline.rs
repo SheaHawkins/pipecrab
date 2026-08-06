@@ -26,6 +26,8 @@
 //! driving future. The caller drives it — `block_on` natively, `spawn_local` in
 //! the browser; there is no spawning and no executor trait.
 
+use std::sync::atomic::AtomicU64;
+
 use async_trait::async_trait;
 use futures::channel::mpsc;
 
@@ -49,22 +51,27 @@ pub type DriverFuture = futures::future::LocalBoxFuture<'static, ()>;
 /// convention; tune it with [`PipelineBuilder::capacity`].
 const DEFAULT_CAPACITY: usize = 16;
 
-/// Create a linked [`Outbound`] / [`Inbound`] pair sharing one data channel and
-/// one system channel: frames sent on the `Outbound` are received on the
-/// `Inbound`. This is the single wiring primitive — pipelines use it between
-/// adjacent stages and at their external ends.
+/// Create a linked [`Outbound`] / [`Inbound`] pair sharing one data channel,
+/// one system channel, and one sequence counter: frames sent on the `Outbound`
+/// are received, in stamp order per lane, on the `Inbound`. This is the single
+/// wiring primitive — pipelines use it between adjacent stages and at their
+/// external ends.
 pub fn link(capacity: usize) -> (Outbound, Inbound) {
     let capacity = capacity.max(1);
-    let (data_tx, data_rx) = mpsc::channel::<DataFrame>(capacity);
-    let (sys_tx, sys_rx) = mpsc::channel::<(Direction, SystemFrame)>(capacity);
+    let (data_tx, data_rx) = mpsc::channel(capacity);
+    let (sys_tx, sys_rx) = mpsc::channel(capacity);
     (
         Outbound {
             data: data_tx,
             sys: sys_tx,
+            // Stamps start at 1 so the fresh flush floor of 0 predates every
+            // frame.
+            seq: AtomicU64::new(1),
         },
         Inbound {
             sys: sys_rx,
             data: data_rx,
+            flush_floor: 0,
         },
     )
 }

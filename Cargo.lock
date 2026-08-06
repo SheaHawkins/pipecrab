@@ -391,12 +391,13 @@ dependencies = [
  "pipecrab-stt-sherpa",
  "pipecrab-tts",
  "pipecrab-tts-sherpa",
+ "pipecrab-turn",
  "pipecrab-vad",
  "pipecrab-vad-sherpa",
 ]
 
 [[package]]
-name = "e2e-voice-agent-dispatch"
+name = "e2e-voice-agent-hermes"
 version = "0.6.0"
 dependencies = [
  "async-trait",
@@ -406,13 +407,13 @@ dependencies = [
  "pipecrab-audio-cpal",
  "pipecrab-dispatch",
  "pipecrab-dispatch-hermes",
- "pipecrab-dispatch-zeroclaw",
  "pipecrab-lm",
  "pipecrab-lm-llamacpp",
  "pipecrab-stt",
  "pipecrab-stt-sherpa",
  "pipecrab-tts",
  "pipecrab-tts-sherpa",
+ "pipecrab-turn",
  "pipecrab-vad",
  "pipecrab-vad-sherpa",
  "tokio",
@@ -435,6 +436,7 @@ dependencies = [
  "pipecrab-stt-sherpa",
  "pipecrab-tts",
  "pipecrab-tts-sherpa",
+ "pipecrab-turn",
  "pipecrab-vad",
  "pipecrab-vad-sherpa",
  "tokio",
@@ -1465,8 +1467,11 @@ dependencies = [
  "async-trait",
  "futures",
  "pipecrab-core",
+ "pipecrab-lm",
  "pipecrab-runtime",
+ "pipecrab-stt",
  "pipecrab-tts",
+ "pipecrab-turn",
  "pipecrab-vad",
 ]
 
@@ -1514,6 +1519,17 @@ dependencies = [
  "pipecrab-core",
  "pipecrab-tts",
  "sherpa-onnx",
+]
+
+[[package]]
+name = "pipecrab-turn"
+version = "0.6.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "pipecrab-core",
+ "pipecrab-runtime",
+ "pipecrab-test-util",
 ]
 
 [[package]]

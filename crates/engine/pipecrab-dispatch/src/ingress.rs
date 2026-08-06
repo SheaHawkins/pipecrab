@@ -135,7 +135,7 @@ impl<S: DispatchSource> Stage for DispatchIngress<S> {
                 inbound.recv().await
             };
 
-            if forward_inbound(received, &out).await {
+            if forward_inbound(received, &mut inbound, &out).await {
                 break;
             }
         }
@@ -147,12 +147,25 @@ impl<S: DispatchSource> Stage for DispatchIngress<S> {
 
 /// Forward one received inbound frame. Returns `true` when ingress should stop:
 /// a `Stop` system frame, or both lanes closed (`None`).
-async fn forward_inbound(received: Option<Received>, out: &Outbound) -> bool {
+async fn forward_inbound(
+    received: Option<Received>,
+    inbound: &mut Inbound,
+    out: &Outbound,
+) -> bool {
     match received {
         Some(Received::Sys(dir, frame)) => {
             let stop = matches!(frame, SystemFrame::Stop);
+            let interrupted = matches!(frame, SystemFrame::Interrupt);
             // `Start` and `Interrupt` forward and keep ingress listening.
             let _ = out.send_system(dir, frame).await;
+            if interrupted {
+                // Barge-in: flush the stale queued backlog like every leaf
+                // stage does. Ingress transforms nothing, so the keepers are
+                // re-forwarded in place of being re-processed.
+                for frame in inbound.flush_data() {
+                    let _ = out.send_data(frame).await;
+                }
+            }
             stop
         }
         Some(Received::Data(frame)) => {

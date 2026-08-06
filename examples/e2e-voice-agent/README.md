@@ -36,10 +36,10 @@ is still being generated, and Sherpa's own per-sentence progress callback
 streams the audio on down the pipeline.
 
 **Use headphones** — over speakers the microphone re-captures the agent's own
-voice, the VAD opens, and the agent starts talking to itself. Barge-in (a
-speech-start interrupt that stops an in-flight reply) is not wired into this
-example; if you speak over the agent, the new reply queues behind the current
-one.
+voice, the VAD opens, and the agent starts talking to itself. Barge-in is
+wired in: speak over the agent and `BargeInStage` interrupts the in-flight
+reply — generation and synthesis cancel, playback stops within roughly a
+chunk period, and your new utterance is answered instead.
 
 ## Requirements
 
@@ -119,7 +119,9 @@ You: what is a crab
 Agent: A crab is a crustacean with a hard shell and ten legs.
 ```
 
-…followed by the same sentence spoken aloud.
+…followed by the same sentence spoken aloud. Speaking over the agent
+mid-reply prints a fresh `SpeechStarted`, the playback stops, and the agent
+answers the interrupting utterance instead.
 
 Useful flags: `--speaker 8` picks another Kokoro voice, `--speed 1.2` talks
 faster, `--system-prompt "…"` changes the agent's instructions,

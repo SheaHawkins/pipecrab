@@ -6,7 +6,7 @@
 //! `cargo test --workspace` path.
 
 use futures::executor::block_on;
-use pipecrab_core::{DataFrame, Direction, Finality, Role, SystemFrame, Transcript};
+use pipecrab_core::{DataFrame, Direction, Finality, ModelFrame, Role, SystemFrame, Transcript};
 use pipecrab_runtime::{PipelineBuilder, Received};
 use pipecrab_tts::SentenceChunker;
 
@@ -135,6 +135,21 @@ fn forwards_non_agent_frames_untouched() {
         let (_, got, _) = futures::join!(feed, drain, driver);
         assert_eq!(got, Some((Role::User, "a question".to_string())));
     });
+}
+
+#[test]
+fn abandoned_generation_recovers_on_the_next_generation_started() {
+    // Generation 1 emits a sentence and is then abandoned with no Final and no
+    // Interrupt (an upstream stream error). The next generation's
+    // GenerationStarted resets the offset, so its shorter text must not trip
+    // the outrun assertion, and its sentences emit from offset 0.
+    let sentences = block_on(run(vec![
+        partial("one. two"),
+        DataFrame::Model(ModelFrame::GenerationStarted),
+        partial("hi"),
+        agent_final("hi there"),
+    ]));
+    assert_eq!(sentences, vec!["one.", "hi there"]);
 }
 
 #[test]

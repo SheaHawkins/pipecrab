@@ -21,19 +21,31 @@ use crate::transport::DispatchSink;
 /// translated command, or reject a malformed one as a recoverable error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Publish {
-    /// Send this command to the sink, then emit it downstream as a native
-    /// `Dispatch` frame.
-    Command(DispatchCommand),
+    /// Send this command to the sink, then emit the originating tool call and
+    /// the native `Dispatch` command downstream.
+    Command {
+        /// The translated command bound for the sink.
+        command: DispatchCommand,
+        /// The originating tool call, re-emitted once the send succeeds.
+        call: ToolCall,
+    },
     /// A dispatch tool call whose arguments would not parse. Surfaces as a
     /// recoverable [`StageError`]; no command is sent.
     Reject(Arc<str>),
 }
 
 /// Translates `dispatch_task` / `update_task` tool calls into
-/// [`DispatchCommand`]s, sends them through the [`DispatchSink`], and forwards
-/// them downstream as native dispatch frames — leaving the original
-/// [`ModelFrame::ToolCall`] in the stream for other observers. Unknown tool calls
-/// pass through untouched.
+/// [`DispatchCommand`]s, sends them through the [`DispatchSink`], and emits
+/// them downstream as native dispatch frames behind the re-emitted
+/// [`ModelFrame::ToolCall`]. Unknown tool calls pass through untouched.
+///
+/// A matched call is *consumed* in `decide_data` and re-emitted only after the
+/// sink send succeeds: `ToolCall` frames survive an interrupt flush, so a
+/// forwarded-up-front call would outlive a barge-in that dropped the send —
+/// a durable claim of a dispatch that never happened. The command itself is
+/// still lost when a barge-in drops the send mid-flight; at-least-once
+/// delivery needs a transport ack/retry the [`DispatchSink`] trait does not
+/// have.
 pub struct DispatchEgress<K> {
     sink: K,
 }
@@ -61,10 +73,15 @@ impl<K: DispatchSink> Processor for DispatchEgress<K> {
 impl<K: DispatchSink> Stage for DispatchEgress<K> {
     async fn perform(&self, effect: Publish, out: &Outbound) -> Result<(), StageError> {
         match effect {
-            Publish::Command(command) => {
-                // Publish to the transport first, then echo the native command
-                // downstream so it is observable without instrumenting the sink.
+            Publish::Command { command, call } => {
+                // Publish to the transport first; only then claim it
+                // downstream. A barge-in dropping this future mid-send thus
+                // emits nothing, instead of a surviving ToolCall that claims a
+                // dispatch that never happened.
                 self.sink.send_command(command.clone()).await?;
+                let _ = out
+                    .send_data(DataFrame::Model(ModelFrame::ToolCall(call)))
+                    .await;
                 let _ = out
                     .send_data(DataFrame::Dispatch(DispatchFrame::Command(command)))
                     .await;
@@ -76,9 +93,10 @@ impl<K: DispatchSink> Stage for DispatchEgress<K> {
     }
 }
 
-/// Translate one tool call. The call always forwards (it stays visible to
-/// downstream observers); the emitted effect, if any, drives the sink. An
-/// unknown tool name forwards with no effect — Dispatch ignores it.
+/// Translate one tool call. A matched, well-formed call is consumed and
+/// re-emitted by `perform` after the send succeeds; a malformed dispatch call
+/// forwards (staying observable) alongside its reject. An unknown tool name
+/// forwards with no effect — Dispatch ignores it.
 fn translate(call: &ToolCall) -> Decision<Publish> {
     let parsed = match &*call.name {
         "dispatch_task" => parse_dispatch_task(call),
@@ -86,7 +104,10 @@ fn translate(call: &ToolCall) -> Decision<Publish> {
         _ => return Decision::forward(),
     };
     match parsed {
-        Ok(command) => Decision::forward().emit(Publish::Command(command)),
+        Ok(command) => Decision::drop().emit(Publish::Command {
+            command,
+            call: call.clone(),
+        }),
         Err(message) => Decision::forward().emit(Publish::Reject(message)),
     }
 }
