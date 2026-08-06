@@ -389,6 +389,9 @@ dependencies = [
  "pipecrab-lm-llamacpp",
  "pipecrab-stt",
  "pipecrab-stt-sherpa",
+ "pipecrab-telemetry",
+ "pipecrab-telemetry-dash",
+ "pipecrab-telemetry-jsonl",
  "pipecrab-tts",
  "pipecrab-tts-sherpa",
  "pipecrab-turn",
@@ -1505,6 +1508,14 @@ dependencies = [
  "pipecrab-core",
  "pipecrab-runtime",
  "serde",
+]
+
+[[package]]
+name = "pipecrab-telemetry-dash"
+version = "0.6.0"
+dependencies = [
+ "pipecrab-telemetry",
+ "serde_json",
 ]
 
 [[package]]

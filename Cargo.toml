@@ -40,6 +40,7 @@ pipecrab-lm-zeroclaw = { path = "crates/adapters/pipecrab-lm-zeroclaw", version 
 pipecrab-stt        = { path = "crates/engine/pipecrab-stt", version = "0.6.0" }
 pipecrab-telemetry  = { path = "crates/engine/pipecrab-telemetry", version = "0.6.0" }
 pipecrab-telemetry-jsonl = { path = "crates/adapters/pipecrab-telemetry-jsonl", version = "0.6.0" }
+pipecrab-telemetry-dash = { path = "crates/adapters/pipecrab-telemetry-dash", version = "0.6.0" }
 pipecrab-stt-sherpa = { path = "crates/adapters/pipecrab-stt-sherpa", version = "0.6.0" }
 pipecrab-tts        = { path = "crates/engine/pipecrab-tts", version = "0.6.0" }
 pipecrab-tts-sherpa = { path = "crates/adapters/pipecrab-tts-sherpa", version = "0.6.0" }

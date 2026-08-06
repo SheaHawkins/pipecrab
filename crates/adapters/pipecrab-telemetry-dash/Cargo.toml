@@ -1,0 +1,15 @@
+[package]
+name = "pipecrab-telemetry-dash"
+description = "Live local dashboard sink for pipecrab telemetry: a localhost page, fed over SSE, charting each turn's latencies, stage spans, and transcript as they happen."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.pipecrab]
+layer = "adapter"
+
+[dependencies]
+pipecrab-telemetry = { workspace = true, features = ["serde"] }
+serde_json         = { workspace = true }

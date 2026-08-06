@@ -20,6 +20,9 @@ pipecrab-stt         = { workspace = true }
 pipecrab-stt-sherpa  = { workspace = true }
 pipecrab-tts         = { workspace = true }
 pipecrab-tts-sherpa  = { workspace = true }
+pipecrab-telemetry   = { workspace = true }
+pipecrab-telemetry-dash = { workspace = true }
+pipecrab-telemetry-jsonl = { workspace = true }
 pipecrab-turn        = { workspace = true }
 pipecrab-vad         = { workspace = true }
 pipecrab-vad-sherpa  = { workspace = true }
