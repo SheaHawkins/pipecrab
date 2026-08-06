@@ -222,6 +222,15 @@ Both `Agent:` lines are spoken. The second one arrives whenever the worker
 finishes — the conversation stays usable in between, so ask something else
 while it runs.
 
+Two flags turn on telemetry. `--dashboard 127.0.0.1:7878` serves a live
+dashboard at that address — latency per turn (response, time-to-first-speech,
+LM first token), per-stage busy time, barge-ins, and the running transcript
+with the daemon's tool calls, updating as each turn lands.
+`--telemetry-jsonl turns.jsonl` appends one JSON record per turn (user text,
+agent text, tool calls, every timing) — the raw material for a fine-tune
+dataset. The telemetry session carries the daemon's session id, so a
+dashboard or dataset row lines up with the TUI's view of the conversation.
+
 ## Step 6 — watch it in the TUI
 
 Open ZeroClaw's TUI against the same daemon and the session from the startup

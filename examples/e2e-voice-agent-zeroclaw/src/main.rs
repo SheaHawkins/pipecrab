@@ -81,6 +81,9 @@ mod desktop {
     use pipecrab_lm_zeroclaw::{ZeroclawLmConfig, connect};
     use pipecrab_stt::SttStage;
     use pipecrab_stt_sherpa::{MoonshineV2Config, OfflineSherpaStt};
+    use pipecrab_telemetry::Telemetry;
+    use pipecrab_telemetry_dash::DashboardSink;
+    use pipecrab_telemetry_jsonl::JsonlSink;
     use pipecrab_tts::{SentenceChunker, Synthesizer, TtsStage};
     use pipecrab_tts_sherpa::{KokoroConfig, SherpaTts};
     use pipecrab_turn::BargeInStage;
@@ -255,6 +258,8 @@ mod desktop {
             agent,
             socket,
             session_id,
+            telemetry_jsonl,
+            dashboard,
         } = parse_args()?;
 
         let audio_config = CpalConfig::default();
@@ -302,6 +307,32 @@ mod desktop {
         let max_chunks =
             seconds.map(|seconds| (seconds * 1000 / u64::from(audio_config.chunk_ms)) as usize);
 
+        // Telemetry is optional and off the hot path; the sinks are built here
+        // so their errors surface before the daemon connect, and the session is
+        // minted after it so the records carry the daemon's session id.
+        let telemetry = match (&telemetry_jsonl, &dashboard) {
+            (None, None) => None,
+            (jsonl, dash) => {
+                let mut telemetry = Telemetry::builder();
+                if let Some(path) = jsonl {
+                    telemetry = telemetry.sink(JsonlSink::append(path)?);
+                    println!(
+                        "e2e-voice-agent-zeroclaw: appending turn records to {}",
+                        path.display()
+                    );
+                }
+                if let Some(addr) = dash {
+                    let dash_sink = DashboardSink::serve(addr.as_str())?;
+                    println!(
+                        "e2e-voice-agent-zeroclaw: live dashboard at {}",
+                        dash_sink.url()
+                    );
+                    telemetry = telemetry.sink(dash_sink);
+                }
+                Some(telemetry.build())
+            }
+        };
+
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
@@ -325,9 +356,18 @@ mod desktop {
                 model.workspace_dir().join("delegate_results").display()
             );
 
+            // The telemetry session shares the daemon's session id, so a
+            // dashboard or dataset row lines up with the ZeroClaw TUI's view
+            // of the same conversation.
+            let session = telemetry.map(|telemetry| telemetry.session_with_id(model.session_id()));
+
             let lm = LmStage::new(model, STUB_SYSTEM_PROMPT);
 
-            let (ends, driver) = PipelineBuilder::new()
+            let mut builder = PipelineBuilder::new();
+            if let Some(session) = &session {
+                builder = builder.observer(session.observer());
+            }
+            let (ends, driver) = builder
                 .stage(capture_resampler)
                 .stage(VadStage::with_config(
                     detector,
@@ -438,6 +478,12 @@ mod desktop {
             };
 
             futures::join!(driver, pump_in, pump_out);
+            if let Some(session) = session {
+                // The driver has completed, so the pipeline's observer handle
+                // is gone; this flushes the last turn into every sink and
+                // joins the telemetry worker.
+                session.finish();
+            }
             Ok::<(), Box<dyn Error>>(())
         })?;
 
@@ -461,6 +507,8 @@ mod desktop {
         agent: String,
         socket: Option<PathBuf>,
         session_id: Option<String>,
+        telemetry_jsonl: Option<PathBuf>,
+        dashboard: Option<String>,
     }
 
     fn parse_args() -> Result<Args, String> {
@@ -479,6 +527,8 @@ mod desktop {
         let mut agent = None;
         let mut socket = None;
         let mut session_id = None;
+        let mut telemetry_jsonl = None;
+        let mut dashboard = None;
         let mut args = std::env::args().skip(1);
         while let Some(argument) = args.next() {
             match argument.as_str() {
@@ -536,12 +586,16 @@ mod desktop {
                     socket = Some(PathBuf::from(value(&mut args, "--zeroclaw-socket")?));
                 }
                 "--session-id" => session_id = Some(value(&mut args, "--session-id")?),
+                "--telemetry-jsonl" => {
+                    telemetry_jsonl = Some(PathBuf::from(value(&mut args, "--telemetry-jsonl")?));
+                }
+                "--dashboard" => dashboard = Some(value(&mut args, "--dashboard")?),
                 other => {
                     return Err(format!(
                         "unknown argument {other:?} (expected --vad-model, --encoder, \
                          --merged-decoder, --tokens, --tts-model, --tts-voices, --tts-tokens, \
                          --tts-data-dir, --speaker, --speed, --stt-threads, --seconds, --agent, \
-                         --zeroclaw-socket, or --session-id)"
+                         --zeroclaw-socket, --session-id, --telemetry-jsonl, or --dashboard)"
                     ));
                 }
             }
@@ -566,6 +620,8 @@ mod desktop {
             agent: required(agent, "--agent <zeroclaw agent alias>")?,
             socket,
             session_id,
+            telemetry_jsonl,
+            dashboard,
         })
     }
 

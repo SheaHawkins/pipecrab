@@ -19,6 +19,9 @@ pipecrab-lm          = { workspace = true }
 pipecrab-lm-zeroclaw = { workspace = true }
 pipecrab-stt         = { workspace = true }
 pipecrab-stt-sherpa  = { workspace = true }
+pipecrab-telemetry   = { workspace = true }
+pipecrab-telemetry-dash = { workspace = true }
+pipecrab-telemetry-jsonl = { workspace = true }
 pipecrab-tts         = { workspace = true }
 pipecrab-tts-sherpa  = { workspace = true }
 pipecrab-turn        = { workspace = true }
