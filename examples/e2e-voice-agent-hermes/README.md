@@ -229,7 +229,8 @@ The inherited flags (`--speaker`, `--speed`, `--system-prompt`, `--seconds`,
 `--stt-threads`) behave as in [`e2e-voice-agent`](../e2e-voice-agent#run).
 
 **Use headphones** — over speakers the microphone re-captures the agent's own
-voice and it talks to itself.
+voice and it talks to itself. Barge-in is wired in: speak over the agent and
+the in-flight reply is interrupted in favor of your new utterance.
 
 ## What this demonstrates
 

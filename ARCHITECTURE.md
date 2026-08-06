@@ -6,7 +6,7 @@ We differ from pipecat in a few ways:
 1. A Stage can manage internal state via the uninterruptable synchronous `decide` function. By contrast, the async `perform` function can be interrupted but cannot modify state. This prevents broken state
 1. SystemFrames are distinct from DataFrames. In pipecrab, they don't share an inheritance tree so you can't accidentally push SystemFrames into the downstream-only data lane.
 1. We are explicit about whether Stages `forward` or `drop` frames. It's enforced by the compiler so you can't [accidentally forget to push frames](https://docs.pipecat.ai/pipecat/fundamentals/custom-frame-processor#example-metricsframe-logger).
-1. Pipecat treats InputAudio as a SystemFrame. That's a wart here. There's a system lane for `Interrupt` and Audio rides the data lane with flush resistance. When an interrupt comes through, it flushes non-survivor frames (input audio and durable model/dispatch frames survive).
+1. Pipecat treats InputAudio as a SystemFrame. That's a wart here. There's a system lane for `Interrupt` and Audio rides the data lane. When an interrupt comes through, it flushes the stale data backlog: only durable model/dispatch frames queued before the interrupt survive, and the flush is causal, so frames queued after the interrupt (the barge-in utterance's own) are never dropped.
 
 ## Writing a stage
 
@@ -43,9 +43,17 @@ Two native protocol families ride the data lane alongside audio, transcripts, an
 - **`Model(ModelFrame)`** — one LM generation: `GenerationStarted`/`GenerationFinished`, `ToolCall`, `Input` adds non-user `Context`/`Respond` messages.
 - **`Dispatch(DispatchFrame)`** — async tasks: a `Command` drives one, an `Event` reports state. `tool_call_id` names the invocation; `task_id` (post-`Accepted`) the task.
 
-They use the data lane, not the system lane, because order matters. Text may precede *or* follow a tool call. On interrupt, `survives_flush` keeps `InputAudio`, `Model(Input)`, `Model(ToolCall)`, and every `Dispatch`.
+They use the data lane, not the system lane, because order matters. Text may precede *or* follow a tool call. On interrupt, `survives_flush` keeps `Model(Input)`, `Model(ToolCall)`, and every `Dispatch`.
 
 The dispatch round-trip closes a loop: the LM emits a `ToolCall`, which leaves via the Transport to a Backend; the Backend's result returns as a Tool Result (a `ModelInput`) and re-enters the LM.
+
+## Barge-in
+
+`BargeInStage` (`pipecrab-turn`) is the interrupt originator. Placed immediately below the STT stage, it consumes each `SpeechStarted`, sends `Interrupt` downstream on the system lane, and re-emits the edge behind it. It fires on every speech onset — the data lane is downstream-only and nothing routes up, so it cannot know whether the agent is speaking — which is harmless while idle: every stage's interrupt handling is an idempotent control call. An `Interrupt` reaching VAD or STT can only be a head-injected session abandon; a barge-in never travels up there.
+
+The flush is **causal**. Every frame crosses its link with a per-link sequence stamp shared by both lanes; on an `Interrupt`, a stage's flush drops queued droppable frames stamped *before* the interrupt and keeps everything stamped after it — so the barge-in utterance's own edge, audio, and transcript are never destroyed by the interrupt they caused. Durable frames (`Model(Input)`, `Model(ToolCall)`, every `Dispatch`) survive regardless. Kept frames replay ahead of the next read, yielding to any system frame already queued.
+
+The tail lane belongs to the application: nothing flushes it. An output pump must react to the forwarded `Interrupt` itself — `AudioSink::cancel()` drops what the device ring holds (the cpal sink drains from the RT callback; the OS buffer past it is the latency floor), and `output.flush_data()` clears the agent audio still queued past the tail. See the e2e examples' `pump_out`.
 
 ```
                     ┌──────────┐          ┌───────────┐
@@ -88,6 +96,8 @@ external model runtime an adapter wraps.
 - `pipecrab-lm` — `LanguageModel` trait + `LmStage`, tool definitions and model deltas; `pipecrab-lm-llamacpp` is the llama.cpp adapter behind it.
 - `pipecrab-telemetry` — sessions, traces (turns), and spans assembled from the frame stream: the `TelemetryHub` observer, the `TurnAssembler`, and the `TelemetrySink` trait; `pipecrab-telemetry-jsonl` is the JSONL sink behind it (one turn record per line, for fine-tune datasets). See "Telemetry" below.
 - `pipecrab-dispatch-hermes` — adapter crate: a concrete `DispatchSource`/`DispatchSink` over the Hermes Agent gateway's runs API. Polling-only (a detached tokio task sweeps active runs); mints its own `task_id` and passes it as the Hermes `session_id`, so one task spans the many runs an `update_task` chains. Native-only (`tokio` + `reqwest`), so it is outside the wasm portability matrix.
+- `pipecrab-dispatch-zeroclaw` — adapter crate: a `DispatchSource`/`DispatchSink` over a ZeroClaw gateway's synchronous `/webhook` endpoint. No poller — the gateway answers only when the agent turn finishes, so each command spawns a detached worker for one request. The minted `task_id` rides as `X-Session-Id`, but the webhook is stateless (each POST is its own conversation), so the adapter keeps each task's transcript and replays it into an `update_task` follow-up. Native-only, like the Hermes adapter.
+- `pipecrab-lm-zeroclaw` — adapter crate: a `LanguageModel` that is a JSON-RPC peer of a running ZeroClaw **daemon** (newline-delimited JSON-RPC over its local socket; the protocol subset is hand-mirrored, so no ZeroClaw crate dependency). The conversation is a first-class daemon session the ZeroClaw TUI can list and read. Tool calling is internalized in the daemon's agent loop — no dispatch egress/sink — and its paired `ZeroclawDelegateSource` re-enters background-delegation results through `DispatchIngress` by polling the session workspace's `delegate_results/`. Supersedes `pipecrab-dispatch-zeroclaw` for the voice topology; see `docs/plans/pipecrab-lm-zeroclaw.md`. Native-only (unix sockets).
 
 ## Telemetry
 

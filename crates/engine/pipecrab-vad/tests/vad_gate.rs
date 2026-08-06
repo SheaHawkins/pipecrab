@@ -15,7 +15,6 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use futures::executor::block_on;
-use futures::stream::StreamExt;
 use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Direction, Processor, SystemFrame};
 use pipecrab_runtime::{PipelineBuilder, Received, Stage, link};
 use pipecrab_vad::{GateConfig, VadError, VadEvent, VadStage, VoiceActivityDetector};
@@ -411,10 +410,10 @@ fn interrupt_resets_the_gate_and_the_detector() {
 
         drop(out);
         let mut seen = Vec::new();
-        while let Some(frame) = inbound.data.next().await {
-            match frame {
-                DataFrame::SpeechStarted => seen.push(Seen::Started),
-                DataFrame::Audio(c) => seen.push(Seen::Audio(c.samples.len())),
+        while let Some(received) = inbound.recv().await {
+            match received {
+                Received::Data(DataFrame::SpeechStarted) => seen.push(Seen::Started),
+                Received::Data(DataFrame::Audio(c)) => seen.push(Seen::Audio(c.samples.len())),
                 _ => {}
             }
         }

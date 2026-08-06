@@ -34,17 +34,20 @@ pipecrab-audio-cpal = { path = "crates/adapters/pipecrab-audio-cpal", version = 
 pipecrab-lm         = { path = "crates/engine/pipecrab-lm", version = "0.6.0" }
 pipecrab-dispatch   = { path = "crates/engine/pipecrab-dispatch", version = "0.6.0" }
 pipecrab-dispatch-hermes = { path = "crates/adapters/pipecrab-dispatch-hermes", version = "0.6.0" }
+pipecrab-dispatch-zeroclaw = { path = "crates/adapters/pipecrab-dispatch-zeroclaw", version = "0.6.0" }
 pipecrab-lm-llamacpp = { path = "crates/adapters/pipecrab-lm-llamacpp", version = "0.6.0" }
+pipecrab-lm-zeroclaw = { path = "crates/adapters/pipecrab-lm-zeroclaw", version = "0.6.0" }
 pipecrab-stt        = { path = "crates/engine/pipecrab-stt", version = "0.6.0" }
 pipecrab-telemetry  = { path = "crates/engine/pipecrab-telemetry", version = "0.6.0" }
 pipecrab-telemetry-jsonl = { path = "crates/adapters/pipecrab-telemetry-jsonl", version = "0.6.0" }
 pipecrab-stt-sherpa = { path = "crates/adapters/pipecrab-stt-sherpa", version = "0.6.0" }
 pipecrab-tts        = { path = "crates/engine/pipecrab-tts", version = "0.6.0" }
 pipecrab-tts-sherpa = { path = "crates/adapters/pipecrab-tts-sherpa", version = "0.6.0" }
+pipecrab-turn       = { path = "crates/engine/pipecrab-turn", version = "0.6.0" }
 pipecrab-vad        = { path = "crates/engine/pipecrab-vad", version = "0.6.0" }
 pipecrab-vad-sherpa = { path = "crates/adapters/pipecrab-vad-sherpa", version = "0.6.0" }
 # Dev-only; `publish = false`, so it never needs a version.
 pipecrab-test-util  = { path = "crates/support/test-util" }
-llama-cpp-2         = { version = "=0.1.152", default-features = false }
+llama-cpp-2         = { version = "=0.1.153", default-features = false }
 sherpa-onnx         = { version = "=1.13.4", default-features = false }
 serde_json          = "1"

@@ -337,6 +337,48 @@ fn dispatch_listening_continues_after_an_interrupt() {
 }
 
 #[test]
+fn interrupt_flushes_stale_data_but_keeps_dispatch_frames() {
+    block_on(async {
+        let (source, _tx, _cancels) = ScriptedSource::new();
+        let (ends, driver) = PipelineBuilder::new()
+            .stage(DispatchIngress::new(source))
+            .build()
+            .start();
+        let input = ends.input;
+        let (done_tx, done_rx) = oneshot::channel();
+
+        let feed = async move {
+            // A stale droppable frame and a durable dispatch frame queued ahead
+            // of the Interrupt — sys-biased recv takes the Interrupt first,
+            // while both are still on the data lane.
+            let _ = input
+                .send_data(Transcript::agent_partial("stale reply").into())
+                .await;
+            let _ = input
+                .send_data(DataFrame::Dispatch(DispatchFrame::Event(progress(
+                    "task-1", "50%",
+                ))))
+                .await;
+            let _ = input
+                .send_system(Direction::Down, SystemFrame::Interrupt)
+                .await;
+            done_rx.await.ok();
+            drop(input);
+        };
+
+        let (_, (data, sys), _) = futures::join!(feed, drain(ends.output, 1, done_tx), driver);
+
+        // The stale agent transcript was flushed; the durable frame survived.
+        assert_eq!(data.len(), 1);
+        assert!(matches!(
+            raw_event(&data[0]),
+            DispatchEvent::Progress { .. }
+        ));
+        assert!(sys.iter().any(|f| matches!(f, SystemFrame::Interrupt)));
+    });
+}
+
+#[test]
 fn stop_cancels_the_source_and_terminates() {
     block_on(async {
         // Keep `tx` alive so the source stays *open* (parked): only the Stop, not

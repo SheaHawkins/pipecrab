@@ -25,6 +25,7 @@ use futures::pin_mut;
 use futures::stream::StreamExt;
 use pipecrab_core::{DataFrame, Direction, Disposition, Processor, SystemFrame};
 
+use crate::inbound::Stamped;
 use crate::observe::{ObserverHandle, PerformOutcome};
 use crate::{Inbound, MaybeSend, MaybeSendSync, Outbound, Received};
 
@@ -144,9 +145,12 @@ where
     /// until that borrow ends.
     ///
     /// After an `Interrupt` is handled, the queued data backlog is flushed via
-    /// [`Inbound::flush_data`]: droppable frames are discarded, but
-    /// transport-audio survivors are kept and re-processed ahead of the next
-    /// inbound read, so a barge-in utterance is not clipped.
+    /// [`Inbound::flush_data`]: droppable frames queued before the `Interrupt`
+    /// are discarded; survivors and frames queued after it are kept and
+    /// re-processed ahead of the next inbound read, so a barge-in utterance is
+    /// not clipped. The replay itself yields to any system frame already
+    /// queued — the sys lane keeps its priority — and a later interrupt
+    /// re-judges the held keepers by their stamps.
     ///
     /// A composite stage overrides this; the default body is never invoked for
     /// one (see [`Pipeline`](crate::Pipeline)).
@@ -155,25 +159,35 @@ where
         let mut inbound = inbound;
         let obs = inbound.observer.clone();
         let obs = obs.as_ref();
-        // Survivors of an interrupt flush, re-processed ahead of the next read.
-        let mut pending: VecDeque<DataFrame> = VecDeque::new();
+        // Keepers of an interrupt flush, re-processed ahead of the next read.
+        // Stamped so a later interrupt's flush can re-judge them by seq.
+        let mut pending: VecDeque<Stamped<DataFrame>> = VecDeque::new();
         loop {
-            let received = match pending.pop_front() {
-                Some(frame) => Received::Data(frame),
-                None => match inbound.recv().await {
+            let received = if pending.is_empty() {
+                match inbound.recv().await {
                     Some(received) => received,
                     None => break,
-                },
+                }
+            } else {
+                // Replaying keepers must not starve the sys lane: a system
+                // frame already queued keeps the priority recv() would give it.
+                match inbound.try_recv_sys() {
+                    Some((dir, frame)) => Received::Sys(dir, frame),
+                    None => Received::Data(pending.pop_front().expect("non-empty").frame),
+                }
             };
             match received {
                 Received::Sys(dir, frame) => {
                     let interrupted = matches!(frame, SystemFrame::Interrupt);
                     let stop = handle_system(&mut *stage, dir, frame, &out, obs).await;
                     if interrupted {
-                        // Barge-in: discard the queued data backlog, but keep
-                        // transport-audio survivors and re-process them so the
-                        // new utterance is not clipped.
-                        pending.extend(inbound.flush_data());
+                        // Barge-in: discard the stale queued data backlog, but
+                        // keep survivors and anything queued after the
+                        // Interrupt, re-processing them so the new utterance is
+                        // not clipped. Held keepers are re-judged the same way.
+                        let floor = inbound.flush_floor;
+                        pending.retain(|s| s.seq >= floor || s.frame.survives_flush());
+                        pending.extend(inbound.flush_data_stamped());
                     }
                     if stop {
                         break;
@@ -195,7 +209,7 @@ where
                     }
 
                     let mut stashed: Vec<(Direction, SystemFrame)> = Vec::new();
-                    let mut interrupt: Option<(Direction, SystemFrame)> = None;
+                    let mut interrupt: Option<(u64, Direction, SystemFrame)> = None;
                     let mut should_stop = false;
                     // True while a `perform_start` has been reported without its
                     // matching `perform_end` — i.e. an effect is in flight. Lets
@@ -212,9 +226,9 @@ where
                             futures::select_biased! {
                                 maybe = inbound.sys.next() => {
                                     // `None` => sys lane closed; keep performing.
-                                    if let Some((d, f)) = maybe {
+                                    if let Some(Stamped { seq, frame: (d, f) }) = maybe {
                                         if matches!(f, SystemFrame::Interrupt) {
-                                            interrupt = Some((d, f));
+                                            interrupt = Some((seq, d, f));
                                             break; // drops `perform`: barge-in
                                         }
                                         stashed.push((d, f)); // defer; keep performing
@@ -244,10 +258,14 @@ where
                     for (d, f) in stashed.drain(..) {
                         should_stop |= handle_system(&mut *stage, d, f, &out, obs).await;
                     }
-                    if let Some((d, f)) = interrupt {
+                    if let Some((seq, d, f)) = interrupt {
+                        // This path took the frame straight off the sys lane,
+                        // so record the floor `recv` would have.
+                        inbound.flush_floor = seq;
                         should_stop |= handle_system(&mut *stage, d, f, &out, obs).await;
                         // Same barge-in flush as the outer Sys branch.
-                        pending.extend(inbound.flush_data());
+                        pending.retain(|s| s.seq >= seq || s.frame.survives_flush());
+                        pending.extend(inbound.flush_data_stamped());
                     }
                     if should_stop {
                         break;

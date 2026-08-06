@@ -314,8 +314,8 @@ fn events_map_to_user_transcripts() {
         // Dropping `out` closes the lane so the drain terminates.
         drop(out);
         let mut transcripts = Vec::new();
-        while let Some(frame) = inbound.data.next().await {
-            if let DataFrame::Transcript(t) = frame {
+        while let Some(received) = inbound.recv().await {
+            if let Received::Data(DataFrame::Transcript(t)) = received {
                 transcripts.push(t);
             }
         }

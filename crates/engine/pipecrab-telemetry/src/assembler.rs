@@ -389,8 +389,7 @@ impl TurnAssembler {
                 }
                 None
             }
-            FrameInfo::InputAudio { .. }
-            | FrameInfo::ModelEvent { .. }
+            FrameInfo::ModelEvent { .. }
             | FrameInfo::Dispatch { .. }
             | FrameInfo::Custom { .. } => None,
         }

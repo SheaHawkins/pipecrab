@@ -77,15 +77,6 @@ pub enum EventKind {
 /// only its timing and length matter.
 #[derive(Clone, Debug)]
 pub enum FrameInfo {
-    /// Transport input audio, reduced to its dimensions.
-    InputAudio {
-        /// Payload size in bytes.
-        bytes: usize,
-        /// Samples per second.
-        sample_rate: u32,
-        /// Channel count.
-        channels: u16,
-    },
     /// Decoded audio, reduced to its dimensions (`samples` is the interleaved
     /// total, so seconds = samples / channels / sample_rate).
     Audio {
@@ -159,15 +150,6 @@ pub enum FrameInfo {
 impl From<&DataFrame> for FrameInfo {
     fn from(frame: &DataFrame) -> Self {
         match frame {
-            DataFrame::InputAudio {
-                bytes,
-                sample_rate,
-                num_channels,
-            } => FrameInfo::InputAudio {
-                bytes: bytes.len(),
-                sample_rate: *sample_rate,
-                channels: *num_channels,
-            },
             DataFrame::Audio(chunk) => FrameInfo::Audio {
                 samples: chunk.samples.len(),
                 sample_rate: chunk.format.sample_rate,

@@ -8,14 +8,15 @@ mod common;
 
 use std::sync::Arc;
 
-use common::RecordingSink;
+use common::{ParkingSink, RecordingSink};
 use futures::executor::block_on;
+use futures::stream::StreamExt;
 use pipecrab_core::{
-    DataFrame, Decision, DispatchCommand, DispatchFrame, Disposition, Processor, ToolCall,
-    Transcript,
+    DataFrame, Decision, Direction, DispatchCommand, DispatchFrame, Disposition, ModelFrame,
+    Processor, SystemFrame, ToolCall, Transcript,
 };
 use pipecrab_dispatch::{DispatchEgress, DispatchError, Publish};
-use pipecrab_runtime::{Received, Stage, StageError, link};
+use pipecrab_runtime::{PipelineBuilder, Received, Stage, StageError, link};
 use serde_json::json;
 
 // --- Helpers. ----------------------------------------------------------------
@@ -37,16 +38,18 @@ fn raw_tool_frame(id: &str, name: &str, args_json: &str) -> DataFrame {
     })
 }
 
-/// The single effect a decision emitted.
+/// The single effect a decision emitted. A matched command *consumes* the tool
+/// call (perform re-emits it after the send); a reject leaves it forwarded.
 fn only(decision: Decision<Publish>) -> Publish {
-    assert_eq!(
-        decision.disposition,
-        Disposition::Forward,
-        "the tool call always forwards, staying visible downstream"
-    );
     let mut effects = decision.effects;
     assert_eq!(effects.len(), 1, "expected exactly one effect");
-    effects.pop().unwrap()
+    let effect = effects.pop().unwrap();
+    let expected = match effect {
+        Publish::Command { .. } => Disposition::Drop,
+        Publish::Reject(_) => Disposition::Forward,
+    };
+    assert_eq!(decision.disposition, expected);
+    effect
 }
 
 /// Perform one effect and return `(result, frames emitted downstream)`.
@@ -80,14 +83,19 @@ fn dispatch_task_arguments_parse_into_a_create() {
     )));
 
     match effect {
-        Publish::Command(DispatchCommand::Create {
-            tool_call_id,
-            task,
-            context,
-        }) => {
+        Publish::Command {
+            command:
+                DispatchCommand::Create {
+                    tool_call_id,
+                    task,
+                    context,
+                },
+            call,
+        } => {
             assert_eq!(&*tool_call_id, "call-1");
             assert_eq!(&*task, "book a flight");
             assert_eq!(context.as_deref(), Some("window seat"));
+            assert_eq!(&*call.id, "call-1", "the original call rides the effect");
         }
         other => panic!("expected a Create command, got {other:?}"),
     }
@@ -105,7 +113,10 @@ fn dispatch_task_context_is_optional() {
     )));
 
     match effect {
-        Publish::Command(DispatchCommand::Create { context, .. }) => assert_eq!(context, None),
+        Publish::Command {
+            command: DispatchCommand::Create { context, .. },
+            ..
+        } => assert_eq!(context, None),
         other => panic!("expected a Create command, got {other:?}"),
     }
 }
@@ -122,11 +133,15 @@ fn update_task_arguments_parse_into_an_update() {
     )));
 
     match effect {
-        Publish::Command(DispatchCommand::Update {
-            tool_call_id,
-            task_id,
-            message,
-        }) => {
+        Publish::Command {
+            command:
+                DispatchCommand::Update {
+                    tool_call_id,
+                    task_id,
+                    message,
+                },
+            ..
+        } => {
             assert_eq!(&*tool_call_id, "call-9");
             assert_eq!(&*task_id, "task-42");
             assert_eq!(&*message, "any update?");
@@ -199,9 +214,9 @@ fn a_valid_command_reaches_the_sink_and_is_echoed_downstream() {
         let mut egress = DispatchEgress::new(sink);
 
         let call = tool_frame("call-1", "dispatch_task", json!({ "task": "ping" }));
-        // The tool call itself forwards downstream (stays visible to observers).
+        // The tool call is consumed; perform re-emits it after the send.
         let decision = egress.decide_data(&call);
-        assert_eq!(decision.disposition, Disposition::Forward);
+        assert_eq!(decision.disposition, Disposition::Drop);
         let effect = only(decision);
 
         let (result, frames) = run_effect(&egress, effect).await;
@@ -212,13 +227,75 @@ fn a_valid_command_reaches_the_sink_and_is_echoed_downstream() {
         assert_eq!(sent.len(), 1);
         assert!(matches!(&sent[0], DispatchCommand::Create { task, .. } if &**task == "ping"));
 
-        // ...and was echoed downstream as a native dispatch frame.
-        assert_eq!(frames.len(), 1);
+        // ...and the re-emitted tool call plus the native dispatch frame
+        // followed downstream, in that order.
+        assert_eq!(frames.len(), 2);
         assert!(matches!(
             &frames[0],
+            DataFrame::Model(ModelFrame::ToolCall(c)) if &*c.id == "call-1"
+        ));
+        assert!(matches!(
+            &frames[1],
             DataFrame::Dispatch(DispatchFrame::Command(DispatchCommand::Create { task, .. }))
                 if &**task == "ping"
         ));
+    });
+}
+
+#[test]
+fn an_interrupt_during_a_send_emits_no_tool_call() {
+    // A barge-in dropping the in-flight send must leave *nothing* downstream:
+    // a surviving ToolCall would claim a dispatch that never happened.
+    block_on(async {
+        let (sink, mut started_rx, block_tx) = ParkingSink::new();
+        let (ends, driver) = PipelineBuilder::new()
+            .stage(DispatchEgress::new(sink))
+            .build()
+            .start();
+        let input = ends.input;
+        let mut output = ends.output;
+
+        let feeder = async move {
+            input
+                .send_data(tool_frame(
+                    "call-1",
+                    "dispatch_task",
+                    json!({ "task": "ping" }),
+                ))
+                .await
+                .unwrap();
+            started_rx.next().await.expect("the send must start");
+            input
+                .send_system(Direction::Down, SystemFrame::Interrupt)
+                .await
+                .unwrap();
+            // Returning drops `input` -> shutdown.
+        };
+
+        let drain = async move {
+            let mut data = Vec::new();
+            let mut saw_interrupt = false;
+            while let Some(received) = output.recv().await {
+                match received {
+                    Received::Data(frame) => data.push(frame),
+                    Received::Sys(_, SystemFrame::Interrupt) => saw_interrupt = true,
+                    Received::Sys(..) => {}
+                }
+            }
+            (data, saw_interrupt)
+        };
+
+        let (_, (data, saw_interrupt), _) = futures::join!(feeder, drain, driver);
+
+        assert!(
+            block_tx.is_canceled(),
+            "the parked send must have been dropped"
+        );
+        assert!(saw_interrupt, "the Interrupt is forwarded downstream");
+        assert!(
+            data.is_empty(),
+            "an interrupted send emits neither a ToolCall nor a Dispatch frame, got {data:?}"
+        );
     });
 }
 
@@ -273,9 +350,10 @@ fn egress_retains_no_state_across_calls() {
     let ids: Vec<String> = [first, second]
         .into_iter()
         .map(|e| match e {
-            Publish::Command(DispatchCommand::Create { tool_call_id, .. }) => {
-                tool_call_id.to_string()
-            }
+            Publish::Command {
+                command: DispatchCommand::Create { tool_call_id, .. },
+                ..
+            } => tool_call_id.to_string(),
             other => panic!("expected a Create, got {other:?}"),
         })
         .collect();

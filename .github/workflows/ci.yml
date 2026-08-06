@@ -67,6 +67,9 @@ jobs:
       # The TTS interface is engine-free — the Synthesizer trait, its stage, and the
       # chunker — so it must build for the browser, where the engine runs in a Worker.
       - run: cargo check -p pipecrab-tts --target wasm32-unknown-unknown
+      # Turn policy is pure pipeline logic — the BargeInStage and nothing else — so
+      # it must build for the browser.
+      - run: cargo check -p pipecrab-turn --target wasm32-unknown-unknown
       # The LM interface is engine-free — the LanguageModel trait plus the LmStage
       # adapter — so it must build for the browser, where the engine runs in a Worker.
       - run: cargo check -p pipecrab-lm --target wasm32-unknown-unknown

@@ -1,35 +1,24 @@
-//! Tests for Inbound::flush_data: selective interrupt-flush of the data lane.
+//! Tests for Inbound::flush_data: causal interrupt-flush of the data lane.
+//!
+//! The flush floor is the stamp of the most recently received system frame:
+//! frames queued before it are kept only if `survives_flush()`; frames queued
+//! at or after it are always kept.
 
 use std::sync::Arc;
 
-use futures::channel::mpsc;
-use pipecrab_core::{AudioChunk, AudioFormat, DataFrame, Direction, SystemFrame, Transcript};
-use pipecrab_runtime::Inbound;
+use futures::FutureExt;
+use pipecrab_core::{
+    AudioChunk, AudioFormat, DataFrame, Direction, DispatchEvent, DispatchFrame, SystemFrame,
+    Transcript,
+};
+use pipecrab_runtime::{Inbound, Outbound, Received, link};
 
-fn lanes() -> (
-    mpsc::Sender<(Direction, SystemFrame)>,
-    mpsc::Sender<DataFrame>,
-    Inbound,
-) {
-    let (sys_tx, sys) = mpsc::channel(16);
-    let (data_tx, data) = mpsc::channel(16);
-    (
-        sys_tx,
-        data_tx,
-        Inbound {
-            sys,
-            data,
-            observer: None,
-        },
-    )
-}
-
-fn input_audio() -> DataFrame {
-    DataFrame::InputAudio {
-        bytes: Arc::from(&[0u8; 4][..]),
-        sample_rate: 16_000,
-        num_channels: 1,
-    }
+/// A frame that survives a flush on its own: every dispatch frame is durable.
+fn survivor(task_id: &str) -> DataFrame {
+    DataFrame::Dispatch(DispatchFrame::from(DispatchEvent::Progress {
+        task_id: Arc::from(task_id),
+        message: Arc::from("keep"),
+    }))
 }
 
 fn audio() -> DataFrame {
@@ -39,73 +28,109 @@ fn audio() -> DataFrame {
     ))
 }
 
-#[test]
-fn flush_selective_drops_unmarked_keeps_input_audio_in_order() {
-    let (_, mut data_tx, mut inb) = lanes();
-    data_tx
-        .try_send(Transcript::user_final("A").into())
+/// Capacity is ample in these tests, so sends resolve immediately.
+fn send_data(out: &Outbound, frame: DataFrame) {
+    out.send_data(frame)
+        .now_or_never()
+        .expect("send resolves immediately")
         .unwrap();
-    data_tx.try_send(input_audio()).unwrap(); // IN1
-    data_tx.try_send(audio()).unwrap(); // B
-    data_tx.try_send(input_audio()).unwrap(); // IN2
+}
+
+fn send_interrupt(out: &Outbound) {
+    out.send_system(Direction::Down, SystemFrame::Interrupt)
+        .now_or_never()
+        .expect("send resolves immediately")
+        .unwrap();
+}
+
+/// Receive the buffered Interrupt, moving the flush floor onto it.
+fn recv_interrupt(inb: &mut Inbound) {
+    match inb.recv().now_or_never() {
+        Some(Some(Received::Sys(Direction::Down, SystemFrame::Interrupt))) => {}
+        other => panic!("expected the buffered Interrupt, got {other:?}"),
+    }
+}
+
+#[test]
+fn flush_selective_drops_unmarked_keeps_survivors_in_order() {
+    let (out, mut inb) = link(16);
+    send_data(&out, Transcript::user_final("A").into());
+    send_data(&out, survivor("S1"));
+    send_data(&out, audio()); // B
+    send_data(&out, survivor("S2"));
+    send_interrupt(&out);
+    recv_interrupt(&mut inb);
 
     let kept = inb.flush_data();
     assert_eq!(kept.len(), 2);
-    assert!(matches!(kept[0], DataFrame::InputAudio { .. }));
-    assert!(matches!(kept[1], DataFrame::InputAudio { .. }));
+    assert!(matches!(kept[0], DataFrame::Dispatch(_)));
+    assert!(matches!(kept[1], DataFrame::Dispatch(_)));
 }
 
 #[test]
 fn flush_empty_lane_returns_empty() {
-    let (_, _, mut inb) = lanes();
+    let (out, mut inb) = link(16);
+    send_interrupt(&out);
+    recv_interrupt(&mut inb);
     assert!(inb.flush_data().is_empty());
 }
 
 #[test]
 fn flush_all_unmarked_returns_empty() {
-    let (_, mut data_tx, mut inb) = lanes();
-    data_tx
-        .try_send(Transcript::user_final("x").into())
-        .unwrap();
-    data_tx
-        .try_send(Transcript::user_final("y").into())
-        .unwrap();
+    let (out, mut inb) = link(16);
+    send_data(&out, Transcript::user_final("x").into());
+    send_data(&out, Transcript::user_final("y").into());
+    send_interrupt(&out);
+    recv_interrupt(&mut inb);
     assert!(inb.flush_data().is_empty());
 }
 
 #[test]
 fn flush_all_marked_returns_all_in_order() {
-    let (_, mut data_tx, mut inb) = lanes();
-    data_tx.try_send(input_audio()).unwrap();
-    data_tx.try_send(input_audio()).unwrap();
-    data_tx.try_send(input_audio()).unwrap();
+    let (out, mut inb) = link(16);
+    send_data(&out, survivor("S1"));
+    send_data(&out, survivor("S2"));
+    send_data(&out, survivor("S3"));
+    send_interrupt(&out);
+    recv_interrupt(&mut inb);
     let kept = inb.flush_data();
     assert_eq!(kept.len(), 3);
-    assert!(
-        kept.iter()
-            .all(|f| matches!(f, DataFrame::InputAudio { .. }))
-    );
+    assert!(kept.iter().all(|f| matches!(f, DataFrame::Dispatch(_))));
+}
+
+#[test]
+fn flush_keeps_frames_queued_after_the_interrupt() {
+    let (out, mut inb) = link(16);
+    send_data(&out, Transcript::user_final("stale").into());
+    send_interrupt(&out);
+    // The barge-in utterance's own frames, queued behind the Interrupt: kept
+    // even though a Transcript does not survive a flush on its own.
+    send_data(&out, Transcript::user_final("fresh").into());
+    recv_interrupt(&mut inb);
+
+    let kept = inb.flush_data();
+    assert_eq!(kept.len(), 1);
+    match &kept[0] {
+        DataFrame::Transcript(t) => assert_eq!(t.text, "fresh".into()),
+        other => panic!("expected the post-interrupt transcript, got {other:?}"),
+    }
 }
 
 #[test]
 fn flush_does_not_touch_sys_lane() {
-    let (mut sys_tx, mut data_tx, mut inb) = lanes();
-    sys_tx
-        .try_send((Direction::Down, SystemFrame::Interrupt))
-        .unwrap();
-    data_tx
-        .try_send(Transcript::user_final("drop me").into())
-        .unwrap();
+    let (out, mut inb) = link(16);
+    send_data(&out, Transcript::user_final("drop me").into());
+    send_interrupt(&out);
+    recv_interrupt(&mut inb);
+    // A second Interrupt buffered behind the one being flushed against.
+    send_interrupt(&out);
 
     let kept = inb.flush_data();
     assert!(kept.is_empty());
     // `futures`' Receiver has no `len()`; prove the lane is untouched by
     // pulling the frame back out — it must still be the buffered Interrupt.
-    assert!(
-        matches!(
-            inb.sys.try_recv(),
-            Ok((Direction::Down, SystemFrame::Interrupt))
-        ),
-        "sys lane must be untouched by flush_data",
-    );
+    match inb.recv().now_or_never() {
+        Some(Some(Received::Sys(Direction::Down, SystemFrame::Interrupt))) => {}
+        other => panic!("sys lane must be untouched by flush_data, got {other:?}"),
+    }
 }

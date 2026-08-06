@@ -29,6 +29,8 @@ use pipecrab_audio::{AudioChunk, AudioError, AudioFormat};
 pub(crate) struct Signal {
     waker: AtomicWaker,
     closed: AtomicBool,
+    /// A pending request for the RT side to drop everything queued (barge-in).
+    discard: AtomicBool,
 }
 
 impl Signal {
@@ -36,7 +38,18 @@ impl Signal {
         Arc::new(Self {
             waker: AtomicWaker::new(),
             closed: AtomicBool::new(false),
+            discard: AtomicBool::new(false),
         })
+    }
+
+    /// Async side: ask the RT callback to drop everything queued.
+    pub(crate) fn request_discard(&self) {
+        self.discard.store(true, Ordering::Release);
+    }
+
+    /// RT side: consume a pending discard request.
+    pub(crate) fn take_discard(&self) -> bool {
+        self.discard.swap(false, Ordering::AcqRel)
     }
 
     /// Async side: arm the waker to be notified of the next `wake`/`fail`.
@@ -159,6 +172,12 @@ impl PlaybackRing {
 
     pub(crate) fn format(&self) -> AudioFormat {
         self.format
+    }
+
+    /// Control call: ask the output callback to drop everything queued. Sync,
+    /// non-blocking, idempotent; the discard lands within one callback period.
+    pub(crate) fn cancel(&mut self) {
+        self.signal.request_discard();
     }
 
     pub(crate) async fn play(&mut self, chunk: AudioChunk) -> Result<(), AudioError> {
@@ -303,6 +322,35 @@ mod tests {
             ring.poll_push(&samples, &mut offset, &mut cx),
             Poll::Ready(Err(AudioError::Closed))
         ));
+    }
+
+    // #3: a cancel drains everything queued when the callback observes it, and
+    // the request is one-shot.
+    #[test]
+    fn discard_drops_queued_samples_and_is_one_shot() {
+        let (producer, mut consumer) = RingBuffer::<f32>::new(64);
+        let signal = Signal::new();
+        let mut ring = PlaybackRing::new(producer, signal.clone(), FMT);
+
+        let chunk = AudioChunk::new(Arc::from(&[0.5f32; 8][..]), FMT);
+        assert_eq!(block_on(ring.play(chunk)), Ok(()));
+        assert_eq!(consumer.slots(), 8);
+
+        ring.cancel();
+
+        // Mimic the output callback's discard step.
+        assert!(signal.take_discard(), "the cancel request must be pending");
+        if let Ok(chunk) = consumer.read_chunk(consumer.slots()) {
+            chunk.commit_all();
+        }
+        assert_eq!(consumer.slots(), 0, "queued samples are discarded");
+
+        // One-shot: the next callback pass sees no pending discard, so audio
+        // played after the cancel is not eaten.
+        assert!(!signal.take_discard());
+        let fresh = AudioChunk::new(Arc::from(&[0.25f32; 4][..]), FMT);
+        assert_eq!(block_on(ring.play(fresh)), Ok(()));
+        assert_eq!(consumer.slots(), 4);
     }
 
     // #2: play rejects a chunk whose format differs from the sink's, and accepts
