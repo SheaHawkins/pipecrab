@@ -29,7 +29,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use pipecrab_runtime::StageObserver;
 
 use crate::assembler::TurnAssembler;
-use crate::clock::StdClock;
+use crate::clock::{Clock, StdClock};
 use crate::event::Event;
 use crate::hub::{DEFAULT_CAPACITY, TelemetryHub};
 use crate::record::SessionInfo;
@@ -107,8 +107,8 @@ impl Telemetry {
             id: id.into(),
             started_unix_ms,
         };
-        let (hub, rx) = TelemetryHub::with_capacity(clock, self.capacity);
-        let worker = spawn_worker(rx, TurnAssembler::new(session.clone()), self.sinks);
+        let (hub, rx) = TelemetryHub::with_capacity(clock.clone(), self.capacity);
+        let worker = spawn_worker(rx, TurnAssembler::new(session.clone()), self.sinks, clock);
         Session {
             info: session,
             hub: Some(hub),
@@ -174,7 +174,15 @@ fn spawn_worker(
     rx: Receiver<Event>,
     mut assembler: TurnAssembler,
     mut sinks: Vec<Box<dyn TelemetrySink + Send>>,
+    clock: Arc<StdClock>,
 ) -> JoinHandle<()> {
+    use std::sync::mpsc::RecvTimeoutError;
+    use std::time::Duration;
+
+    /// How often the assembler ticks while the event stream is quiet, so a
+    /// finished turn's record lands promptly (see `TurnAssembler::tick`).
+    const TICK: Duration = Duration::from_millis(200);
+
     std::thread::Builder::new()
         .name("pipecrab-telemetry".into())
         .spawn(move || {
@@ -186,8 +194,13 @@ fn spawn_worker(
                     }
                 }
             };
-            while let Ok(event) = rx.recv() {
-                if let Some(turn) = assembler.push(event) {
+            loop {
+                let closed = match rx.recv_timeout(TICK) {
+                    Ok(event) => assembler.push(event),
+                    Err(RecvTimeoutError::Timeout) => assembler.tick(clock.now()),
+                    Err(RecvTimeoutError::Disconnected) => break,
+                };
+                if let Some(turn) = closed {
                     offer(&turn, &mut sinks);
                 }
             }

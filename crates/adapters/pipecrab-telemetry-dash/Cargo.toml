@@ -13,3 +13,7 @@ layer = "adapter"
 [dependencies]
 pipecrab-telemetry = { workspace = true, features = ["serde"] }
 serde_json         = { workspace = true }
+
+[[bin]]
+name = "pipecrab-dash-tui"
+path = "src/bin/dash_tui.rs"

@@ -225,7 +225,9 @@ while it runs.
 Two flags turn on telemetry. `--dashboard 127.0.0.1:7878` serves a live
 dashboard at that address — latency per turn (response, time-to-first-speech,
 LM first token), per-stage busy time, barge-ins, and the running transcript
-with the daemon's tool calls, updating as each turn lands.
+with the daemon's tool calls, updating as each turn lands. View it in a
+browser, or in a second terminal as a TUI fed by the same endpoint
+(`cargo run -p pipecrab-telemetry-dash --bin pipecrab-dash-tui`).
 `--telemetry-jsonl turns.jsonl` appends one JSON record per turn (user text,
 agent text, tool calls, every timing) — the raw material for a fine-tune
 dataset. The telemetry session carries the daemon's session id, so a

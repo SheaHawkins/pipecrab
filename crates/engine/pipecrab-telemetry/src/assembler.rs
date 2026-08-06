@@ -55,6 +55,13 @@ use crate::record::{
 /// between the tail tap and the speaker).
 const SPEAKING_GRACE: Duration = Duration::from_millis(1_000);
 
+/// How long a turn whose generation has finished must stay quiet (no
+/// turn-relevant frames) before [`TurnAssembler::tick`] closes it as
+/// [`TurnEnd::Completed`]. Long enough to bridge synthesis gaps between the
+/// reply's final sentences; short enough that a record lands promptly after
+/// the agent stops speaking.
+const QUIET_CLOSE: Duration = Duration::from_millis(1_500);
+
 /// The frame kinds that learn a designated boundary; see the module docs.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Learned {
@@ -81,6 +88,9 @@ struct StageAgg {
 struct TurnState {
     origin: TurnOrigin,
     started_at: Duration,
+    /// When a turn-relevant frame was last observed; drives the quiet close.
+    /// Deliberately not refreshed by idle capture audio upstream of the VAD.
+    last_activity_at: Duration,
     speech_stopped_at: Option<Duration>,
     last_user_audio_at: Option<Duration>,
     user_audio_secs: f64,
@@ -103,6 +113,7 @@ impl TurnState {
         Self {
             origin,
             started_at: at,
+            last_activity_at: at,
             speech_stopped_at: None,
             last_user_audio_at: None,
             user_audio_secs: 0.0,
@@ -229,6 +240,24 @@ impl TurnAssembler {
         self.close(TurnEnd::SessionEnd, at)
     }
 
+    /// Quiet close: called periodically (with the session clock's `now`) so a
+    /// finished turn's record lands without waiting for the next turn to open.
+    /// Closes the open turn as [`TurnEnd::Completed`] once its generation has
+    /// finished and no turn-relevant frame has been observed for
+    /// [`QUIET_CLOSE`]; the record's end time is the last activity, not the
+    /// tick. A turn that never generated (a gated noise trigger) is left for
+    /// the next turn or session end to close.
+    pub fn tick(&mut self, now: Duration) -> Option<TurnRecord> {
+        let turn = self.current.as_ref()?;
+        let generated =
+            turn.generation_started_at.is_some() && turn.generation_finished_at.is_some();
+        if !generated || now.saturating_sub(turn.last_activity_at) < QUIET_CLOSE {
+            return None;
+        }
+        let at = turn.last_activity_at;
+        self.close(TurnEnd::Completed, at)
+    }
+
     fn learn_tail(&mut self, stages: &[StageId]) {
         if self.tail_path.is_some() {
             return;
@@ -288,6 +317,7 @@ impl TurnAssembler {
                     && let Some(turn) = self.current.as_mut()
                 {
                     turn.speech_stopped_at.get_or_insert(at);
+                    turn.last_activity_at = at;
                 }
                 None
             }
@@ -309,6 +339,7 @@ impl TurnAssembler {
                         let frames = samples / usize::from(channels.max(1));
                         turn.user_audio_secs += frames as f64 / f64::from(sample_rate.max(1));
                         turn.last_user_audio_at = Some(at);
+                        turn.last_activity_at = at;
                     }
                 } else if self.tail_path.as_ref().is_some_and(|p| **p == **path)
                     && let Some(turn) = self.current.as_mut()
@@ -317,6 +348,7 @@ impl TurnAssembler {
                     // Agent speech leaving the pipeline.
                     turn.first_speech_at.get_or_insert(at);
                     turn.last_speech_at = Some(at);
+                    turn.last_activity_at = at;
                 }
                 None
             }
@@ -333,6 +365,7 @@ impl TurnAssembler {
                         {
                             turn.user_text = text;
                             turn.user_final_at.get_or_insert(at);
+                            turn.last_activity_at = at;
                         }
                     }
                     (Role::Agent, Finality::Partial { .. }) => {
@@ -341,6 +374,7 @@ impl TurnAssembler {
                             && turn.generation_started_at.is_some()
                         {
                             turn.first_agent_partial_at.get_or_insert(at);
+                            turn.last_activity_at = at;
                         }
                     }
                     (Role::Agent, Finality::Final) => {
@@ -349,6 +383,7 @@ impl TurnAssembler {
                             && let Some(text) = text
                         {
                             turn.agent_finals.push(text);
+                            turn.last_activity_at = at;
                         }
                     }
                     _ => {}
@@ -364,6 +399,7 @@ impl TurnAssembler {
                 }
                 if let Some(turn) = self.current.as_mut() {
                     turn.generation_started_at.get_or_insert(at);
+                    turn.last_activity_at = at;
                 }
                 None
             }
@@ -372,6 +408,7 @@ impl TurnAssembler {
                     && let Some(turn) = self.current.as_mut()
                 {
                     turn.generation_finished_at = Some(at);
+                    turn.last_activity_at = at;
                 }
                 None
             }
@@ -390,6 +427,7 @@ impl TurnAssembler {
                         result: None,
                         at_ms: ms(at),
                     });
+                    turn.last_activity_at = at;
                 }
                 None
             }
@@ -402,6 +440,7 @@ impl TurnAssembler {
                     && let Some(call) = turn.tool_calls.iter_mut().find(|c| c.id == tool_call_id)
                 {
                     call.result = Some(content);
+                    turn.last_activity_at = at;
                 }
                 None
             }

@@ -274,6 +274,30 @@ fn idle_interrupt_is_the_next_utterances_herald_and_leaves_the_turn_open() {
 }
 
 #[test]
+fn tick_quiet_closes_a_finished_turn_but_not_an_active_one() {
+    let mut asm = assembler();
+    let _ = full_turn(&mut asm);
+    // Last activity is the tail audio at 1600. Too soon: nothing closes.
+    assert!(
+        asm.tick(at(2_000)).is_none(),
+        "still inside the quiet window"
+    );
+    // Quiet long enough: the turn closes as completed, ended at last activity.
+    let turn = asm.tick(at(3_500)).expect("quiet turn closes");
+    assert_eq!(turn.end, TurnEnd::Completed);
+    assert!((turn.ended_ms - 1_600.0).abs() < 1e-9);
+    assert!(asm.finish().is_none(), "nothing left open");
+
+    // A turn whose generation has not finished never quiet-closes.
+    let mut asm = assembler();
+    asm.push(wired());
+    asm.push(frame(100, "1", "stt", FrameInfo::SpeechStarted));
+    asm.push(frame(700, "2", "lm", user_final("hi")));
+    asm.push(frame(720, "3", "tts", FrameInfo::GenerationStarted));
+    assert!(asm.tick(at(60_000)).is_none(), "open generation stays open");
+}
+
+#[test]
 fn generation_without_speech_opens_a_model_turn() {
     let mut asm = assembler();
     asm.push(wired());

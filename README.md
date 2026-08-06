@@ -66,10 +66,12 @@ cargo run -p e2e-voice-agent-zeroclaw -- <model flags…> --agent voice \
     --telemetry-jsonl turns.jsonl
 ```
 
-`--dashboard` serves a live localhost page (no collector, no external assets)
-that charts each turn as it lands; with ZeroClaw the telemetry session carries
-the daemon's session id, so the dashboard lines up with the TUI's view of the
-same conversation. `--telemetry-jsonl` appends one self-contained JSON record
+`--dashboard` serves a live localhost dashboard (no collector, no external
+assets) that charts each turn as it lands — open it in a browser, or run the
+bundled TUI in a second terminal against the same endpoint
+(`cargo run -p pipecrab-telemetry-dash --bin pipecrab-dash-tui`); with
+ZeroClaw the telemetry session carries the daemon's session id, so the
+dashboard lines up with the ZeroClaw TUI's view of the same conversation. `--telemetry-jsonl` appends one self-contained JSON record
 per turn — user text, agent text, tool calls with correlated results, every
 timing — ready to become a fine-tune dataset. Both are sinks over the same
 turn record; see [ARCHITECTURE.md](./ARCHITECTURE.md#telemetry) for the design

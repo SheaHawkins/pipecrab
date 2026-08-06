@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 /// Identity of one session (an "interaction": one pipeline run).
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionInfo {
     /// Application-chosen or generated session id; on every record.
     pub id: Arc<str>,
@@ -18,10 +18,13 @@ pub struct SessionInfo {
 
 /// Why a turn ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum TurnEnd {
-    /// The next turn opened.
+    /// The generation finished and the pipeline went quiet: the ordinary
+    /// completed turn, closed by the assembler's tick.
+    Completed,
+    /// The next turn opened before the quiet close fired.
     NextTurn,
     /// A barge-in `Interrupt` cut it short.
     Interrupted,
@@ -31,7 +34,7 @@ pub enum TurnEnd {
 
 /// What opened the turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum TurnOrigin {
     /// The user spoke (`SpeechStarted`).
@@ -43,7 +46,7 @@ pub enum TurnOrigin {
 
 /// One tool call and, when it came home within the session, its result.
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ToolCallRecord {
     /// The call id correlating call and result.
     pub id: Arc<str>,
@@ -61,7 +64,7 @@ pub struct ToolCallRecord {
 /// The turn-level latency metrics that are only clean to measure in-process.
 /// All `None` when the turn never reached that point.
 #[derive(Clone, Debug, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TurnTimings {
     /// Seconds of user utterance audio (sample-counted, not wall time).
     pub user_audio_secs: Option<f64>,
@@ -86,7 +89,7 @@ pub struct TurnTimings {
 
 /// Per-stage decide/perform aggregates for one turn: the turn's spans.
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StageTimings {
     /// The stage's wiring path (e.g. `"3"`, `"2.0"`).
     pub path: Arc<str>,
@@ -113,7 +116,7 @@ pub struct StageTimings {
 /// One assembled turn: a trace, with everything a dashboard span tree or a
 /// fine-tune training row needs.
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TurnRecord {
     /// The owning session.
     pub session: SessionInfo,

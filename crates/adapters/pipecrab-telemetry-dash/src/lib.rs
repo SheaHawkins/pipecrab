@@ -22,6 +22,13 @@
 //! channels, so the telemetry worker never waits on a slow browser — a client
 //! that falls more than a channel's depth behind is dropped and can simply
 //! reload.
+//!
+//! Prefer the terminal? The same endpoint feeds the bundled TUI viewer —
+//! run it in its own terminal beside the agent:
+//!
+//! ```text
+//! cargo run -p pipecrab-telemetry-dash --bin pipecrab-dash-tui
+//! ```
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
@@ -42,6 +49,9 @@ const BACKLOG: usize = 512;
 
 /// Per-client channel depth; a browser this far behind is dropped.
 const CLIENT_DEPTH: usize = 256;
+
+/// Comment-ping cadence on an idle SSE stream.
+const KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(15);
 
 struct Shared {
     backlog: Mutex<VecDeque<Arc<str>>>,
@@ -171,6 +181,12 @@ fn serve_events(mut stream: TcpStream, shared: &Shared) {
     {
         return;
     }
+    // Body bytes straight away: browsers only commit an EventSource's `open`
+    // once the stream produces something, so an empty session would otherwise
+    // sit at "connecting". The retry field tunes reconnect while we're at it.
+    if write!(stream, "retry: 2000\n\n: connected\n\n").is_err() {
+        return;
+    }
     let rx: Receiver<Arc<str>> = {
         // Register before snapshotting the backlog so no record can fall
         // between them; the channel buffers anything recorded meanwhile.
@@ -186,7 +202,19 @@ fn serve_events(mut stream: TcpStream, shared: &Shared) {
             return;
         }
     }
-    while let Ok(line) = rx.recv() {
+    loop {
+        let line = match rx.recv_timeout(KEEPALIVE) {
+            Ok(line) => line,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                // Comment ping: keeps intermediaries from timing the stream
+                // out and detects a gone client between turns.
+                if write!(stream, ": ping\n\n").is_err() {
+                    return;
+                }
+                continue;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+        };
         // A record fanned out between registration and the snapshot appears
         // in both; skip the copy already sent.
         if seen
