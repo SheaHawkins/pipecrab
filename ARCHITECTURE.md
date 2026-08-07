@@ -55,6 +55,8 @@ The flush is **causal**. Every frame crosses its link with a per-link sequence s
 
 The tail lane belongs to the application: nothing flushes it. An output pump must react to the forwarded `Interrupt` itself — `AudioSink::cancel()` drops what the device ring holds (the cpal sink drains from the RT callback; the OS buffer past it is the latency floor), and `output.flush_data()` clears the agent audio still queued past the tail. See the e2e examples' `pump_out`.
 
+A pump must also stay *able* to see that `Interrupt` while it is busy with a data frame. `Inbound::recv` is all-or-nothing, so a pump parked in `AudioSink::play` is deaf to the system lane for as long as the push takes — and one TTS chunk is a whole synthesized sentence against a ring measured in milliseconds, so an unraced push holds off barge-in for seconds. `Inbound::recv_sys` is the primitive for this: race it against the in-flight work and drop that work on an `Interrupt`, the same shape as the run loop's own `select_biased!`. Barge-in latency is then independent of chunk size.
+
 ```
                     ┌──────────┐          ┌───────────┐
                     │ Backend  │ ◀────────│ Transport │

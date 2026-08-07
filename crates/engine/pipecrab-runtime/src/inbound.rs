@@ -118,6 +118,26 @@ impl Inbound {
         kept
     }
 
+    /// Await the next system frame, ignoring the data lane and maintaining the
+    /// flush floor exactly as [`recv`](Self::recv) does.
+    ///
+    /// `None` once the system lane closes, and immediately so from then on — a
+    /// caller racing this against other work must stop polling it at that
+    /// point. Cancellation-safe: a dropped future takes nothing off the lane.
+    ///
+    /// This is what keeps an application's output pump preemptible while it is
+    /// busy with a data frame. A stage gets sys priority from the run loop's
+    /// own race; the tail lane belongs to the application, so its pump must run
+    /// the same race itself (see the e2e examples' `pump_out`).
+    pub async fn recv_sys(&mut self) -> Option<(Direction, SystemFrame)> {
+        let Stamped {
+            seq,
+            frame: (dir, frame),
+        } = self.sys.next().await?;
+        self.flush_floor = seq;
+        Some((dir, frame))
+    }
+
     /// Take one already-queued system frame without blocking, maintaining the
     /// flush floor exactly as [`recv`](Self::recv) would. `None` when the sys
     /// lane is empty or closed. Lets the run loop keep sys priority while it
@@ -222,6 +242,71 @@ mod tests {
                     assert_eq!(s.text, "after sys closed".into())
                 }
                 other => panic!("closed sys lane must not block the data lane, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn recv_sys_takes_the_system_frame_past_a_backed_up_data_lane() {
+        block_on(async {
+            let (mut sys_tx, mut data_tx, mut inb) = lanes();
+            data_tx
+                .try_send(Stamped {
+                    seq: 1,
+                    frame: Transcript::user_final("stale").into(),
+                })
+                .unwrap();
+            sys_tx
+                .try_send(Stamped {
+                    seq: 2,
+                    frame: (Direction::Down, SystemFrame::Interrupt),
+                })
+                .unwrap();
+            data_tx
+                .try_send(Stamped {
+                    seq: 3,
+                    frame: Transcript::user_final("barge-in").into(),
+                })
+                .unwrap();
+
+            assert!(
+                matches!(
+                    inb.recv_sys().await,
+                    Some((Direction::Down, SystemFrame::Interrupt))
+                ),
+                "recv_sys must reach the system frame without draining data first",
+            );
+            // The floor moved, so the causal flush still discriminates.
+            let kept = inb.flush_data();
+            assert_eq!(kept.len(), 1, "only the post-Interrupt frame survives");
+            match &kept[0] {
+                DataFrame::Transcript(s) => assert_eq!(s.text, "barge-in".into()),
+                other => panic!("wrong survivor: {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn recv_sys_reports_a_closed_sys_lane_and_leaves_data_alone() {
+        block_on(async {
+            let (sys_tx, mut data_tx, mut inb) = lanes();
+            data_tx
+                .try_send(Stamped {
+                    seq: 1,
+                    frame: Transcript::user_final("still here").into(),
+                })
+                .unwrap();
+            drop(sys_tx);
+
+            assert!(
+                matches!(inb.recv_sys().now_or_never(), Some(None)),
+                "a closed sys lane must resolve immediately, so a racing caller can stop polling",
+            );
+            match inb.recv().await.unwrap() {
+                Received::Data(DataFrame::Transcript(s)) => {
+                    assert_eq!(s.text, "still here".into())
+                }
+                other => panic!("recv_sys must not consume data frames, got {other:?}"),
             }
         });
     }
