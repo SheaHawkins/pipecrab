@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-tts-v0.6.0...pipecrab-tts-v0.7.0) - 2026-08-07
+
+### Added
+
+- wire in interruptions ([#80](https://github.com/SheaHawkins/pipecrab/pull/80))
+
 ## [0.3.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-tts-v0.2.0...pipecrab-tts-v0.3.0) - 2026-07-13
 
 ### Other

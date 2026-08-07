@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-lm-llamacpp-v0.6.0...pipecrab-lm-llamacpp-v0.7.0) - 2026-08-07
+
+### Other
+
+- update Cargo.toml dependencies
+
 ## [0.6.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-lm-llamacpp-v0.5.1...pipecrab-lm-llamacpp-v0.6.0) - 2026-07-28
 
 ### Added
