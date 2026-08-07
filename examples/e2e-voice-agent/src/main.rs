@@ -58,12 +58,16 @@ mod desktop {
     use std::time::{Duration, Instant};
 
     use async_trait::async_trait;
+    use futures::FutureExt;
     use futures::executor::block_on;
+    use futures::pin_mut;
     use pipecrab::{
-        DataFrame, Decision, Direction, Finality, Outbound, PipelineBuilder, Processor, Received,
-        Role, Stage, StageError, SystemFrame, Transcript,
+        DataFrame, Decision, Direction, Finality, Inbound, Outbound, PipelineBuilder, Processor,
+        Received, Role, Stage, StageError, SystemFrame, Transcript,
     };
-    use pipecrab_audio::{AudioFormat, AudioSink, AudioSource, ResamplerStage};
+    use pipecrab_audio::{
+        AudioChunk, AudioError, AudioFormat, AudioSink, AudioSource, ResamplerStage,
+    };
     use pipecrab_audio_cpal::{CpalConfig, CpalSink, CpalSource};
     use pipecrab_lm::LmStage;
     use pipecrab_lm_llamacpp::{LlamaCpp, LlamaCppConfig};
@@ -166,6 +170,74 @@ mod desktop {
         ) -> Result<(), StageError> {
             println!("Agent: {text}");
             Ok(())
+        }
+    }
+
+    /// Push one chunk to the device while staying responsive to the tail's
+    /// system lane.
+    ///
+    /// One chunk is a whole synthesized sentence and the device ring holds only
+    /// `ring_chunks * chunk_ms`, so an unraced push parks the pump for seconds —
+    /// long enough for a barge-in `Interrupt` to sit unread while the agent
+    /// keeps talking. This race is the tail's half of the run loop's own: an
+    /// `Interrupt` drops the in-flight push, since the unpushed remainder is
+    /// exactly what barge-in discards; any other system frame is taken and the
+    /// push continues.
+    ///
+    /// Returns the frames taken off the system lane in arrival order; an
+    /// `Interrupt` is always the last of them. `sys_open` clears once the lane
+    /// closes, after which the race is skipped — a closed lane resolves
+    /// immediately and would spin.
+    async fn play_racing_sys(
+        sink: &mut CpalSink,
+        output: &mut Inbound,
+        chunk: AudioChunk,
+        sys_open: &mut bool,
+    ) -> (Result<(), AudioError>, Vec<SystemFrame>) {
+        let mut taken = Vec::new();
+        let play = sink.play(chunk).fuse();
+        pin_mut!(play);
+        loop {
+            if !*sys_open {
+                return (play.as_mut().await, taken);
+            }
+            futures::select_biased! {
+                sys = output.recv_sys().fuse() => match sys {
+                    Some((_, frame)) => {
+                        let interrupt = matches!(frame, SystemFrame::Interrupt);
+                        taken.push(frame);
+                        if interrupt {
+                            return (Ok(()), taken);
+                        }
+                    }
+                    None => *sys_open = false,
+                },
+                result = play => return (result, taken),
+            }
+        }
+    }
+
+    /// Apply one system frame taken off the tail lane. Nothing flushes that lane
+    /// for the application, so an `Interrupt` is where the pump clears the
+    /// device ring and the agent audio still queued past the tail.
+    fn apply_system(
+        frame: SystemFrame,
+        sink: &mut CpalSink,
+        output: &mut Inbound,
+        pending: &mut VecDeque<DataFrame>,
+    ) {
+        match frame {
+            SystemFrame::Interrupt => {
+                sink.cancel();
+                // Held keepers predate this interrupt: re-apply the flush
+                // predicate before collecting the new keepers.
+                pending.retain(|f| f.survives_flush());
+                pending.extend(output.flush_data());
+            }
+            SystemFrame::Error { message, .. } => {
+                eprintln!("e2e-voice-agent: pipeline error: {message}")
+            }
+            _ => {}
         }
     }
 
@@ -287,6 +359,8 @@ mod desktop {
             // Keepers from the tail-lane flush on a barge-in, replayed ahead of
             // the next receive.
             let mut pending: VecDeque<DataFrame> = VecDeque::new();
+            // Cleared once the tail's system lane closes; see play_racing_sys.
+            let mut sys_open = true;
             loop {
                 let received = match pending.pop_front() {
                     Some(frame) => Received::Data(frame),
@@ -297,7 +371,12 @@ mod desktop {
                 };
                 match received {
                     Received::Data(DataFrame::Audio(chunk)) => {
-                        if let Err(error) = sink.play(chunk).await {
+                        let (result, taken) =
+                            play_racing_sys(&mut sink, &mut output, chunk, &mut sys_open).await;
+                        for frame in taken {
+                            apply_system(frame, &mut sink, &mut output, &mut pending);
+                        }
+                        if let Err(error) = result {
                             eprintln!("e2e-voice-agent: playback stopped: {error}");
                             break;
                         }
@@ -315,20 +394,10 @@ mod desktop {
                             None => println!("SpeechStopped"),
                         }
                     }
-                    Received::Sys(_, SystemFrame::Interrupt) => {
-                        // Barge-in: drop what the device already holds, then
-                        // the agent audio still queued past the tail — nothing
-                        // flushes the tail lane for the application.
-                        sink.cancel();
-                        // Held keepers predate this interrupt: re-apply the
-                        // flush predicate before collecting the new keepers.
-                        pending.retain(|f| f.survives_flush());
-                        pending.extend(output.flush_data());
+                    Received::Sys(_, frame) => {
+                        apply_system(frame, &mut sink, &mut output, &mut pending)
                     }
-                    Received::Sys(_, SystemFrame::Error { message, fatal: _ }) => {
-                        eprintln!("e2e-voice-agent: pipeline error: {message}")
-                    }
-                    Received::Data(_) | Received::Sys(_, _) => {}
+                    Received::Data(_) => {}
                 }
             }
             // Everything is enqueued but the device is still draining its ring;
