@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-runtime-v0.6.0...pipecrab-runtime-v0.7.0) - 2026-08-07
+
+### Added
+
+- wire in interruptions ([#80](https://github.com/SheaHawkins/pipecrab/pull/80))
+
+### Fixed
+
+- provide a sys receive on the output so playback can be interrupted ([#82](https://github.com/SheaHawkins/pipecrab/pull/82))
+
 ## [0.4.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-runtime-v0.3.0...pipecrab-runtime-v0.4.0) - 2026-07-17
 
 ### Other
