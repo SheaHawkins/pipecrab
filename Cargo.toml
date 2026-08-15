@@ -46,6 +46,6 @@ pipecrab-vad        = { path = "crates/engine/pipecrab-vad", version = "0.7.0" }
 pipecrab-vad-sherpa = { path = "crates/adapters/pipecrab-vad-sherpa", version = "0.7.0" }
 # Dev-only; `publish = false`, so it never needs a version.
 pipecrab-test-util  = { path = "crates/support/test-util" }
-llama-cpp-2         = { version = "=0.1.153", default-features = false }
-sherpa-onnx         = { version = "=1.13.4", default-features = false }
+llama-cpp-2         = { version = "=0.1.154", default-features = false }
+sherpa-onnx         = { version = "=1.13.5", default-features = false }
 serde_json          = "1"
