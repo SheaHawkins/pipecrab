@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>pipecrab — VAD + STT in the browser</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3E%F0%9F%A6%80%3C/text%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>pipecrab in the browser</h1>
+      <p class="blurb">
+        Microphone &rarr; resample to 16&nbsp;kHz &rarr; Silero VAD gate &rarr; speech-to-text.
+        The same three-stage pipeline the <code>stt-sherpa</code> example runs on the
+        desktop, with the browser's backends behind the same traits.
+      </p>
+
+      <form id="controls">
+        <label>
+          Speech-to-text model
+          <input id="model" name="model" value="onnx-community/moonshine-tiny-ONNX" spellcheck="false" />
+        </label>
+        <div class="buttons">
+          <button id="startButton" type="submit">Start listening</button>
+          <button id="stopButton" type="button" disabled>Stop</button>
+        </div>
+      </form>
+
+      <p id="status" class="status">Idle. The first run downloads the model — tens of megabytes.</p>
+
+      <ol id="log" class="log" aria-live="polite"></ol>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

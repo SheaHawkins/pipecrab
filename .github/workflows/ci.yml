@@ -22,9 +22,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.88.0
         with:
           components: clippy
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The browser backends compile to nothing on the host, so the workspace
+      # sweep above lints none of their code. Lint them where it exists.
+      - run: cargo clippy -p pipecrab-audio-web -p pipecrab-vad-web -p pipecrab-stt-web -p web-vad-stt --target wasm32-unknown-unknown --all-targets -- -D warnings
 
   test:
     runs-on: ubuntu-latest
@@ -50,7 +54,9 @@ jobs:
       # every platform-neutral trait crate must compile for the browser — no
       # host-only dependency may creep in. Concrete backends are exempt: they are
       # allowed to be host-specific (pipecrab-audio-cpal is native-only, so it is
-      # not checked here; the browser audio path will be a separate crate).
+      # not checked here). The browser backends are the mirror image — wasm-only,
+      # so wasm is the only target that compiles anything of them at all — and
+      # they are checked below.
       #
       # The sans-IO core is pure logic — no async, no I/O — so it must build everywhere.
       - run: cargo check -p pipecrab-core --target wasm32-unknown-unknown
@@ -59,7 +65,7 @@ jobs:
       # The audio I/O trait crate is platform-neutral and must build for the browser too.
       - run: cargo check -p pipecrab-audio --target wasm32-unknown-unknown
       # The STT interface is only the Transcriber trait plus its adapter — no engine — so
-      # it must build for the browser, where the engine is Transformers.js in a Worker.
+      # it must build for the browser, where the engine is Transformers.js.
       - run: cargo check -p pipecrab-stt --target wasm32-unknown-unknown
       # The VAD interface is likewise engine-free — just the VoiceActivityDetector trait —
       # so it must build for the browser, where the engine is onnxruntime-web.
@@ -77,3 +83,12 @@ jobs:
       # DispatchSource/DispatchSink traits, no concrete transport — so it must
       # build for the browser, where a transport is e.g. a WebSocket adapter.
       - run: cargo check -p pipecrab-dispatch --target wasm32-unknown-unknown
+      # The browser backends. Everything above only proves no *host* dependency
+      # crept in; these prove the browser path itself still builds, since wasm is
+      # the one target where they are more than an empty crate.
+      - run: cargo check -p pipecrab-audio-web --target wasm32-unknown-unknown
+      - run: cargo check -p pipecrab-vad-web --target wasm32-unknown-unknown
+      - run: cargo check -p pipecrab-stt-web --target wasm32-unknown-unknown
+      # And the example that wires all three together, which is what would
+      # actually notice a browser-side regression.
+      - run: cargo check -p web-vad-stt --target wasm32-unknown-unknown

@@ -8,10 +8,10 @@ use std::sync::Arc;
 /// The swappable speech-to-text capability: `f32` samples in, a transcript out.
 ///
 /// This is the durable interface. A native engine (`ort`) and a browser engine
-/// (Transformers.js in a Web Worker) both implement this one trait, so
+/// (Transformers.js) both implement this one trait, so
 /// [`SttStage`](crate::SttStage) — and the pipeline above it — never names a
 /// concrete model. The offload decision lives in the *impl* (native offloads to
-/// a worker thread; wasm awaits a Web Worker), so the stage stays engine-neutral
+/// a worker thread; wasm awaits a JS promise), so the stage stays engine-neutral
 /// and just `.await`s [`transcribe`](Transcriber::transcribe).
 ///
 /// `?Send` matches pipecrab's single-threaded execution model, so one

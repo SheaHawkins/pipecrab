@@ -1,0 +1,27 @@
+[package]
+name = "pipecrab-audio-web"
+description = "Browser (Web Audio) capture backend for pipecrab: WebAudioSource over the pipecrab-audio traits."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# An adapter: bridges the browser's Web Audio graph to the pipecrab-audio
+# traits. May depend on trait/facade/runtime/core; nothing in engine/ may
+# depend back on it.
+[package.metadata.pipecrab]
+layer = "adapter"
+
+[dependencies]
+pipecrab-audio = { workspace = true }
+
+# wasm32-only: the whole crate is the browser backend, so on any other target it
+# compiles to nothing and pulls in nothing. Keeps `cargo clippy --workspace` and
+# `cargo test --workspace` green on the host without excluding the crate.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+async-trait            = "0.1"
+futures                = "0.3"
+js-sys                 = "0.3"
+wasm-bindgen           = "0.2"
+wasm-bindgen-futures   = "0.4"

@@ -1,0 +1,137 @@
+:root {
+  color-scheme: light dark;
+  --ink: #16130f;
+  --paper: #fbf8f4;
+  --muted: #6d655c;
+  --line: #dcd4c8;
+  --accent: #b4451f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #f2ece4;
+    --paper: #17150f;
+    --muted: #9a9186;
+    --line: #322d25;
+    --accent: #e2793f;
+  }
+}
+
+body {
+  margin: 0;
+  padding: 3rem 1.5rem;
+  background: var(--paper);
+  color: var(--ink);
+  font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+main {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.6rem;
+  letter-spacing: -0.01em;
+}
+
+.blurb {
+  margin: 0 0 2rem;
+  color: var(--muted);
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
+form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-end;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+label {
+  display: flex;
+  flex: 1 1 20rem;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+input {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+.buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+button {
+  padding: 0.55rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+button[type="submit"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.status {
+  margin: 1.25rem 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.status[data-kind="error"] {
+  color: var(--accent);
+}
+
+.log {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.log li {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.log li[data-kind="speech"] {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+}
+
+.log li[data-kind="partial"] {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.log li[data-kind="error"] {
+  color: var(--accent);
+}
