@@ -1,0 +1,32 @@
+[package]
+name = "web-vad-stt"
+description = "Transcribe live microphone speech in the browser with Silero VAD and Transformers.js STT."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.pipecrab]
+layer = "app"
+
+[lib]
+# cdylib is what wasm-bindgen consumes; rlib keeps `cargo test -p web-vad-stt`
+# and rustdoc working on the host, where this crate compiles to nothing.
+crate-type = ["cdylib", "rlib"]
+
+# wasm32-only, deps included: the example *is* the browser build, so on the host
+# it is an empty lib that costs the workspace nothing to compile.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+pipecrab                  = { workspace = true }
+pipecrab-audio            = { workspace = true }
+pipecrab-audio-web        = { workspace = true }
+pipecrab-stt              = { workspace = true }
+pipecrab-stt-web          = { workspace = true }
+pipecrab-vad              = { workspace = true }
+pipecrab-vad-web          = { workspace = true }
+console_error_panic_hook  = "0.1"
+futures                   = "0.3"
+js-sys                    = "0.3"
+wasm-bindgen              = "0.2"
+wasm-bindgen-futures      = "0.4"

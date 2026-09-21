@@ -1,0 +1,23 @@
+[package]
+name = "pipecrab-vad-web"
+description = "Browser Silero voice-activity scorer for pipecrab, over onnxruntime-web."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.pipecrab]
+layer = "adapter"
+
+[dependencies]
+pipecrab-core = { workspace = true }
+pipecrab-vad  = { workspace = true }
+
+# wasm32-only: onnxruntime-web is a browser engine, so on any other target this
+# crate compiles to nothing and pulls in nothing.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+async-trait          = "0.1"
+js-sys               = "0.3"
+wasm-bindgen         = "0.2"
+wasm-bindgen-futures = "0.4"

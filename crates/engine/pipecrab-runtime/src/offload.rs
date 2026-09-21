@@ -38,17 +38,40 @@ where
         .expect("offload worker panicked or was dropped before sending a result")
 }
 
-/// wasm stub: offloading to a Web Worker is not yet implemented.
+/// # wasm
 ///
-/// `wasm32-unknown-unknown` has no `std::thread`, so this placeholder keeps the
-/// crate compiling for wasm. The eventual implementation will post `f` to a Web
-/// Worker and resolve over a `oneshot`; see the native version for the intended
-/// semantics.
+/// `wasm32-unknown-unknown` has no [`std::thread`], so there is nowhere to send
+/// `f`: it runs inline on the orchestrator, bracketed by a yield either side so
+/// a queued system frame is still seen before and after the call. The bounds are
+/// unchanged, so one call site compiles on both targets.
+///
+/// This bracket is not a substitute for a thread — `f` still occupies the
+/// orchestrator for its whole duration. Work heavy enough to need one belongs in
+/// a JS Worker behind its capability trait, which is where the browser engines
+/// put it (`Transcriber` awaits the Worker; the stage stays engine-neutral).
 #[cfg(target_arch = "wasm32")]
-pub async fn offload<F, T>(_f: F) -> T
+pub async fn offload<F, T>(f: F) -> T
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    unimplemented!("offload on wasm32 (Web Worker path) is not yet implemented")
+    yield_now().await;
+    let result = f();
+    yield_now().await;
+    result
+}
+
+/// Return `Pending` exactly once, after scheduling an immediate re-poll.
+#[cfg(target_arch = "wasm32")]
+async fn yield_now() {
+    let mut yielded = false;
+    core::future::poll_fn(move |cx| {
+        if yielded {
+            return core::task::Poll::Ready(());
+        }
+        yielded = true;
+        cx.waker().wake_by_ref();
+        core::task::Poll::Pending
+    })
+    .await
 }

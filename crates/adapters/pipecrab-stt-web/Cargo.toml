@@ -1,0 +1,23 @@
+[package]
+name = "pipecrab-stt-web"
+description = "Browser speech-to-text adapter for pipecrab, over Transformers.js."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.pipecrab]
+layer = "adapter"
+
+[dependencies]
+pipecrab-core = { workspace = true }
+pipecrab-stt  = { workspace = true }
+
+# wasm32-only: Transformers.js is a browser engine, so on any other target this
+# crate compiles to nothing and pulls in nothing.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+async-trait          = "0.1"
+js-sys               = "0.3"
+wasm-bindgen         = "0.2"
+wasm-bindgen-futures = "0.4"
