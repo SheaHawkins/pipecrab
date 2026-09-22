@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-runtime-v0.7.0...pipecrab-runtime-v0.7.1) - 2026-09-22
+
+### Added
+
+- run the VAD + STT pipeline in the browser ([#86](https://github.com/SheaHawkins/pipecrab/pull/86))
+
 ## [0.7.0](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-runtime-v0.6.0...pipecrab-runtime-v0.7.0) - 2026-08-07
 
 ### Added
