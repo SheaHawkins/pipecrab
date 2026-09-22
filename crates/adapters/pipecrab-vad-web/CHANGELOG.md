@@ -6,3 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.7.1](https://github.com/SheaHawkins/pipecrab/compare/pipecrab-vad-web-v0.7.0...pipecrab-vad-web-v0.7.1) - 2026-09-22
+
+### Other
+
+- release v0.7.1 ([#85](https://github.com/SheaHawkins/pipecrab/pull/85))
