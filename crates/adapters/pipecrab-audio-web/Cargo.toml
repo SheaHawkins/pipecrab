@@ -1,6 +1,6 @@
 [package]
 name = "pipecrab-audio-web"
-description = "Browser (Web Audio) capture backend for pipecrab: WebAudioSource over the pipecrab-audio traits."
+description = "Browser (Web Audio) audio backend for pipecrab: WebAudioSource and WebAudioSink over the pipecrab-audio traits."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

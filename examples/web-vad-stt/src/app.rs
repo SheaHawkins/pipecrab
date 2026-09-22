@@ -47,6 +47,9 @@ impl Session {
 /// `on_event` is called as `(kind, text)` with `kind` one of `"status"`,
 /// `"speech"`, `"partial"`, `"final"`, or `"error"`.
 ///
+/// `on_progress` goes straight to the engine, which calls it with its own
+/// progress events — one per file fetched — while the model loads.
+///
 /// Call this from a click handler: the microphone prompt and the `AudioContext`
 /// both need a user gesture.
 #[wasm_bindgen]
@@ -56,6 +59,7 @@ pub async fn start(
     vad_model_url: String,
     stt_model: String,
     on_event: js_sys::Function,
+    on_progress: js_sys::Function,
 ) -> Result<Session, JsValue> {
     console_error_panic_hook::set_once();
 
@@ -70,7 +74,9 @@ pub async fn start(
         .map_err(js_error)?;
 
     emit(&on_event, "status", &format!("loading {stt_model}"));
-    let transcriber = TransformersStt::load(&transformers, TransformersSttConfig::new(stt_model))
+    let mut stt_config = TransformersSttConfig::new(stt_model);
+    stt_config.progress = Some(on_progress);
+    let transcriber = TransformersStt::load(&transformers, stt_config)
         .await
         .map_err(js_error)?;
 

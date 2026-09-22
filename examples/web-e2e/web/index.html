@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>pipecrab — a voice agent in the browser</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3E%F0%9F%A6%80%3C/text%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="./style.css" />
+    <!--
+      Where every engine comes from. kokoro-js imports Transformers.js by its
+      bare name, so mapping that name to the page's own copy makes the TTS share
+      one ONNX runtime with the STT and the LM. `path` and `fs/promises` are
+      Node-only imports of kokoro-js that the browser never calls.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "onnxruntime-web": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.27.0/dist/ort.wasm.bundle.min.mjs",
+          "@huggingface/transformers": "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js",
+          "kokoro-js": "https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.js",
+          "phonemizer": "https://cdn.jsdelivr.net/npm/phonemizer@1.2.1/dist/phonemizer.js",
+          "path": "data:text/javascript,export default {}",
+          "fs/promises": "data:text/javascript,export default {}"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main>
+      <h1>A voice agent in the browser</h1>
+      <p class="blurb">
+        Microphone &rarr; Silero VAD gate &rarr; speech-to-text &rarr; language model &rarr;
+        Kokoro &rarr; speakers, all on this page. The same pipeline the
+        <code>e2e-voice-agent</code> example runs on the desktop, with the browser's backends
+        behind the same traits. Use headphones, or the agent hears itself.
+      </p>
+
+      <form id="controls">
+        <label class="wide">
+          Language model
+          <input id="lmModel" value="HuggingFaceTB/SmolLM2-360M-Instruct" spellcheck="false" />
+        </label>
+        <label>
+          Voice
+          <input id="voice" value="af_heart" spellcheck="false" />
+        </label>
+        <label>
+          Run on
+          <select id="device">
+            <option value="webgpu">WebGPU</option>
+            <option value="wasm">WebAssembly</option>
+          </select>
+        </label>
+        <div class="buttons">
+          <button id="startButton" type="submit">Start talking</button>
+          <button id="stopButton" type="button" disabled>Stop</button>
+        </div>
+      </form>
+
+      <p id="status" class="status">
+        Idle. The first run downloads the models — several hundred megabytes.
+      </p>
+
+      <p id="hearing" class="hearing" hidden>Listening</p>
+
+      <ol id="log" class="log" aria-live="polite"></ol>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

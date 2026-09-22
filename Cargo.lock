@@ -1456,6 +1456,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pipecrab-lm-web"
+version = "0.7.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "js-sys",
+ "pipecrab-lm",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
 name = "pipecrab-lm-zeroclaw"
 version = "0.7.0"
 dependencies = [
@@ -1553,6 +1565,19 @@ dependencies = [
  "pipecrab-core",
  "pipecrab-tts",
  "sherpa-onnx",
+]
+
+[[package]]
+name = "pipecrab-tts-web"
+version = "0.7.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "js-sys",
+ "pipecrab-core",
+ "pipecrab-tts",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -2528,6 +2553,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "web-e2e"
+version = "0.7.0"
+dependencies = [
+ "async-trait",
+ "console_error_panic_hook",
+ "futures",
+ "js-sys",
+ "pipecrab",
+ "pipecrab-audio",
+ "pipecrab-audio-web",
+ "pipecrab-lm",
+ "pipecrab-lm-web",
+ "pipecrab-stt",
+ "pipecrab-stt-web",
+ "pipecrab-tts",
+ "pipecrab-tts-web",
+ "pipecrab-turn",
+ "pipecrab-vad",
+ "pipecrab-vad-web",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

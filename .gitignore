@@ -30,3 +30,5 @@ silero_vad.onnx
 # wasm-bindgen output and the model the browser example serves itself
 /examples/web-vad-stt/web/pkg/
 /examples/web-vad-stt/web/models/
+/examples/web-e2e/web/pkg/
+/examples/web-e2e/web/models/

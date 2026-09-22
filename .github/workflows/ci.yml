@@ -28,7 +28,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       # The browser backends compile to nothing on the host, so the workspace
       # sweep above lints none of their code. Lint them where it exists.
-      - run: cargo clippy -p pipecrab-audio-web -p pipecrab-vad-web -p pipecrab-stt-web -p web-vad-stt --target wasm32-unknown-unknown --all-targets -- -D warnings
+      - run: cargo clippy -p pipecrab-audio-web -p pipecrab-vad-web -p pipecrab-stt-web -p pipecrab-lm-web -p pipecrab-tts-web -p web-vad-stt -p web-e2e --target wasm32-unknown-unknown --all-targets -- -D warnings
 
   test:
     runs-on: ubuntu-latest
@@ -89,6 +89,9 @@ jobs:
       - run: cargo check -p pipecrab-audio-web --target wasm32-unknown-unknown
       - run: cargo check -p pipecrab-vad-web --target wasm32-unknown-unknown
       - run: cargo check -p pipecrab-stt-web --target wasm32-unknown-unknown
-      # And the example that wires all three together, which is what would
-      # actually notice a browser-side regression.
+      - run: cargo check -p pipecrab-lm-web --target wasm32-unknown-unknown
+      - run: cargo check -p pipecrab-tts-web --target wasm32-unknown-unknown
+      # And the examples that wire them together, which is what would actually
+      # notice a browser-side regression.
       - run: cargo check -p web-vad-stt --target wasm32-unknown-unknown
+      - run: cargo check -p web-e2e --target wasm32-unknown-unknown

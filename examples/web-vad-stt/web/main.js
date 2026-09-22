@@ -23,10 +23,37 @@ const statusLine = document.getElementById("status");
 const log = document.getElementById("log");
 
 let session = null;
+// What the pipeline is doing, and the model files it is fetching for it.
+let doing = "";
+const files = new Map();
 
 function setStatus(text, kind = "status") {
   statusLine.textContent = text;
   statusLine.dataset.kind = kind;
+}
+
+// "loading X" plus how much of it has arrived, while a download is in flight.
+function showProgress() {
+  let loaded = 0;
+  let total = 0;
+  for (const file of files.values()) {
+    loaded += file.loaded;
+    total += file.total;
+  }
+  // Below a megabyte it is a config or a tokenizer: not worth a size.
+  const megabytes = (bytes) => Math.round(bytes / 1e6);
+  setStatus(total >= 1e6 ? `${doing} — ${megabytes(loaded)} of ${megabytes(total)} MB` : doing);
+}
+
+// The engine reports one of these per file it fetches. A file already in the
+// browser's cache reports itself complete at once.
+function onProgress(event) {
+  if (!event?.total) {
+    return;
+  }
+  const loaded = event.status === "done" ? event.total : (event.loaded ?? 0);
+  files.set(event.file, { loaded, total: event.total });
+  showProgress();
 }
 
 function append(kind, text) {
@@ -40,6 +67,8 @@ function append(kind, text) {
 // The one callback the Rust side reports through.
 function onEvent(kind, text) {
   if (kind === "status") {
+    doing = text;
+    files.clear();
     setStatus(text);
     return;
   }
@@ -67,7 +96,14 @@ controls.addEventListener("submit", async (event) => {
   try {
     // Called straight out of the click: the microphone prompt and the
     // AudioContext both need a user gesture behind them.
-    session = await start(ort, transformers, VAD_MODEL, modelInput.value.trim(), onEvent);
+    session = await start(
+      ort,
+      transformers,
+      VAD_MODEL,
+      modelInput.value.trim(),
+      onEvent,
+      onProgress,
+    );
     stopButton.disabled = false;
   } catch (error) {
     setStatus(error?.message ?? String(error), "error");

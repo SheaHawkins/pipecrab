@@ -114,7 +114,7 @@ impl AudioSource for WebAudioSource {
 }
 
 /// Render a rejected promise or a thrown error as an [`AudioError::Device`].
-fn device_error(error: JsValue) -> AudioError {
+pub(crate) fn device_error(error: JsValue) -> AudioError {
     let message = error
         .as_string()
         .or_else(|| {

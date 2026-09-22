@@ -29,6 +29,10 @@ pub struct TransformersSttConfig {
     /// decoded in overlapping chunks and stitched, which is what keeps a
     /// two-minute utterance from overrunning a 30-second Whisper context.
     pub chunk_length_s: Option<f32>,
+    /// Called with the engine's own progress events while the model loads —
+    /// one per file fetched, carrying `status`, `file`, `loaded`, and `total`.
+    /// `None` reports nothing.
+    pub progress: Option<js_sys::Function>,
 }
 
 impl TransformersSttConfig {
@@ -42,6 +46,7 @@ impl TransformersSttConfig {
             device: None,
             language: None,
             chunk_length_s: Some(30.0),
+            progress: None,
         }
     }
 
@@ -55,6 +60,7 @@ impl TransformersSttConfig {
         let options = Object::new();
         set(&options, "dtype", self.dtype.as_deref());
         set(&options, "device", self.device.as_deref());
+        set(&options, "progress_callback", self.progress.clone());
         options
     }
 
@@ -62,21 +68,15 @@ impl TransformersSttConfig {
     pub(crate) fn decode_options(&self) -> Object {
         let options = Object::new();
         set(&options, "language", self.language.as_deref());
-        if let Some(seconds) = self.chunk_length_s {
-            let _ = Reflect::set(
-                &options,
-                &JsValue::from_str("chunk_length_s"),
-                &JsValue::from_f64(f64::from(seconds)),
-            );
-        }
+        set(&options, "chunk_length_s", self.chunk_length_s);
         options
     }
 }
 
 /// Set `key` on a fresh object when the value is present. Fallible only for
 /// exotic receivers (a proxy, a frozen object); a plain `Object` never rejects.
-fn set(options: &Object, key: &str, value: Option<&str>) {
+fn set(options: &Object, key: &str, value: Option<impl Into<JsValue>>) {
     if let Some(value) = value {
-        let _ = Reflect::set(options, &JsValue::from_str(key), &JsValue::from_str(value));
+        let _ = Reflect::set(options, &JsValue::from_str(key), &value.into());
     }
 }
